@@ -1,10 +1,9 @@
 # %%
 
 import matplotlib.pyplot as plt
-
 import pandas as pd
 
-dfi = pd.read_parquet("example.parquet")
+dfi = pd.read_parquet("../data/example.parquet")
 
 
 # Variables
@@ -35,7 +34,7 @@ base = (
         color=alt.Color("renamed_source:N", title=None)
         .scale(
             domain=["selected", "predicted", "observed", "BADA"],
-            range=["#e45756", "#4c78a8", "#f58518", "#54a24b"],
+            range=["#79706e", "#4c78a8", "#f58518", "#54a24b"],
         )
         .legend(
             symbolStrokeWidth=8,
@@ -115,76 +114,7 @@ chart = alt.vconcat(
     titleFont="Roboto Condensed",
     titleFontSize=18,
 )
-chart.save("traj_example.pdf")
+chart.save("../figures/traj_example.pdf")
 chart
-# %%
-
 
 # %%
-fig, axs = plt.subplots(3, 1, figsize=(8, 12))
-
-# --- 1. Altitude ---
-axs[0].plot(dfi.alt_std_m, color="r", label="Observed")
-axs[0].plot(dfi.pred_alt_std_m, color="b", label="Predicted")
-axs[0].plot(dfi.bada_alt_std_m, color="g", label="BADA")
-axs[0].plot(dfi.alt_sel_m, "--", color="k", lw=0.5, label="Selected")
-axs[0].set_title("Altitude [m]")
-axs[0].set_xlabel("Time step")
-axs[0].set_ylabel("Altitude [m]")
-axs[0].legend()
-axs[0].grid(True, linestyle="--", alpha=0.5)
-
-# --- 2. True Airspeed ---
-axs[1].plot(dfi.cas_ms, color="r", label="Observed")
-axs[1].plot(dfi.pred_cas_ms, color="b", label="Predicted")
-axs[1].plot(dfi.bada_cas_ms, color="g", label="BADA")
-axs[1].plot(dfi.cas_sel_ms, "--", color="k", lw=0.5, label="Selected")
-axs[1].set_title("Calibrated Airspeed [m/s]")
-axs[1].set_xlabel("Time step")
-axs[1].set_ylabel("CAS [m/s]")
-axs[1].legend()
-axs[1].grid(True, linestyle="--", alpha=0.5)
-
-# --- 3. Flight Path Angle ---
-axs[2].plot(dfi.vz_ms, color="r", label="Observed")
-axs[2].plot(dfi.pred_vz_ms, color="b", label="Predicted")
-axs[2].plot(dfi.bada_vz_ms, color="g", label="BADA")
-axs[2].plot(dfi.vz_sel_ms, "--", color="k", lw=0.5, label="Selected")
-axs[2].set_title("Vertical Speed [m/s]")
-axs[2].set_xlabel("Time step")
-axs[2].set_ylabel("Vertical Speed [m/s]")
-axs[2].legend()
-axs[2].grid(True, linestyle="--", alpha=0.5)
-
-plt.tight_layout()
-plt.show()
-
-# %%
-import altair as alt
-
-import pandas as pd
-
-# Sample data
-data = pd.DataFrame(
-    {"x": [1, 2, 3, 4], "y": [10, 15, 13, 17], "category": ["A", "A", "A", "A"]}
-)
-
-# Basic line chart
-chart = (
-    alt.Chart(data)
-    .mark_line()
-    .encode(
-        x="x",
-        y="y",
-        color=alt.Color(
-            "category:N",
-            legend=alt.Legend(
-                symbolStrokeWidth=8,
-                symbolSize=100,
-            ),
-        ),
-    )
-    .properties(width=400, height=300)
-)
-
-chart
