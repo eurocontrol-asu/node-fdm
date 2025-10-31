@@ -1,21 +1,11 @@
 # %%
 
-import matplotlib.pyplot as plt
+import altair as alt
 import pandas as pd
 
 dfi = pd.read_parquet("../data/example.parquet")
 
-
-# Variables
-cols = ["alt_std_m", "tas_ms", "gamma_rad", "mass_kg"]
-cols_bada = ["bada_" + col for col in cols]
-cols_pred = ["pred_" + col for col in cols]
-
-time = dfi["timestamp"].values
-
-
 # %%
-import altair as alt
 
 # Create a mapping for renaming the values
 rename_mapping = {
