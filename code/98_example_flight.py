@@ -1,7 +1,7 @@
 # %%
 
-import altair as alt
-import pandas as pd
+import altair as alt  # type: ignore
+import pandas as pd  # type: ignore
 
 dfi = pd.read_parquet("../data/example.parquet")
 
