@@ -5,11 +5,11 @@ DEFAULT_CPU_COUNT = 35
 ROOT_DIR = Path(__file__).resolve().parent
 
 DATA_DIR = ROOT_DIR / "data"
-DOWNLOAD_DIR = DATA_DIR / "downloaded_parquet"
-PREPROCESS_DIR = DATA_DIR / "preprocessed_parquet"
-PROCESS_DIR = DATA_DIR / "processed_flights"
-PREDICT_DIR = DATA_DIR / "predicted_flights"
-BADA_DIR = DATA_DIR / "bada_flights"
+DOWNLOAD_DIR = DATA_DIR / "downloaded_parquet" # FOLDER TO BE CREATED
+PREPROCESS_DIR = DATA_DIR / "preprocessed_parquet" # FOLDER TO BE CREATED
+PROCESS_DIR = DATA_DIR / "processed_flights" # FOLDER TO BE CREATED
+PREDICT_DIR = DATA_DIR / "predicted_flights" # FOLDER TO BE CREATED
+BADA_DIR = DATA_DIR / "bada_flights" # FOLDER TO BE CREATED
 MODELS_DIR = ROOT_DIR / "models"
 FIGURE_DIR = ROOT_DIR / "figures"
 
