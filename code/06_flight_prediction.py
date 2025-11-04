@@ -55,5 +55,5 @@ for acft in TYPECODES:
         pred_df.to_parquet(out_path, index=False)
         #break
     print(f"✅ Finished predictions for {acft}")
-    # break  # ⬅️ Décommente si tu veux tester un seul avion
+
 

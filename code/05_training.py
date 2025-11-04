@@ -50,7 +50,6 @@ for acft in TYPECODES:
         val_batch_size=10000,
         method="euler",
     )
-    break
 
 
 
