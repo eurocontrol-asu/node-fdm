@@ -1,8 +1,18 @@
 # %%
+import sys
+import cairosvg
+from pathlib import Path
 
+# Détermine le chemin vers la racine du projet
+root_path = Path.cwd().parents[0]  # si ton notebook est dans notebooks/
+sys.path.append(str(root_path))
+
+from config import DATA_DIR, FIGURE_DIR
 import pandas as pd
+import os
+import altair as alt
 
-df = pd.read_parquet("performance.parquet")
+df = pd.read_parquet(DATA_DIR / "performance.parquet")
 df = (
     df.replace("Altitude [m]", "altitude")
     .replace("Flight path angle [deg]", "flight path angle")
@@ -24,10 +34,6 @@ df["BADA_gt_PRED"] = (
     .reindex(df.set_index(["Aircraft", "Phase", "Variable"]).index)
     .values
 )
-
-# %%
-
-import altair as alt
 
 base = (
     alt.Chart(df)
@@ -93,9 +99,13 @@ def chart(typecode: str) -> alt.HConcatChart:
         )
         .configure_facet(spacing=1)
     )
-    chart.save(f"performance_{typecode}.pdf")
+    
+    pdf_path = FIGURE_DIR / f"performance_{typecode}.pdf"
+
+    chart.save(pdf_path)
     return chart
 
 
 for aircraft in df.Aircraft.unique():
     display(chart(aircraft))  # noqa: F821
+

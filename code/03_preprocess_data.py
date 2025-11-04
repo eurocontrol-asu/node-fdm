@@ -1,6 +1,10 @@
 # %%
 # ls history_*.parquet | parallel -j 20 uv run 03_preprocess_data.py {}
+import sys
 from pathlib import Path
+sys.path.append(str(Path.cwd().parents[0]))  # ajoute node-fdm/
+
+from config import DOWNLOAD_DIR, PREPROCESS_DIR
 
 import click
 
@@ -123,9 +127,9 @@ pd.set_option("future.no_silent_downcasting", True)
 def main(history: Path, workers: int) -> None:
     # history = Path("history_20241001.parquet")
     date = history.stem.split("_")[1]
-    extended = Path(f"extended_{date}.parquet")
-    flightlist = Path(f"flightlist_{date}.parquet")
-    processed = Path(f"processed_{date}.parquet")
+    extended = Path(DOWNLOAD_DIR / f"extended_{date}.parquet")
+    flightlist = Path(DOWNLOAD_DIR /f"flightlist_{date}.parquet")
+    processed = Path(DOWNLOAD_DIR /f"processed_{date}.parquet")
 
     if processed.exists():
         print(f"{processed} already exists, skipping processing.")
@@ -170,7 +174,7 @@ def main(history: Path, workers: int) -> None:
     except Exception:
         pass
 
-    t_filtered.to_parquet(processed)
+    t_filtered.to_parquet(PREPROCESS_DIR / processed)
 
 
 if __name__ == "__main__":

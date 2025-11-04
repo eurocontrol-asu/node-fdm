@@ -1,4 +1,9 @@
 # %%
+import sys
+from pathlib import Path
+sys.path.append(str(Path.cwd().parents[0]))  # ajoute node-fdm/
+
+from config import DATA_DIR, TYPECODES as typecodes
 from traffic.data import opensky
 
 opensky.trino_client.connect()
@@ -20,23 +25,7 @@ ext.groupby(["airline", "typecode"]).agg(
     {"icao24": "nunique"}
 ).reset_index().sort_values("icao24", ascending=False)
 # %%
-typecodes = [
-    "A20N",
-    "A21N",
-    "A319",
-    "A320",
-    "A321",
-    "A333",
-    "A359",
-    "AT76",
-    "B38M",
-    "B737",
-    "B738",
-    "B77W",
-    "B789",
-    "E190",
-    "E75L",
-]
+
 ext.groupby(["typecode"]).agg({"icao24": "nunique"}).reset_index().sort_values(
     "icao24", ascending=False
 ).query("typecode in @typecodes", engine="python")
@@ -61,6 +50,8 @@ typecodes = [
     "B738",
     "E190",
 ]
+
+
 sampled_ext.query("typecode in @typecodes", engine="python").groupby(
     ["typecode", "airline"]
 ).agg({"icao24": "nunique"}).reset_index().sort_values(
@@ -84,7 +75,7 @@ pivot_df
 aircraft_db = sampled_ext[
     ["icao24", "registration", "typecode", "age", "airline"]
 ]
-aircraft_db.to_csv("aircraft_db.csv", index=False)
+aircraft_db.to_csv(DATA_DIR / "aircraft_db.csv", index=False)
 aircraft_db
 
 # %%
