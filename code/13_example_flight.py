@@ -1,11 +1,18 @@
 # %%
+import sys
+from pathlib import Path
+
+# Détermine le chemin vers la racine du projet
+root_path = Path.cwd().parents[0]  # si ton notebook est dans notebooks/
+sys.path.append(str(root_path))
+
+from config import DATA_DIR, FIGURE_DIR
 
 import altair as alt  # type: ignore
 import pandas as pd  # type: ignore
 
-dfi = pd.read_parquet("../data/example.parquet")
+dfi = pd.read_parquet(DATA_DIR / "example2.parquet")
 
-# %%
 
 # Create a mapping for renaming the values
 rename_mapping = {
@@ -104,7 +111,11 @@ chart = alt.vconcat(
     titleFont="Roboto Condensed",
     titleFontSize=18,
 )
-chart.save("../figures/traj_example.pdf")
+chart.save(FIGURE_DIR / "traj_example2.pdf")
 chart
+
+# %%
+
+dfi.columns
 
 # %%

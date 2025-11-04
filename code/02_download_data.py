@@ -1,13 +1,17 @@
 # %%
+import sys
 from pathlib import Path
+sys.path.append(str(Path.cwd().parents[0]))  # ajoute node-fdm/
 
+from config import DATA_DIR, DOWNLOAD_DIR
 import pandas as pd
 from traffic.data import opensky
 
-sampled_ext = pd.read_csv("aircraft_db.csv")
+sampled_ext = pd.read_csv(DATA_DIR / "aircraft_db.csv")
+sampled_ext
 # %%
 
-for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
+for start in pd.date_range("2024-10-01", "2024-10-15", freq="480h"):
     path = Path(f"history_{start.strftime('%Y%m%d')}.parquet")
 
     if not path.exists():
@@ -21,7 +25,7 @@ for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
 
         assert t is not None
 
-        t.to_parquet(f"history_{start.strftime('%Y%m%d')}.parquet")
+        t.to_parquet(DOWNLOAD_DIR / f"history_{start.strftime('%Y%m%d')}.parquet")
 
     path = Path(f"flightlist_{start.strftime('%Y%m%d')}.parquet")
     if not path.exists():
@@ -35,7 +39,7 @@ for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
 
         assert ft is not None
 
-        ft.to_parquet(f"flightlist_{start.strftime('%Y%m%d')}.parquet")
+        ft.to_parquet(DOWNLOAD_DIR / f"flightlist_{start.strftime('%Y%m%d')}.parquet")
 
     path = Path(f"extended_{start.strftime('%Y%m%d')}.parquet")
 
@@ -50,6 +54,6 @@ for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
 
         assert ext is not None
 
-        ext.to_parquet(f"extended_{start.strftime('%Y%m%d')}.parquet")
+        ext.to_parquet(DOWNLOAD_DIR / f"extended_{start.strftime('%Y%m%d')}.parquet")
 
 # %%
