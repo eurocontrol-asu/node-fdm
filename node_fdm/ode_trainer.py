@@ -223,8 +223,7 @@ class ODETrainer:
         self,
         batch,
         alpha_dict,
-        method="rk4",
-        extra_loss=False,
+        method="rk4"
     ):
         x_seq, u_seq, e_seq, _ = [b.to(self.device) for b in batch]
         true_vect, pred_vect, final_cols = self.ode_step(
@@ -243,18 +242,6 @@ class ODETrainer:
             assert not torch.isnan(true_vect[..., i]).any(), "NaN in true_vect"
 
             loss += loss_fn(pred_vect[..., i], true_vect[..., i])
-
-        if extra_loss:
-            vect_pred = {c.alias: pred_vect[..., i] for i, c in enumerate(final_cols)}
-            # print(vect_pred.keys())
-            dh = vect_pred["alt_diff_sel"]  # h - h_sel
-            vz = vect_pred["vz"]
-
-            sigma_h = 1  # capture range (in same units as dh)
-            weight = torch.exp(-((dh) ** 2) / (2 * sigma_h**2))
-
-            loss_h = (weight * vz**2).mean()
-            loss += 0.1 * loss_h  # scaling factor
 
         if torch.isnan(loss) or torch.isinf(loss):
             print("NaN or Inf in loss!")

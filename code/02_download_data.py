@@ -11,7 +11,7 @@ sampled_ext = pd.read_csv(DATA_DIR / "aircraft_db.csv")
 sampled_ext
 # %%
 
-for start in pd.date_range("2024-10-01", "2024-10-15", freq="480h"):
+for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
     path = Path(f"history_{start.strftime('%Y%m%d')}.parquet")
 
     if not path.exists():
