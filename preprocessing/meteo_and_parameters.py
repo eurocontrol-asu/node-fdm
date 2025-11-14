@@ -124,7 +124,7 @@ def build_spd_and_vert_selected_from_segments(f, config):
     # 1️⃣ Mach constant segments
     mach_cfg = config.get("mach", {})
     mach_segments, _ = detect_constant_segments(f, var_name="Mach", **mach_cfg)
-    f = add_segment_column(f, mach_segments, "mach_sel")
+    f = add_segment_column(f, mach_segments, "mach_sel", fill_value=np.nan)
 
     # 2️⃣ CAS segments (excluding Mach periods)
     f_cas = f.copy()
@@ -136,12 +136,12 @@ def build_spd_and_vert_selected_from_segments(f, config):
 
     cas_cfg = config.get("cas", {})
     cas_segments, _ = detect_constant_segments(f_cas, var_name="CAS", **cas_cfg)
-    f = add_segment_column(f, cas_segments, "cas_sel")
+    f = add_segment_column(f, cas_segments, "cas_sel", fill_value=np.nan)
 
     # 3️⃣ Vertical rate segments
     vz_cfg = config.get("vz", {})
     vz_segments, _ = detect_constant_segments(f, var_name="vertical_rate", **vz_cfg)
-    f = add_segment_column(f, vz_segments, "vz_sel")
+    f = add_segment_column(f, vz_segments, "vz_sel", fill_value=np.nan)
 
     # 4️⃣ Altitude (optional)
     if config.get("add_alt", False):

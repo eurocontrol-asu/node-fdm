@@ -1,7 +1,7 @@
 # %%
 import sys
 from pathlib import Path
-sys.path.append(str(Path.cwd().parents[0]))  # ajoute node-fdm/
+sys.path.append(str(Path.cwd().parents[0]))
 
 from config import DATA_DIR, DOWNLOAD_DIR
 import pandas as pd
