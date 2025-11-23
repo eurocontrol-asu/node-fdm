@@ -1,8 +1,6 @@
-"""
-Physical and environmental constants for aviation calculations.
-
-Units are mostly SI, with aviation-specific conversions.
-"""
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Physical and environmental constants for aviation calculations."""
 
 # Time constants
 minute = 60          # seconds
@@ -31,7 +29,6 @@ g = 9.80665          # Gravitational acceleration in m/s²
 tropopause_alt_m = 11000.0  # Tropopause altitude in meters
 lapse_rate = 0.0065          # Temperature lapse rate in K/m (duplicate of L)
 
-T0 = 288.15
 
 gear_set_dict = {
     'UP': 1,

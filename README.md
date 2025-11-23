@@ -37,11 +37,26 @@ It combines **data-driven learning** with **physical consistency**, enabling the
 
 ---
 
-### 🎨 Use Case: OpenSky Symposium 2025 Model
+### 🎨 Use Case:
 
- *Jarry, G. & Olive, X. (2025). "Generation of Vertical Profiles with Neural Ordinary Differential Equations Trained on Open Trajectory Data," Journal of Open Aviation Science, Proceedings of the 13th OpenSky Symposium.*
+#### OpenSky Symposium 2025 — ADS-B Models
 
-This repository enables **full reproducibility** of the study.  All code used to **download and preprocess the data**, **train the models**, **perform trajectory inference**, and **generate the figures** presented in the paper is provided here.  
+*Jarry, G. & Olive, X. (2025). "Generation of Vertical Profiles with Neural Ordinary Differential Equations Trained on Open Trajectory Data," Journal of Open Aviation Science, Proceedings of the 13th OpenSky Symposium.*
+
+This repository enables **full reproducibility** of the study. All code used to **download and preprocess the data**, **train the models**, **perform trajectory inference**, and **generate the figures** presented in the paper is provided here.
+
+---
+
+#### SESAR Innovation Days 2025 — QAR Model
+
+*Jarry, G., Dalmau, R., Olive, X., & Very, P. (2025). "A Neural ODE Approach to Aircraft Flight Dynamics Modelling,"*  
+*Proceedings of the SESAR Innovation Days 2025, arXiv:2509.23307.*
+
+For the QAR-based model, the repository provides the **full training pipeline**,  the **complete model implementation**, the **inference scripts**, and the **final trained model weights**.  
+
+⚠️ Due to proprietary restrictions, the **QAR datasets themselves cannot be released**;  
+only the model, code, and weights are included.
+
 
 ---
 
@@ -52,11 +67,6 @@ This repository is under active development. Future updates will include:
 - Improve **Mode S feature reconstruction** to reduce errors in training and evaluation  
 - Extend to **lateral dynamics** for full trajectory generation and enhanced speed modelling  
 - Incorporate stronger **physical constraints** through physics-based loss regularization  
-- Integrate the **QAR-based Neural ODE model** from :
-
-  *Jarry, G., Dalmau, R., Olive, X., & Very, P. (2025). "A Neural ODE Approach to Aircraft Flight Dynamics Modelling,"*  
-  *Proceedings of the SESAR Innovation Days 2025, arXiv:2509.23307*
-
 - Train models to **complete ADS-B data** or **generate trajectories** directly from flight plans  
 
 

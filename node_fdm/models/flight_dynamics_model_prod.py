@@ -1,14 +1,28 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Production-ready flight dynamics model loader and evaluator."""
+
+from typing import Any, Sequence
+
 import os
 import torch
 import torch.nn as nn
 from utils.learning.base.structured_layer import StructuredLayer
 from node_fdm.architectures.mapping import get_architecture_params_from_meta
 
+
 class FlightDynamicsModelProd(nn.Module):
+    """Load pretrained flight dynamics layers and expose an evaluation interface."""
+
     def __init__(
         self,
-        model_path,
-    ):
+        model_path: Any,
+    ) -> None:
+        """Initialize and load pretrained layers from a model directory.
+
+        Args:
+            model_path: Path-like pointing to the directory containing checkpoints and meta.json.
+        """
         super().__init__()
         self.model_path = model_path
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -35,17 +49,35 @@ class FlightDynamicsModelProd(nn.Module):
                 )
                 self.layers_dict[name] = self.layers_dict[name].eval()
 
-    def load_layer_checkpoint(self, layer_name):
+    def load_layer_checkpoint(self, layer_name: str) -> Any:
+        """Load checkpoint for a given layer.
+
+        Args:
+            layer_name: Name of the layer whose weights should be loaded.
+
+        Returns:
+            Loaded checkpoint dictionary.
+        """
         path = os.path.join(self.model_path, f"{layer_name}.pt")
         checkpoint = torch.load(path, map_location=self.device)
         return checkpoint
 
     def create_structured_layer(
         self,
-        input_cols,
-        output_cols,
-        layer_class=StructuredLayer,
-    ):
+        input_cols: Sequence[Any],
+        output_cols: Sequence[Any],
+        layer_class: Any = StructuredLayer,
+    ) -> nn.Module:
+        """Build a structured layer with normalization and denormalization stats.
+
+        Args:
+            input_cols: Columns consumed by the layer.
+            output_cols: Columns produced by the layer.
+            layer_class: Layer implementation to instantiate.
+
+        Returns:
+            Configured structured layer instance.
+        """
         input_stats = [
             {
                 col.col_name: self.stats_dict[col][metric]
@@ -76,7 +108,17 @@ class FlightDynamicsModelProd(nn.Module):
 
         return layer
 
-    def forward(self, vect_dict):
+    def forward(self, vect_dict: dict) -> dict:
+        """Run a forward pass through all layers.
+
+        Args:
+            vect_dict: Mapping from column identifiers to tensors.
+
+        Returns:
+            Updated mapping with newly computed columns.
+        """
         for name in self.layers_name:
-            vect_dict |= self.layers_dict[name](vect_dict)
+            res = self.layers_dict[name](vect_dict)
+            vect_dict |= res
+
         return vect_dict

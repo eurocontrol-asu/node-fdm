@@ -10,12 +10,12 @@ import pandas as pd
 from pathlib import Path
 from node_fdm.ode_trainer import ODETrainer
 from config import PROCESS_DIR, MODELS_DIR
-from node_fdm.architectures.qar.model import E2_COLS, E3_COLS
+from node_fdm.architectures.qar.model import E1_COLS, E2_COLS, E3_COLS
 
 split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
 
+
 model_config = dict(
-    
     architecture_name="qar",
     step=4,
     shift=60,
@@ -23,11 +23,10 @@ model_config = dict(
     weight_decay=1e-4,
     seq_len=60,
     num_workers=4,
-    model_params=[3, 2, 48],
+    model_params=[2, 1, 24],
     loading_args = (False, False),
-    batch_size = 1000
+    batch_size = 500
 )
-
 
 acft = "A320"
 model_config["model_name"] = "qar_%s" % acft
@@ -38,22 +37,21 @@ trainer = ODETrainer(
     model_config,
     MODELS_DIR,
     num_workers=4,
-    train_val_num=(1000, 500),
+    train_val_num=(100, 100),
     load_parallel=True
 )
 
 
-
-
-
-
 #%%
 alpha_dict = {
-    col: 1.0 for col in trainer.x_cols + E2_COLS+ E3_COLS
+    col: 1.0 for col in trainer.x_cols
 }
 
+for col in  E2_COLS+ E3_COLS:
+    alpha_dict[col] =  1.0
+
 trainer.train(
-    epochs=10, 
+    epochs=20, 
     batch_size=model_config['batch_size'],
     val_batch_size=10000,
     method="euler",
@@ -79,4 +77,21 @@ f[col_ff].isna().sum()
 
 # %%
 trainer.stats_dict
+# %%
+import pandas as pd
+from pathlib import Path
+from node_fdm.ode_trainer import ODETrainer
+from config import PROCESS_DIR, MODELS_DIR
+from node_fdm.architectures.qar.model import X_COLS, E2_COLS, E3_COLS
+
+
+
+alpha_dict = {
+    col: 1.0 for col in X_COLS + E2_COLS+ E3_COLS
+}
+
+alpha_dict
+# %%
+
+alpha_dict
 # %%

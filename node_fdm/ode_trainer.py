@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Training utilities for neural ODE-based flight dynamics models."""
+
+from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+
 import os
 import json
 import torch
@@ -14,15 +20,27 @@ from utils.learning.loss import get_loss
 
 
 class ODETrainer:
+    """Handle data preparation, training loops, and checkpointing for ODE models."""
+
     def __init__(
         self,
-        data_df,
-        model_config,
-        model_dir,
-        num_workers=4,
-        load_parallel=True,
-        train_val_num=(5000, 500)
-    ):
+        data_df: pd.DataFrame,
+        model_config: Dict[str, Any],
+        model_dir: Any,
+        num_workers: int = 4,
+        load_parallel: bool = True,
+        train_val_num: Tuple[int, int] = (5000, 500),
+    ) -> None:
+        """Initialize trainer with data, model configuration, and I/O paths.
+
+        Args:
+            data_df: DataFrame containing file paths and split labels.
+            model_config: Dictionary describing architecture, hyperparameters, and loader settings.
+            model_dir: Base directory to store checkpoints and metadata.
+            num_workers: Number of workers for DataLoaders.
+            load_parallel: Whether to load flights in parallel.
+            train_val_num: Tuple specifying how many train/val files to load.
+        """
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         architecture, self.model_cols, custom_fn = get_architecture_from_name(model_config["architecture_name"])
@@ -34,7 +52,6 @@ class ODETrainer:
         self.architecture_name = model_config["architecture_name"]
         self.model_params = model_config["model_params"]
 
-        # ---- Load dataset only once! ----
         self.train_dataset, self.val_dataset = get_train_val_data(
             data_df,
             self.model_cols,
@@ -47,10 +64,8 @@ class ODETrainer:
         self.step = model_config['step']
         self.num_workers = num_workers
 
-        # Means and stds from dataset (for model normalization)
         self.stats_dict = self.train_dataset.stats_dict
 
-        # ---- Model & optimizer ----
         self.model = self.get_or_create_model(*model_config["loading_args"])
 
         self.optimizer = torch.optim.AdamW(
@@ -60,7 +75,16 @@ class ODETrainer:
         self.save_meta()
 
 
-    def get_or_create_model(self, load=False, load_loss=False):
+    def get_or_create_model(self, load: bool = False, load_loss: bool = False) -> FlightDynamicsModel:
+        """Instantiate a new model or load existing checkpoints.
+
+        Args:
+            load: Whether to attempt loading existing checkpoints.
+            load_loss: Whether to restore tracked best validation loss when loading.
+
+        Returns:
+            Initialized or restored `FlightDynamicsModel` instance.
+        """
         self.best_val_loss = float("inf")
         if load and os.path.exists(self.model_dir /  "meta.json"):
             model = self.load_best_checkpoint(load_loss=load_loss)
@@ -74,8 +98,15 @@ class ODETrainer:
             ).to(self.device)
         return model
 
-    def load_best_checkpoint(self, load_loss=False):
-        # Create model with loaded architecture and params
+    def load_best_checkpoint(self, load_loss: bool = False) -> FlightDynamicsModel:
+        """Create and populate a model from saved checkpoints.
+
+        Args:
+            load_loss: Whether to restore tracked best validation loss.
+
+        Returns:
+            Model with layer weights loaded when available.
+        """
         model = FlightDynamicsModel(
             self.architecture,
             self.stats_dict,
@@ -83,7 +114,6 @@ class ODETrainer:
             model_params=self.model_params,
         ).to(self.device)
 
-        # Load each layer state dict if checkpoint exists
         for name in model.layers_name:
             checkpoint = self.load_layer_checkpoint(name)
             if checkpoint is not None:
@@ -93,11 +123,9 @@ class ODETrainer:
                 best_val_loss = checkpoint.get("best_val_loss", float("inf"))
                 self.epoch = checkpoint.get("epoch", 0)
             else:
-                # Initialize defaults if no checkpoint found
                 best_val_loss = float("inf")
                 self.epoch = 0
 
-        # Optionally aggregate best_val_loss over all layers (min or average)
         if load_loss:
             self.best_val_loss = best_val_loss
 
@@ -106,7 +134,15 @@ class ODETrainer:
 
         return model
 
-    def load_layer_checkpoint(self, layer_name):
+    def load_layer_checkpoint(self, layer_name: str) -> Optional[Dict[str, Any]]:
+        """Load checkpoint dictionary for a specific layer if available.
+
+        Args:
+            layer_name: Name of the layer to load.
+
+        Returns:
+            Checkpoint dictionary if found, otherwise None.
+        """
         path = os.path.join(self.model_dir, f"{layer_name}.pt")
         if not os.path.exists(path):
             print(f"No checkpoint found for layer {layer_name}, skipping load.")
@@ -116,7 +152,11 @@ class ODETrainer:
         checkpoint = torch.load(path, map_location=self.device)
         return checkpoint
 
-    def save_meta(self):
+    def save_meta(self) -> None:
+        """Persist training metadata and statistics to disk.
+
+        Creates or updates `meta.json` within the model directory.
+        """
         saved_stats_dict = {str(col) : value for col, value in self.stats_dict.items()}
 
         meta_dict = {
@@ -129,54 +169,100 @@ class ODETrainer:
             "batch_size": self.model_config["batch_size"],
             "stats_dict": saved_stats_dict,
         }
-
+        print(self.model_dir / "meta.json")
         with open(self.model_dir / "meta.json", "w") as f:
             json.dump(meta_dict, f, indent=4)
 
-    def save_layer_checkpoint(self, layer_name, epoch):
+    def save_layer_checkpoint(self, layer_name: str, epoch: int) -> None:
+        """Save checkpoint for an individual layer.
+
+        Args:
+            layer_name: Name of the layer to checkpoint.
+            epoch: Current epoch offset for tracking.
+        """
         layer = self.model.layers_dict[layer_name]
         save_dict = {
             "layer_state": layer.state_dict(),
-            "optimizer_state": self.optimizer.state_dict(),  # or per-layer optimizer state if you have
+            "optimizer_state": self.optimizer.state_dict(), 
             "best_val_loss": self.best_val_loss,
             "epoch": self.epoch + epoch,
         }
         torch.save(save_dict, self.model_dir / f"{layer_name}.pt")
 
-    def save_model(self, epoch):
+    def save_model(self, epoch: int) -> None:
+        """Save checkpoints for all layers.
+
+        Args:
+            epoch: Epoch index used when saving checkpoints.
+        """
         for name in self.model.layers_name:
             self.save_layer_checkpoint(name, epoch)
 
-    def norm_vect(self, vect, col):
-        return (vect - self.stats_dict[col]["mean"]) / (
-            self.stats_dict[col]["std"] + 1e-6
-        )
+    def norm_vect(self, vect: torch.Tensor, col: Any) -> torch.Tensor:
+        """Normalize tensor using stored statistics for a column.
 
-    def cat_to_dict_vects(self, vect_list, col_list, alpha_dict, normalize=True):
+        Args:
+            vect: Tensor to normalize.
+            col: Column identifier used to fetch statistics.
 
-        def modifier(el, col):
+        Returns:
+            Normalized tensor.
+        """
+        return (vect - self.stats_dict[col]["mean"]) / (self.stats_dict[col]["std"] + 1e-3 )
+
+    def cat_to_dict_vects(
+        self,
+        vect_list: Sequence[torch.Tensor],
+        col_list: Sequence[Any],
+        alpha_dict: Dict[Any, float],
+        normalize: bool = True,
+    ) -> Dict[Any, torch.Tensor]:
+        """Concatenate vectors and build a dict keyed by column definitions.
+
+        Args:
+            vect_list: Sequence of tensors to concatenate along the feature axis.
+            col_list: Column identifiers matching the concatenated tensors.
+            alpha_dict: Optional scaling factors applied per column.
+            normalize: Whether to normalize columns that request it.
+
+        Returns:
+            Dictionary mapping columns to (optionally) scaled and normalized tensors.
+        """
+
+        def modifier(el: torch.Tensor, col: Any) -> torch.Tensor:
             if (col.normalize_mode == "normal") & (normalize):
                 return self.norm_vect(el, col)
-            else:
-                return el
+            return el
+        
+        coeff_list = [alpha_dict[col] if col in alpha_dict.keys() else 0.0 for col in col_list]
 
         vects = torch.cat(vect_list, dim=2)
-
         vects_dict = {
-            col: (alpha_dict[col] if col in alpha_dict.keys() else 1.0)
-            * modifier(vects[..., i], col).unsqueeze(-1)
-            for i, col in enumerate(col_list)
+            col: coeff * modifier(vects[..., i], col).unsqueeze(-1)
+            for i, (col, coeff) in enumerate(zip(col_list, coeff_list))
         }
         return vects_dict
 
     def ode_step(
         self,
-        x_seq,
-        u_seq,
-        e_seq,
-        method,
-        alpha_dict,
-    ):
+        x_seq: torch.Tensor,
+        u_seq: torch.Tensor,
+        e_seq: torch.Tensor,
+        method: str,
+        alpha_dict: Dict[Any, float],
+    ) -> Tuple[torch.Tensor, torch.Tensor, Sequence[Any]]:
+        """Integrate one ODE step and return true/predicted trajectories.
+
+        Args:
+            x_seq: State sequences for the batch.
+            u_seq: Control sequences for the batch.
+            e_seq: Environment sequences for the batch.
+            method: ODE solver method passed to `odeint`.
+            alpha_dict: Scaling factors per monitored column.
+
+        Returns:
+            Tuple of (true trajectories, predicted trajectories, monitored columns).
+        """
         seq_len = x_seq.shape[1]
 
         assert not torch.isnan(x_seq).any(), "NaN in x_seq"
@@ -218,19 +304,28 @@ class ODETrainer:
                 monitor_cols,
                 alpha_dict=alpha_dict,
             )
-
         true_vect = torch.cat([vects_dict["true"][col] for col in monitor_cols], dim=2)
         pred_vect = torch.cat([vects_dict["pred"][col] for col in monitor_cols], dim=2)
         return true_vect, pred_vect, monitor_cols
 
     def compute_loss_ode_step(
         self,
-        batch,
-        alpha_dict,
-        method="rk4"
-    ):
+        batch: Sequence[torch.Tensor],
+        alpha_dict: Dict[Any, float],
+        method: str = "rk4",
+    ) -> torch.Tensor:
+        """Compute loss for a single ODE rollout batch.
+
+        Args:
+            batch: Tuple of tensors `(x_seq, u_seq, e_seq, dx_seq)` from the DataLoader.
+            alpha_dict: Scaling factors per monitored column.
+            method: ODE solver method.
+
+        Returns:
+            Scalar loss tensor for the batch.
+        """
         x_seq, u_seq, e_seq, _ = [b.to(self.device) for b in batch]
-        true_vect, pred_vect, final_cols = self.ode_step(
+        true_vect, pred_vect, monitor_cols = self.ode_step(
             x_seq,
             u_seq,
             e_seq,
@@ -239,13 +334,13 @@ class ODETrainer:
         )
 
         loss = 0.0
-        for i, col in enumerate(alpha_dict.keys()):
-            loss_fn = get_loss(col.loss_name)
-
-            assert not torch.isnan(pred_vect[..., i]).any(), "NaN in pred_vect"
-            assert not torch.isnan(true_vect[..., i]).any(), "NaN in true_vect"
-
-            loss += loss_fn(pred_vect[..., i], true_vect[..., i])
+        for i, col in enumerate(monitor_cols):
+            if col in alpha_dict.keys():
+                loss_fn = get_loss(col.loss_name)
+                assert not torch.isnan(pred_vect[..., i]).any(), "NaN in pred_vect"
+                assert not torch.isnan(true_vect[..., i]).any(), "NaN in true_vect"
+                res = loss_fn(pred_vect[..., i], true_vect[..., i])
+                loss += res
 
         if torch.isnan(loss) or torch.isinf(loss):
             print("NaN or Inf in loss!")
@@ -254,14 +349,23 @@ class ODETrainer:
 
     def train(
         self,
-        epochs=800,
-        batch_size=512,
-        val_batch_size=10000,
-        scheduler=None,
-        method="rk4",
-        alpha_dict = None,
-    ):
-        # --- DataLoaders ---
+        epochs: int = 800,
+        batch_size: int = 512,
+        val_batch_size: int = 10000,
+        scheduler: Optional[Any] = None,
+        method: str = "rk4",
+        alpha_dict: Optional[Dict[Any, float]] = None,
+    ) -> None:
+        """Train the ODE model and persist checkpoints/metrics.
+
+        Args:
+            epochs: Number of training epochs.
+            batch_size: Training batch size.
+            val_batch_size: Validation batch size.
+            scheduler: Optional learning-rate scheduler.
+            method: ODE solver method.
+            alpha_dict: Optional scaling factors per monitored column.
+        """
         self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=batch_size,
@@ -282,7 +386,6 @@ class ODETrainer:
 
         self.stats_dict = self.train_dataset.stats_dict
 
-        # === NEW: loss tracking ===
         losses = []
         loss_csv_path = os.path.join(self.model_dir, "training_losses.csv")
         fig_path = os.path.join(self.model_dir, "training_curve.png")
@@ -318,7 +421,6 @@ class ODETrainer:
             if scheduler is not None:
                 scheduler.step(avg_val_loss)
 
-            # Log losses
             losses.append(
                 {
                     "epoch": epoch + 1,
@@ -337,12 +439,10 @@ class ODETrainer:
                 self.best_val_loss = avg_val_loss
                 self.save_model(epoch)
 
-        # === SAVE LOSSES WITH PANDAS ===
         df_losses = pd.DataFrame(losses)
         df_losses.to_csv(loss_csv_path, index=False)
         print(f"✅ Saved training log to {loss_csv_path}")
 
-        # === PLOT TRAINING CURVE ===
         plt.figure(figsize=(7, 4))
         plt.semilogy(
             df_losses["epoch"],

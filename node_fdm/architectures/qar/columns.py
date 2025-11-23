@@ -1,27 +1,29 @@
-from utils.data.column import Column
-from torch import nn
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Column definitions and unit mappings for the QAR architecture."""
 
+from torch import nn
+from utils.data.column import Column
 from utils.physics.units import (
-    nautical_miles,
-    knot,
-    feet,
-    dimensionless,
+    boolean,
     degree,
+    degree_celsius,
+    dimensionless,
+    fma_col_2,
+    flap_conf,
+    feet,
+    feet_per_minute,
+    gear_up,
     kilogram,
     kilogram_per_hour,
     kilogram_per_sec,
-    feet_per_minute,
-    rpm_percent,
-    degree_celsius,
-    boolean,
-    flap_conf,
-    gear_up,
-    spd_brake_commanded,
+    knot,
+    nautical_miles,
     on_ground,
-    fma_col_2,
+    rpm_percent,
+    spd_brake_commanded,
 )
 
-# Loaded columns: columns directly loaded from raw data with units
 col_dist = Column("distance", "dist", "NAV__GND_DIST", nautical_miles)
 col_dist_to_thr = Column("distance_to_thr", "dist_to_thr", "TRAJ__DIST_TO_THR", nautical_miles)
 
@@ -44,11 +46,11 @@ col_fuel_conso = Column("fuel consumption", "ff_conso", "FUEL__CONS", kilogram)
 col_n1_left = Column("n1 left", "n1_left_rpm", "ENG__N1_LEFT", rpm_percent)
 col_n1_right = Column("n1 right", "n1_right_rpm", "ENG__N1_RIGHT", rpm_percent)
 
-col_alt_sel = Column("selected altitude", "alt_sel", "NAV__ALT_SEL", feet)
-col_vz_sel = Column("selected vertical speed", "vz_sel", "SPD__VERT_SEL", feet_per_minute)
-col_spd_sel = Column("selected speed", "spd_sel", "SPD__SPD_SEL", knot)
+col_alt_sel= Column("selected altitude", "alt_sel", "NAV__ALT_SEL", feet)
+col_vz_sel= Column("selected vertical speed", "vz_sel", "SPD__VERT_SEL", feet_per_minute)
+col_spd_sel= Column("selected speed", "spd_sel", "SPD__SPD_SEL", knot)
 
-col_temp = Column("temperature", "temp", "TEMP__SAT", degree_celsius)
+col_temp= Column("temperature", "temp", "TEMP__SAT", degree_celsius)
 col_head_wind_spd = Column("head wind speed", "head_wind_spd", "WIND__HEAD_WIND", knot)
 col_cross_wind_spd = Column("cross wind speed", "cross_wind_spd", "WIND__CROSS_WIND", knot)
 col_runway_elev = Column("runway elevation", "rwy_elev", "TRAJ__RWY_ELEV", feet)
@@ -89,8 +91,6 @@ col_spd_brake_commanded = Column(
 col_on_ground = Column("on ground", "on_grnd", "GEAR__WOW_MAIN", on_ground)
 col_fma_2 = Column("FMA column 2", "fma_col_2", "FMA_COL_2", fma_col_2, loss_name="cross_entropy")
 
-
-# Processed columns: created or computed during processing, may not have raw names
 col_ff = Column("fuel flow", "ff", None, kilogram_per_sec, denormalize_mode = "max", last_activation_fn = nn.Sigmoid)
 col_n1 = Column("n1", "n1_rpm", None, rpm_percent, denormalize_mode = None, last_activation_fn = nn.Sigmoid)
 col_reduce_engine = Column("reduce engine", "reduce_eng", None, boolean, normalize_mode=None)

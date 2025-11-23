@@ -53,7 +53,6 @@ for acft in TYPECODES:
         # Prédiction
         pred_df = predictor.predict_flight(f)
         pred_df.to_parquet(out_path, index=False)
+
     print(f"✅ Finished predictions for {acft}")
-
-
 

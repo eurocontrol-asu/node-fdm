@@ -1,14 +1,19 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Pre-processing utilities for QAR flight data, including smoothing and filtering."""
+
+from typing import Any, Callable, Sequence, Union
+
 import numpy as np
-import pandas as pd 
+import pandas as pd
 
 from scipy.signal import butter, filtfilt
 
+from utils.data.column import Column
 from utils.physics.constants import (
     gamma_ratio,
     R,
 )
-
-from node_fdm.architectures.qar.model import X_COLS
 
 from node_fdm.architectures.qar.columns import (
     col_alt_diff, 
@@ -37,7 +42,16 @@ from node_fdm.architectures.qar.columns import (
     col_mass,
 )
 
-def mode_stabilize(series, min_duration=10):
+def mode_stabilize(series: pd.Series, min_duration: int = 10) -> pd.Series:
+    """Stabilize a categorical series by enforcing a minimum dwell time per state.
+
+    Args:
+        series: Input categorical series to smooth.
+        min_duration: Minimum consecutive occurrences required before accepting a new mode.
+
+    Returns:
+        Series with transient changes suppressed.
+    """
     stable_series = series.copy()
     current_mode = stable_series.iloc[0]
     count = 0
@@ -54,15 +68,40 @@ def mode_stabilize(series, min_duration=10):
     return stable_series
 
 
-def one_reduce_eng_value(col_left, col_right):
-    def one_reduce_value_curry(el):
+def one_reduce_eng_value(col_left: Column, col_right: Column) -> Callable[[Any], Any]:
+    """Return a reducer that averages symmetric engine values unless an engine is flagged.
+
+    Args:
+        col_left: Column identifier for the left engine metric.
+        col_right: Column identifier for the right engine metric.
+
+    Returns:
+        Callable that maps a row-like object to a single engine value.
+    """
+    def one_reduce_value_curry(el: Any) -> Any:
         if el[col_reduce_engine]:
             return max(el[col_left], el[col_right])
         else:
             return (el[col_left]+ el[col_right]) / 2
     return one_reduce_value_curry
 
-def reduce_engine_vectorized(df, col_left, col_right, col_reduce_engine):
+def reduce_engine_vectorized(
+    df: pd.DataFrame,
+    col_left: Column,
+    col_right: Column,
+    col_reduce_engine: Column,
+) -> pd.Series:
+    """Combine symmetric engine signals into a single representative series.
+
+    Args:
+        df: DataFrame containing engine measurements.
+        col_left: Column identifier for the left engine metric.
+        col_right: Column identifier for the right engine metric.
+        col_reduce_engine: Column indicating when to rely on the higher engine value.
+
+    Returns:
+        Series representing the reduced engine metric.
+    """
     mask = df[col_reduce_engine] != 0
     result = pd.Series(index=df.index, dtype=float)
     result[mask] = df[[col_left, col_right]].loc[mask].max(axis=1)
@@ -70,7 +109,16 @@ def reduce_engine_vectorized(df, col_left, col_right, col_reduce_engine):
     
     return result
 
-def engine_process(df):
+def engine_process(df: pd.DataFrame) -> pd.DataFrame:
+    """Flag asymmetric engine states and aggregate engine-related columns.
+
+    Args:
+        df: DataFrame containing engine measurements.
+
+    Returns:
+        DataFrame with additional reduced-engine columns.
+    """
+
     reduce = (df[col_n1_left] < 5) | (df[col_n1_right] < 5)
     diff =  np.abs(df[col_n1_left] - df[col_n1_right]) > 5
     df[col_reduce_engine] = (reduce * diff).astype(int)
@@ -78,7 +126,20 @@ def engine_process(df):
     df[col_n1] = reduce_engine_vectorized(df, col_n1_left, col_n1_right, col_reduce_engine)
     return df
 
-def smooth_strong(x, window_size=100):
+def smooth_strong(
+    x: Union[pd.Series, Sequence[float], np.ndarray],
+    window_size: int = 100,
+) -> np.ndarray:
+    """Apply a strong moving-average smoothing window to a sequence.
+
+    Args:
+        x: Sequence of numeric values to smooth.
+        window_size: Width of the averaging window.
+
+    Returns:
+        Smoothed NumPy array.
+    """
+
     x = np.asarray(x, dtype=float)
     half = window_size // 2
     
@@ -89,15 +150,39 @@ def smooth_strong(x, window_size=100):
     
     return y
 
-def filter_noise(df_col, fs=1.0, cutoff=0.04, order=4):
+def filter_noise(
+    df_col: Union[pd.Series, Sequence[float], np.ndarray],
+    fs: float = 1.0,
+    cutoff: float = 0.04,
+    order: int = 4,
+) -> np.ndarray:
+    """Filter high-frequency noise from a signal using a low-pass Butterworth filter.
+
+    Args:
+        df_col: Input signal.
+        fs: Sampling frequency of the signal.
+        cutoff: Cutoff frequency for the low-pass filter.
+        order: Order of the Butterworth filter.
+
+    Returns:
+        Filtered signal as a NumPy array.
+    """
+
     b, a = butter(order, cutoff / (fs / 2), btype='low')
     signal_filtre = filtfilt(b, a, df_col)
     return signal_filtre
 
-def flight_processing(df, step=4):
+def flight_processing(df: pd.DataFrame, step: int = 4) -> pd.DataFrame:
+    """Prepare flight data for training by smoothing, filtering, and resampling.
+
+    Args:
+        df: Raw flight data.
+        step: Downsampling step applied after processing.
+
+    Returns:
+        Processed and downsampled DataFrame.
     """
-    User-defined custom step for flight preprocessing.
-    """
+
     df[col_tas] = df[col_tas].fillna(df[col_gs])
     speed_of_sound = np.sqrt(gamma_ratio * R * df[col_temp])
     df[col_mach] = df[col_tas] / speed_of_sound
@@ -136,8 +221,7 @@ def flight_processing(df, step=4):
     return df
 
 
-def segment_filtering(f, start_idx, seq_len):
-    """
-    User-defined custom step for segment filtering.
-    """
+def segment_filtering(f: Any, start_idx: int, seq_len: int) -> bool:
+    """Stub for segment filtering to keep compatibility with processing pipelines."""
+
     return True

@@ -1,5 +1,10 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Layer configuration and column grouping for the QAR architecture."""
+
 from node_fdm.architectures.qar.trajectory_layer import TrajectoryLayer
 from utils.learning.base.structured_layer import StructuredLayer
+from node_fdm.architectures.qar.engine_layer import EngineLayer
 
 from node_fdm.architectures.qar.columns import (
     col_dist,
@@ -27,7 +32,6 @@ from node_fdm.architectures.qar.columns import (
     col_n1, 
     col_ff, 
 )
-
 
 X_COLS = [
     col_dist,
@@ -104,7 +108,7 @@ ANGLE_LAYER =  [
 
 ENGINE_LAYER =  [
     "engine",
-    StructuredLayer,
+    EngineLayer,
     X_COLS + E0_COLS + E1_COLS,
     E3_COLS,
     True

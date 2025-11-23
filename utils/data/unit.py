@@ -1,4 +1,8 @@
-from typing import Callable, Optional
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Physical unit definitions with conversion helpers."""
+
+from typing import Any, Callable, Optional
 from dataclasses import dataclass
 
 from utils.data.conversions import (
@@ -9,16 +13,15 @@ from utils.data.conversions import (
 
 @dataclass
 class Unit:
-    """
-    Represents a physical unit with conversion to SI units.
+    """Represent a physical unit with conversion to SI units.
 
-    Attributes:
-        name (str): Full name of the unit (e.g., "meter per second").
-        abbr (str): Unit abbreviation (e.g., "m/s").
-        value_type (str): Type of value, used to select correction function ('float' or 'str').
-        si_unit (Optional[Unit]): Corresponding SI unit (can be self).
-        derivative (Optional[Unit]): Unit representing the derivative (e.g., m/s² for m/s).
-        modifier (Callable): Function to convert value to SI unit.
+    Args:
+        name: Full name of the unit.
+        abbr: Unit abbreviation.
+        value_type: Type of stored values ("float" or "str") to pick correction.
+        si_unit: Corresponding SI unit (may be self).
+        derivative: Derivative unit (e.g., m/s² for m/s).
+        modifier: Callable to convert values to SI.
     """
 
     name: str
@@ -28,17 +31,15 @@ class Unit:
     derivative: Optional["Unit"] = None
     modifier: Callable = identity
 
-    def convert(self, value):
-        """
-        Convert a value in this unit to the corresponding SI unit value.
+    def convert(self, value: Any) -> Any:
+        """Convert a value in this unit to the corresponding SI unit value.
 
         Args:
-            value: The value to convert.
+            value: Input value to convert (scalar or array-like).
 
         Returns:
             Converted value in SI units.
         """
-        # Choose the appropriate correction function based on value_type
         if self.value_type == "float":
             correction = correct_float
         elif self.value_type == "str":
@@ -50,11 +51,10 @@ class Unit:
 
     @property
     def si_abbr(self) -> str:
-        """
-        Get the abbreviation of the SI unit.
+        """Return the abbreviation of the SI unit if defined, else own abbreviation.
 
         Returns:
-            str: Abbreviation of the SI unit if defined, else own abbreviation.
+            Abbreviation string.
         """
         if self.si_unit is not None:
             return self.si_unit.abbr
@@ -62,11 +62,10 @@ class Unit:
 
     @property
     def deriv_unit(self) -> Optional["Unit"]:
-        """
-        Get the derivative unit.
+        """Return the derivative unit if defined.
 
         Returns:
-            Unit or None: The derivative unit if defined.
+            Derivative `Unit` or None.
         """
         if self.si_unit is not None and self.si_unit.derivative is not None:
             return self.si_unit.derivative

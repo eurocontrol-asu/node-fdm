@@ -1,8 +1,21 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Torch implementations of ISA temperature and pressure calculations."""
+
+from typing import Any
+
 import torch
 from utils.physics.constants import R, p0, T0
 
-def isa_pressure_torch(h):
-    """ISA static pressure (Pa) for altitude h (m), torch version (safe)."""
+def isa_pressure_torch(h: Any) -> torch.Tensor:
+    """Compute ISA static pressure (Pa) for altitude (m) with torch operations.
+
+    Args:
+        h: Altitude tensor in meters.
+
+    Returns:
+        Pressure tensor in Pascals.
+    """
     # Clamp altitude to avoid negative or extreme values
     h = torch.nan_to_num(h, nan=0.0, posinf=1e5, neginf=0.0)
     h = torch.clamp(h, 0.0, 20000.0)
@@ -17,8 +30,15 @@ def isa_pressure_torch(h):
 
     return torch.where(h <= 11000, p_tropo, p_strato)
 
-def isa_temperature_torch(h):
-    """ISA temperature (K) for altitude h (m), torch version (safe)."""
+def isa_temperature_torch(h: Any) -> torch.Tensor:
+    """Compute ISA temperature (K) for altitude (m) with torch operations.
+
+    Args:
+        h: Altitude tensor in meters.
+
+    Returns:
+        Temperature tensor in Kelvin.
+    """
     h = torch.nan_to_num(h, nan=0.0, posinf=1e5, neginf=0.0)
     h = torch.clamp(h, 0.0, 20000.0)
 

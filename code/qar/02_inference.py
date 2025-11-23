@@ -13,7 +13,7 @@ from config import MODELS_DIR, PROCESS_DIR, PREDICT_DIR
 from node_fdm.predictor import NodeFDMPredictor
 from node_fdm.architectures.qar.flight_process import flight_processing
 from node_fdm.data.flight_processor import FlightProcessor
-from node_fdm.architectures.qar.model import MODEL_COLS
+from node_fdm.architectures.qar.model import MODEL_COLS, col_ff, col_n1, col_aoa, col_pitch
 
 split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
 
@@ -39,14 +39,14 @@ test_df = data_df[data_df.split == "test"]
 output_dir = PREDICT_DIR / acft
 output_dir.mkdir(parents=True, exist_ok=True)
 
-for _, row in tqdm(test_df.iterrows(), total=len(test_df), desc=f"{acft}"):
+for _, row in tqdm(test_df.iloc[10:].iterrows(), total=len(test_df), desc=f"{acft}"):
     flight_path = Path(row.filepath)
     flight_id = flight_path.stem
 
     f = processor.process_flight(pd.read_parquet(flight_path))
 
     # Prédiction
-    pred_df = predictor.predict_flight(f)
+    pred_df = predictor.predict_flight(f, add_cols=[col_ff, col_n1, col_aoa, col_pitch])
     break
 print(f"✅ Finished predictions for {acft}")
 
@@ -61,9 +61,21 @@ for col in pred_df.columns:
     plt.title(col)
     plt.show()
 # %%
-col
+pred_df
 # %%
 flight_path
 # %%
 [el for el in pd.read_parquet(flight_path).columns if "DIST" in el]
+# %%
+plt.plot(-pred_df["pred_mass_kg"].diff(1) / 4 )
+plt.plot(-f["mass_kg"].diff(1)/4)
+plt.plot(pred_df[col])
+plt.plot(f[col[5:]])
+plt.title(col)
+plt.show()
+# %%
+plt.plot(pred_df["pred_mass_kg"])
+plt.plot(f["mass_kg"])
+plt.title(col)
+plt.show()
 # %%

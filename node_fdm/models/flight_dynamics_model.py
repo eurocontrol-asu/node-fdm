@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Neural flight dynamics model assembled from architecture layers."""
+
+from typing import Any, Dict, Sequence, Tuple
+
 import torch
 import torch.nn as nn
 
@@ -5,13 +11,23 @@ from utils.learning.base.structured_layer import StructuredLayer
 
 
 class FlightDynamicsModel(nn.Module):
+    """Compute state derivatives using a layered flight dynamics architecture."""
+
     def __init__(
         self,
-        architecture,
-        stats_dict,
-        model_cols,
-        model_params=[2, 1, 48],
-    ):
+        architecture: Sequence[Any],
+        stats_dict: Dict[Any, Dict[str, float]],
+        model_cols: Tuple[Any, Any, Any, Any, Any],
+        model_params: Sequence[int] = (2, 1, 48),
+    ) -> None:
+        """Initialize the model with architecture definition and statistics.
+
+        Args:
+            architecture: Iterable of layer definitions `(name, class, inputs, outputs, structured_flag)`.
+            stats_dict: Mapping from column to normalization/denormalization statistics.
+            model_cols: Tuple of model column groups (state, control, env, env_extra, derivatives).
+            model_params: Sequence defining backbone depth, head depth, and hidden width.
+        """
         super().__init__()
         self.architecture = architecture
         self.stats_dict = stats_dict
@@ -32,14 +48,28 @@ class FlightDynamicsModel(nn.Module):
                 self.layers_dict[name] = layer_class()
 
     def reset_history(self):
+        """Reset internal history buffers.
+
+        Clears stored layer outputs used for debugging or analysis between runs.
+        """
         self.history = {}
 
     def create_structured_layer(
         self,
-        input_cols,
-        output_cols,
-        layer_class=StructuredLayer,
-    ):
+        input_cols: Sequence[Any],
+        output_cols: Sequence[Any],
+        layer_class: Any = StructuredLayer,
+    ) -> nn.Module:
+        """Build a structured layer with normalization and denormalization stats.
+
+        Args:
+            input_cols: Columns consumed by the layer.
+            output_cols: Columns produced by the layer.
+            layer_class: Layer implementation to instantiate.
+
+        Returns:
+            Configured structured layer instance.
+        """
         input_stats = [
             {
                 col.col_name: self.stats_dict[col][metric]
@@ -70,11 +100,21 @@ class FlightDynamicsModel(nn.Module):
 
         return layer
 
-    def forward(self, x, u_t, e_t):
+    def forward(self, x: torch.Tensor, u_t: torch.Tensor, e_t: torch.Tensor) -> torch.Tensor:
+        """Compute state derivatives for the current batch.
+
+        Args:
+            x: State tensor.
+            u_t: Control tensor interpolated at current time.
+            e_t: Environment tensor interpolated at current time.
+
+        Returns:
+            Tensor of state derivatives assembled from architecture outputs.
+        """
 
         vects = torch.cat([x, u_t, e_t], dim=1)
         vect_dict = dict()
-        for i, col in enumerate(self.x_cols + self.u_cols + self.e0_cols + self.e_cols):
+        for i, col in enumerate(self.x_cols + self.u_cols + self.e0_cols):
             vect_dict[col] = vects[..., i]
 
         for name in self.layers_name:

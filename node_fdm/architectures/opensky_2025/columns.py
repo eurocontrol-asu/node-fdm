@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Column definitions and unit mappings for the OpenSky 2025 architecture."""
+
 from utils.data.column import Column
 
 from utils.physics.units import (
@@ -12,7 +16,6 @@ from utils.physics.units import (
     kelvin,
 )
 
-# Loaded columns: columns directly loaded from raw data with units
 col_dist = Column("distance", "dist", "distance_along_track_m", meter)
 col_adep_dist = Column("distance ADEP", "adep_dist", "adep_dist", nautical_miles)
 col_ades_dist = Column("distance ADES", "ades_dist", "ades_dist", nautical_miles)

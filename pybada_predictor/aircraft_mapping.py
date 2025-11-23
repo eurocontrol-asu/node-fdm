@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Mapping from ICAO aircraft codes to BADA 4.2 identifiers."""
+
 BADA_4_2_MAPPING = {
     "A20N":"A320-271N",
     "A306":"A300B4-622",

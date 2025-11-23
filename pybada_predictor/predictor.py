@@ -1,10 +1,14 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Predictor for generating BADA-based flight trajectories."""
+
+from typing import Any
+
+import pandas as pd
 import numpy as np
 from pathlib import Path
 
 from utils.physics.constants import ft
-import pandas as pd
-import numpy as np
-
 from pybada_predictor.utils import ms_to_kt, tas_to_cas, isa_temperature, get_phase
 
 
@@ -16,18 +20,22 @@ from pyBADA.TCL import (
     target,
 )
 
+def process_single_flight(row: Any, AC: Any, processor: Any, output_dir: Path):
+    """Process one flight with BADA predictions and save outputs.
 
-def process_single_flight(row, AC, processor, output_dir):
-    """Traite un vol unique et enregistre les résultats BADA dans un parquet."""
+    Args:
+        row: Row containing flight metadata and filepath.
+        AC: BADA aircraft object.
+        processor: Flight processor with `process_flight`.
+        output_dir: Destination directory for prediction parquet.
+    """
     flight_path = Path(row.filepath)
     flight_id = flight_path.stem
 
     try:
-        # Prépare les données
         f = pd.read_parquet(flight_path)
-        f0 = processor.process_flight(f)
+        _ = processor.process_flight(f)
 
-        # Préparation des colonnes de vitesse
         f["cas_sel_ms"].iloc[-1] = f["cas_ms"].iloc[-1]
         f["cas_sel_ms"] = np.where(f["cas_sel_ms"] == 0.0, np.nan, f["cas_sel_ms"])
         f["cas_sel_ms"] = f["cas_sel_ms"].bfill()
@@ -46,7 +54,6 @@ def process_single_flight(row, AC, processor, output_dir):
             else:
                 current_mass = 0.85 * AC.MTOW  # ou pt["mass_kg"]
 
-            # Conversion et sélection des vitesses
             CAS_ms = tas_to_cas(current_tas, current_alt, pt["temperature"])
             speedType = "M" if pt["mach_sel"] != 0.0 else "CAS"
             config = "CR"
@@ -70,7 +77,6 @@ def process_single_flight(row, AC, processor, output_dir):
 
             speed_diff_ratio = np.abs(v_init - v_target) / max(v_target, 1e-6)
 
-            # Sélection du mode BADA
             if speed_diff_ratio < 0.04:
                 if phase == "Cruise":
                     res = constantSpeedLevel(
@@ -177,7 +183,6 @@ def process_single_flight(row, AC, processor, output_dir):
             res_vals = res[["Hp", "TAS", "M", "ROCD", "mass"]].iloc[-1:]
             results.append(res_vals)
 
-        # Post-traitement
         df_res = pd.concat(results).reset_index(drop=True)
         df_res["Hp"] *= ft
         df_res["TAS"] *= 1852 / 3600
@@ -194,7 +199,6 @@ def process_single_flight(row, AC, processor, output_dir):
         df_res["bada_gamma_rad"] = np.arcsin(df_res.bada_vz_ms / df_res.bada_tas_ms)
         df_res = df_res.drop(columns=["M"])
 
-        # Sauvegarde
         out_path = output_dir / f"{flight_id}.parquet"
         df_res.to_parquet(out_path, index=False)
 

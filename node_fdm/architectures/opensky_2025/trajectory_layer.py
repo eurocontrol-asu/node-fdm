@@ -1,3 +1,9 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Torch module for computing basic trajectory features for OpenSky 2025 data."""
+
+from typing import Any, Dict, Mapping
+
 import torch
 import torch.nn as nn
 from node_fdm.architectures.opensky_2025.columns import (
@@ -11,18 +17,29 @@ from node_fdm.architectures.opensky_2025.columns import (
     col_mach,
     col_alt_sel,
     col_alt_diff,
-
 )
 
 from utils.physics.constants import gamma_ratio, R, p0, a0
 from utils.physics.torch import isa_temperature_torch, isa_pressure_torch
 
+
 class TrajectoryLayer(nn.Module):
-    def __init__(self):
+    """Compute trajectory outputs such as vertical speed, Mach, and calibrated airspeed."""
+
+    def __init__(self) -> None:
+        """Initialize the trajectory layer with base configuration."""
         super().__init__()
         self.alpha = 40
 
-    def forward(self, x):
+    def forward(self, x: Mapping[Any, torch.Tensor]) -> Dict[Any, torch.Tensor]:
+        """Compute derived trajectory quantities from the provided inputs.
+
+        Args:
+            x: Mapping from column identifiers to input tensors.
+
+        Returns:
+            Dictionary of derived tensors keyed by their column identifiers.
+        """
         output_dict = {}
         for col in [col_tas, col_gamma, col_alt, col_long_wind_spd]:
             x[col] = torch.nan_to_num(x[col], nan=0.0, posinf=1e6, neginf=-1e6)
@@ -33,23 +50,17 @@ class TrajectoryLayer(nn.Module):
         long_wind = x[col_long_wind_spd]
         alt = x[col_alt]
 
-        # --- Vertical speed ---
         output_dict[col_vz] = tas * torch.sin(gamma)
 
-        # --- ISA temperature ---
         temp = isa_temperature_torch(alt)
 
-        # --- Speed of sound (safe sqrt) ---
         a = torch.sqrt(torch.clamp(gamma_ratio * R * temp, min=1e-6, max=1e8))
 
-        # --- Mach number ---
         mach = tas / torch.clamp(a, min=1e-6, max=1e8)
         output_dict[col_mach] = mach
 
-        # --- Ground speed ---
         output_dict[col_gs] = tas - long_wind
 
-        # === CAS computation ===
         p = isa_pressure_torch(alt)
 
         pt_over_p = torch.pow(

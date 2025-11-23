@@ -1,3 +1,7 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Unit definitions specific to physics utilities."""
+
 import numpy as np
 from utils.data.unit import Unit
 from utils.physics.constants import (
