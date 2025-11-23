@@ -4,8 +4,14 @@ from node_fdm.architectures.opensky_2025 import (
     columns as opensky_2025_columns, 
     flight_process as opensky_2025_flight_process, 
     model as opensky_2025_model
-    )
+)
 
+
+from node_fdm.architectures.qar import (
+    columns as qar_columns, 
+    flight_process as qar_flight_process, 
+    model as qar_model
+)
 
 
 def get_architecture_module(target_name: str):
@@ -20,6 +26,14 @@ def get_architecture_module(target_name: str):
                 opensky_2025_flight_process.segment_filtering,
                 ),
             "model": opensky_2025_model,
+        },
+        "qar": {
+            "columns": qar_columns,
+            "custom_fn": (
+                qar_flight_process.flight_processing,
+                qar_flight_process.segment_filtering,
+                ),
+            "model": qar_model,
         },
         # Add other architectures here as needed
     }

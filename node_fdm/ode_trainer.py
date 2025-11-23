@@ -20,6 +20,8 @@ class ODETrainer:
         model_config,
         model_dir,
         num_workers=4,
+        load_parallel=True,
+        train_val_num=(5000, 500)
     ):
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
@@ -39,6 +41,8 @@ class ODETrainer:
             shift=model_config['shift'],
             seq_len=model_config['seq_len'],
             custom_fn=custom_fn,
+            load_parallel=load_parallel,
+            train_val_num = train_val_num
         )
         self.step = model_config['step']
         self.num_workers = num_workers

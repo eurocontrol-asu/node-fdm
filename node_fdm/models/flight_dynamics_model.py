@@ -1,12 +1,6 @@
 import torch
 import torch.nn as nn
 
-from node_fdm.architectures.opensky_2025.columns import (
-    col_gs,
-    col_vz,
-    col_gamma,
-    col_tas,
-)
 from utils.learning.base.structured_layer import StructuredLayer
 
 
@@ -87,12 +81,7 @@ class FlightDynamicsModel(nn.Module):
             vect_dict = vect_dict | self.layers_dict[name](vect_dict)
 
         ode_output = torch.stack(
-            [
-                vect_dict[col_gs],
-                vect_dict[col_vz],
-                vect_dict[col_gamma.derivative],
-                vect_dict[col_tas.derivative],
-            ],
+            [coeff  * vect_dict[col] for coeff, col in self.dx_cols],
             dim=1,
         )
 

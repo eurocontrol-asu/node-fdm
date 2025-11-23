@@ -2,14 +2,13 @@
 import sys
 from pathlib import Path
 
-# Détermine le chemin vers la racine du projet
-root_path = Path.cwd().parents[0]  # si ton notebook est dans notebooks/
+root_path = Path.cwd().parents[1] 
 sys.path.append(str(root_path))
 
 from config import TYPECODES, PROCESS_DIR
 import pandas as pd
 from pathlib import Path
-from node_fdm.architectures.opensky_2025.model import MODEL_COLS, ARCHITECTURE, X_COLS, col_vz, col_mach, col_cas
+from node_fdm.architectures.opensky_2025.model import MODEL_COLS
 from node_fdm.data.dataset import SeqDataset
 split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
 

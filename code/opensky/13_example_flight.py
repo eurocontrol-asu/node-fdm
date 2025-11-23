@@ -2,8 +2,7 @@
 import sys
 from pathlib import Path
 
-# Détermine le chemin vers la racine du projet
-root_path = Path.cwd().parents[0]  # si ton notebook est dans notebooks/
+root_path = Path.cwd().parents[1]
 sys.path.append(str(root_path))
 
 from config import DATA_DIR, FIGURE_DIR
@@ -113,9 +112,3 @@ chart = alt.vconcat(
 )
 chart.save(FIGURE_DIR / "traj_example2.pdf")
 chart
-
-# %%
-
-dfi.columns
-
-# %%

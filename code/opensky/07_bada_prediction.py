@@ -2,27 +2,24 @@
 import sys
 from pathlib import Path
 
-# Détermine le chemin vers la racine du projet
-root_path = Path.cwd().parents[0]  # si ton notebook est dans notebooks/
+root_path = Path.cwd().parents[1]
 sys.path.append(str(root_path))
-sys.path.append("/data/common/dataiku/config/projects/FUEL_MODEL/lib/python/BADA")
 
 
-from config import PROCESS_DIR, BADA_DIR, DEFAULT_CPU_COUNT
+
+
+from config import PROCESS_DIR, BADA_DIR, DEFAULT_CPU_COUNT # PYBADA_DIR
 from node_fdm.architectures.opensky_2025.flight_process import flight_processing
 from node_fdm.data.flight_processor import FlightProcessor
 from node_fdm.architectures.opensky_2025.model import MODEL_COLS
 
-from utils.physics.constants import ft
 import pandas as pd
-import os
 from tqdm import tqdm
-import numpy as np
 from joblib import Parallel, delayed
 from config import BADA_4_2_DIR, TYPECODES
 from pybada_predictor.aircraft_mapping import BADA_4_2_MAPPING
 
-
+# sys.path.append(PYBADA_DIR) #ADD YOUR PYBADA if local clone 
 from pyBADA.bada4 import Bada4Aircraft
 
 

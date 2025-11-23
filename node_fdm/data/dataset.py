@@ -27,6 +27,7 @@ class SeqDataset(Dataset):
         self.shift = shift
         self.seq_len = seq_len
         self.x_cols, self.u_cols, self.e0_cols, self.e_cols, self.dx_cols = model_cols
+        self.dx_cols = [el[1] for el in self.dx_cols]
         self.model_cols = model_cols
         self.load_parallel = load_parallel
         self.n_jobs = n_jobs

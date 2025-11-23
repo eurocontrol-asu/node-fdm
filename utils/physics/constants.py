@@ -32,3 +32,48 @@ tropopause_alt_m = 11000.0  # Tropopause altitude in meters
 lapse_rate = 0.0065          # Temperature lapse rate in K/m (duplicate of L)
 
 T0 = 288.15
+
+gear_set_dict = {
+    'UP': 1,
+    'DOWN': 0,
+}
+
+flap_dict = {
+    '0': 0,
+    '1': 1,
+    '2': 2,
+    '3': 3,
+    'FULL': 4,
+    'NRD': 5,  # NRD = Not Readable / Not Detected
+}
+
+spd_brake_dict = {
+    'NOT COMMANDED': 0,
+    'COMMANDED': 1,
+}
+
+on_ground_dict = {
+    'AIR': 0,
+    'GROUND': 1,
+}
+
+
+fma_2_dict = {
+    'SRS': 0,
+    'CLB': 1,
+    'OP CLB': 2,
+    'EXP CLB': 3,
+    'ALT': 4,
+    'ALT*': 5,
+    'FINAL': 6,
+    'DES': 7,
+    'OP DES': 8,
+    'EXP DES': 9,
+    'V/S': 10,
+    'FPA': 11,
+    'FLARE': 12,
+    'G/S': 13,
+    'G/S*': 14,
+    'ROLL': 15,
+    'nan': 16,  # Missing or undefined
+}

@@ -3,7 +3,7 @@
 import sys
 from pathlib import Path
 
-sys.path.append(str(Path.cwd().parents[0]))  # ajoute node-fdm/
+sys.path.append(str(Path.cwd().parents[1]))  # ajoute node-fdm/
 
 from config import PREPROCESS_DIR, PROCESS_DIR, ERA5_CACHE_DIR, ERA5_FEATURES
 

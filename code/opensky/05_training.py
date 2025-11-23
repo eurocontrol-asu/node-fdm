@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-root_path = Path.cwd().parents[0] 
+root_path = Path.cwd().parents[1] 
 sys.path.append(str(root_path))
 
 from config import TYPECODES, MODELS_DIR

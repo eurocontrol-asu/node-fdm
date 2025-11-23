@@ -23,7 +23,7 @@ class FlightProcessor:
             self.e_cols,
             self.dx_cols,
         ) = model_cols
-
+        self.dx_cols = [el[1] for el in self.dx_cols]
         self.custom_processing_fn = custom_processing_fn
 
     # ------------------------------------------------------------------
