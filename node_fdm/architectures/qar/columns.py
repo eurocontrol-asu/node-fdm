@@ -31,7 +31,7 @@ col_alt = Column("altitude standard", "alt_std", "ALT__STD", feet)
 col_tas = Column("true air speed", "tas", "SPD__TAS", knot)
 col_cas = Column("calibrated air speed", "cas", "SPD__CAS", knot)
 col_gs = Column("ground speed", "gs", "SPD__GND", knot)
-col_mach = Column("mach number", "mach", "SPD__MACH", dimensionless)  #, normalize_mode=None
+col_mach = Column("mach number", "mach", "SPD__MACH", dimensionless, normalize_mode=None)
 col_vz = Column("vertical speed", "vz", "ATT__VV", feet_per_minute)
 col_gamma = Column("flight path angle", "gamma", "ATT__FPA", degree)
 col_pitch = Column("pitch angle", "pitch", "ATT__PITCH", degree)
@@ -60,6 +60,8 @@ col_flap_setting = Column(
     flap_conf,
     normalize_mode=None, 
     denormalize_mode = "max",
+    last_activation_fn = nn.Sigmoid,
+    loss_name = "focal_mse",
 )
 
 col_gear_up = Column(
@@ -69,6 +71,8 @@ col_gear_up = Column(
     gear_up, 
     normalize_mode=None, 
     denormalize_mode = None, 
+    last_activation_fn = nn.Sigmoid,
+    loss_name="focal"
 )
 
 col_spd_brake_commanded = Column(
@@ -78,11 +82,12 @@ col_spd_brake_commanded = Column(
     spd_brake_commanded, 
     normalize_mode=None, 
     denormalize_mode = None, 
-    
+    last_activation_fn = nn.Sigmoid,
+    loss_name="focal"
 )
 
 col_on_ground = Column("on ground", "on_grnd", "GEAR__WOW_MAIN", on_ground)
-col_fma_2 = Column("FMA column 2", "fma_col_2", "FMA_COL_2", fma_col_2)
+col_fma_2 = Column("FMA column 2", "fma_col_2", "FMA_COL_2", fma_col_2, loss_name="cross_entropy")
 
 
 # Processed columns: created or computed during processing, may not have raw names

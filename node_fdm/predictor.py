@@ -4,12 +4,16 @@ import numpy as np
 from pathlib import Path
 from node_fdm.models.flight_dynamics_model_prod import FlightDynamicsModelProd
 
-from node_fdm.architectures.opensky_2025.model import X_COLS, U_COLS, E0_COLS, E1_COLS
-from node_fdm.architectures.opensky_2025.columns import col_dist, col_alt, col_gamma, col_tas, col_vz, col_cas, col_mach, col_gs
-
 class NodeFDMPredictor:
-    def __init__(self, model_path: Path, dt: float = 4.0, device: str = "cuda:0"):
+    def __init__(
+            self, 
+            model_cols: list,
+            model_path: Path, 
+            dt: float = 4.0, 
+            device: str = "cuda:0"
+        ):
         self.model_path = Path(model_path)
+        self.x_cols, self.u_cols, self.e0_cols, self.e_cols, self.dx_cols = model_cols
         self.dt = dt
         self.device = torch.device(device)
         self.model = FlightDynamicsModelProd(model_path).to(self.device)
@@ -20,23 +24,20 @@ class NodeFDMPredictor:
     def _get_dict(f, cols, i):
         return {col: torch.tensor(f[col].iloc[i:i+1].values.astype(np.float32)) for col in cols}
 
-    def _get_state(self, f, i): return self._get_dict(f, X_COLS, i)
-    def _get_ctrl(self, f, i): return self._get_dict(f, U_COLS, i)
-    def _get_env(self, f, i):  return self._get_dict(f, E0_COLS + E1_COLS, i)
+    def _get_state(self, f, i): return self._get_dict(f, self.x_cols, i)
+    def _get_ctrl(self, f, i): return self._get_dict(f, self.u_cols, i)
+    def _get_env(self, f, i):  return self._get_dict(f, self.e0_cols + self.e_cols, i)
 
     # --- State propagation ---
     def _next_state(self, current_state, res_dict):
         new_state = dict()
-        new_state[col_dist] = current_state[col_dist] + self.dt * res_dict[col_gs]
-        new_state[col_alt]  = current_state[col_alt]  + self.dt * res_dict[col_vz]
-        new_state[col_gamma] = current_state[col_gamma] + self.dt * res_dict[col_gamma.derivative]
-        new_state[col_tas] = current_state[col_tas] + self.dt * res_dict[col_tas.derivative]
+        for x_col, (coeff, dx_col) in zip(self.x_cols, self.dx_cols):
+            new_state[x_col] = current_state[x_col] + coeff * self.dt * res_dict[dx_col]
         return new_state
 
     # --- Predict a single flight ---
-    def predict_flight(self, flight_df: pd.DataFrame):
-        add_cols = [col_cas, col_tas.derivative, col_mach, col_vz]
-        display_dict = {col: [] for col in X_COLS + add_cols}
+    def predict_flight(self, flight_df: pd.DataFrame, add_cols: list = []) -> pd.DataFrame:
+        display_dict = {col: [] for col in self.x_cols + add_cols}
 
         current_state = self._get_state(flight_df, 0)
         current_state = {k: v.to(self.device) for k, v in current_state.items()}

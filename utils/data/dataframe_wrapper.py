@@ -1,6 +1,6 @@
 import pandas as pd
 from typing import Union, List
-from node_fdm.architectures.opensky_2025.columns import Column
+from utils.data.column import Column
 
 class IlocIndexer:
     def __init__(self, parent):

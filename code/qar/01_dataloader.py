@@ -5,13 +5,12 @@ from pathlib import Path
 root_path = Path.cwd().parents[1] 
 sys.path.append(str(root_path))
 
-from config import MODELS_DIR
 
 import pandas as pd
 from pathlib import Path
 from node_fdm.ode_trainer import ODETrainer
 from config import PROCESS_DIR, MODELS_DIR
-
+from node_fdm.architectures.qar.model import E2_COLS, E3_COLS
 
 split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
 
@@ -26,7 +25,7 @@ model_config = dict(
     num_workers=4,
     model_params=[3, 2, 48],
     loading_args = (False, False),
-    batch_size = 512
+    batch_size = 1000
 )
 
 
@@ -39,15 +38,26 @@ trainer = ODETrainer(
     model_config,
     MODELS_DIR,
     num_workers=4,
-    train_val_num=(500, 100)
+    train_val_num=(1000, 500),
+    load_parallel=True
 )
 
-# %%
+
+
+
+
+
+#%%
+alpha_dict = {
+    col: 1.0 for col in trainer.x_cols + E2_COLS+ E3_COLS
+}
+
 trainer.train(
-    epochs=5, 
+    epochs=10, 
     batch_size=model_config['batch_size'],
     val_batch_size=10000,
     method="euler",
+    alpha_dict=alpha_dict
 )
 
 
@@ -58,7 +68,15 @@ f = f[-1]
 
 
 for col in f.columns:
+    print(col, f[col].isna().sum()>0)
     plt.plot(f[col])
     plt.title(col)
     plt.show()
+# %%
+from node_fdm.architectures.qar.columns import col_ff
+f[col_ff].isna().sum()
+# %%
+
+# %%
+trainer.stats_dict
 # %%

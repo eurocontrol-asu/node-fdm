@@ -26,9 +26,9 @@ class TrajectoryLayer(nn.Module):
 
     def forward(self, x):
         output_dict = {}
-        for col in [col_tas, col_gamma, col_alt, col_head_wind_spd]:
-            x[col] = torch.nan_to_num(x[col], nan=0.0, posinf=1e6, neginf=-1e6)
-            x[col] = torch.clamp(x[col], min=-1e6, max=1e6)
+        for col in x.keys():
+            x[col] = torch.nan_to_num(x[col], nan=0.0, posinf=1e8, neginf=-1e8)
+            x[col] = torch.clamp(x[col], min=-1e8, max=1e8)
 
         tas = x[col_tas]
         gamma = x[col_gamma]

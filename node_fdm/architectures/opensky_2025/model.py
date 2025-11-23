@@ -50,7 +50,6 @@ DX_COLS = [
     (1, col_tas.derivative),
 ]
 
-
 E1_COLS = [
     col_vz,
     col_mach,

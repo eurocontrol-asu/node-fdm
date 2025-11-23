@@ -23,7 +23,7 @@ class FlightProcessor:
             self.e_cols,
             self.dx_cols,
         ) = model_cols
-        self.dx_cols = [el[1] for el in self.dx_cols]
+        self.dx_cols = [col.derivative for col in self.x_cols]
         self.custom_processing_fn = custom_processing_fn
 
     # ------------------------------------------------------------------
@@ -40,8 +40,8 @@ class FlightProcessor:
                 df[gold_col] = col.unit.convert(df[raw_col])
 
         # === 2. Automatic derivative computation ===
-        for col, d_col in zip(self.x_cols, self.dx_cols):
-            df[d_col] = df[col].diff(1).bfill()
+        for col in self.x_cols:
+            df[col.derivative] = df[col].diff(1).bfill()
 
         # === 3. Optional user-defined processing ===
         if self.custom_processing_fn is not None:

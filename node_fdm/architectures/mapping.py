@@ -1,48 +1,34 @@
 import json
-
-from node_fdm.architectures.opensky_2025 import (
-    columns as opensky_2025_columns, 
-    flight_process as opensky_2025_flight_process, 
-    model as opensky_2025_model
-)
+import importlib
 
 
-from node_fdm.architectures.qar import (
-    columns as qar_columns, 
-    flight_process as qar_flight_process, 
-    model as qar_model
-)
-
-
-def get_architecture_module(target_name: str):
+def get_architecture_module(name: str):
     """
-    Retrieve the architecture module based on the target name.
+    Dynamically import only the architecture requested.
     """
-    architecture_modules = {
-        "opensky_2025": {
-            "columns": opensky_2025_columns,
-            "custom_fn": (
-                opensky_2025_flight_process.flight_processing,
-                opensky_2025_flight_process.segment_filtering,
-                ),
-            "model": opensky_2025_model,
-        },
-        "qar": {
-            "columns": qar_columns,
-            "custom_fn": (
-                qar_flight_process.flight_processing,
-                qar_flight_process.segment_filtering,
-                ),
-            "model": qar_model,
-        },
-        # Add other architectures here as needed
+
+    valid_names = ["opensky_2025", "qar"]
+
+    if name not in valid_names:
+        raise ValueError(f"Unknown architecture '{name}'. Valid names: {valid_names}")
+
+    # dynamic import: node_fdm.architectures.<name>
+    module_root = f"node_fdm.architectures.{name}"
+
+    # submodules imported only when necessary
+    columns = importlib.import_module(f"{module_root}.columns")
+    flight_process = importlib.import_module(f"{module_root}.flight_process")
+    model = importlib.import_module(f"{module_root}.model")
+
+    return {
+        "columns": columns,
+        "custom_fn": (
+            flight_process.flight_processing,
+            flight_process.segment_filtering,
+        ),
+        "model": model,
     }
-    
-    if target_name in architecture_modules:
-        return architecture_modules[target_name]
-    else:
-        raise ValueError(f"Architecture '{target_name}' not found.")
-    
+
 
 
 def get_architecture_from_name(architecture_name):
@@ -53,14 +39,21 @@ def get_architecture_from_name(architecture_name):
     return architecture, model_cols, custom_fn
 
 
+
 def get_architecture_params_from_meta(meta_path):
     with open(meta_path, "r") as f:
         meta = json.load(f)
+
     architecture, model_cols, _ = get_architecture_from_name(meta["architecture_name"])
-    all_cols_dict = {str(col) : col for cols in model_cols for col in cols}
-    meta_dict = meta["stats_dict"]
-    stats_dict = {}
-    for str_col, stats in meta_dict.items():
-        col = all_cols_dict[str_col]
-        stats_dict[col] =stats
+    x_cols, u_cols, e0_cols, e_cols, dx_cols = model_cols
+    deriv_cols = [col.derivative for col in x_cols]
+    model_cols2 = [x_cols, u_cols, e0_cols, e_cols, deriv_cols]
+
+    # mapping string → column object
+    all_cols_dict = {str(col): col for cols in model_cols2 for col in cols}
+    stats_dict = {
+        all_cols_dict[str_col]: stats
+        for str_col, stats in meta["stats_dict"].items()
+    }
+
     return architecture, model_cols, meta["model_params"], stats_dict

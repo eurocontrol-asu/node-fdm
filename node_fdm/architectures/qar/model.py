@@ -102,10 +102,18 @@ ANGLE_LAYER =  [
 ]
 
 
+ENGINE_LAYER =  [
+    "engine",
+    StructuredLayer,
+    X_COLS + E0_COLS + E1_COLS,
+    E3_COLS,
+    True
+]
+
 DATA_ODE_LAYER = [
     "data_ode",
     StructuredLayer,
-    X_COLS + U_COLS + E0_COLS + E1_COLS,
+    X_COLS + U_COLS + E0_COLS + E1_COLS + E2_COLS + E3_COLS,
     [col_tas.derivative, col_gamma.derivative],
     True
 ]
@@ -113,5 +121,6 @@ DATA_ODE_LAYER = [
 ARCHITECTURE = [
     TRAJECTORY_LAYER,
     ANGLE_LAYER,
+    ENGINE_LAYER,
     DATA_ODE_LAYER
 ]

@@ -1,10 +1,14 @@
 import numpy as np
 import pandas as pd 
 
+from scipy.signal import butter, filtfilt
+
 from utils.physics.constants import (
     gamma_ratio,
     R,
 )
+
+from node_fdm.architectures.qar.model import X_COLS
 
 from node_fdm.architectures.qar.columns import (
     col_alt_diff, 
@@ -30,6 +34,7 @@ from node_fdm.architectures.qar.columns import (
     col_runway_elev,
     col_fma_2,
     col_dist_to_thr,
+    col_mass,
 )
 
 def mode_stabilize(series, min_duration=10):
@@ -84,6 +89,10 @@ def smooth_strong(x, window_size=100):
     
     return y
 
+def filter_noise(df_col, fs=1.0, cutoff=0.04, order=4):
+    b, a = butter(order, cutoff / (fs / 2), btype='low')
+    signal_filtre = filtfilt(b, a, df_col)
+    return signal_filtre
 
 def flight_processing(df, step=4):
     """
@@ -98,9 +107,7 @@ def flight_processing(df, step=4):
             
     smooth_gamma_rad = smooth_strong(df[col_gamma])
     smooth_vz_sel = np.tan(smooth_gamma_rad) * df[col_gs]
-
     df[col_vz_sel] =  mode_stabilize(df[col_vz_sel])
-
     df[col_vz_sel] = df.fma_col_2_category.isin([6, 11, 12, 13, 14, 15]) * smooth_vz_sel + df.fma_col_2_category.isin([10]) * df[col_vz_sel]
 
     alt_cond1 = df[col_alt].diff(5).fillna(0)>500
@@ -116,6 +123,8 @@ def flight_processing(df, step=4):
     df[col_alt_sel] =  np.where(df[col_dist_to_thr]<3, df[col_runway_elev], df[col_alt_sel])  
     
     df = engine_process(df)
+
+    df[col_mass.derivative] = -df[col_ff]
     
     df[col_alt_diff] = df[col_alt_sel] - df[col_alt]
     df[col_spd_diff] = df[col_spd_sel] - df[col_cas]
@@ -124,7 +133,6 @@ def flight_processing(df, step=4):
     df = df.bfill().ffill()
     df = df[df[col_on_ground] == 0]
     df = df.iloc[::step]
-
     return df
 
 

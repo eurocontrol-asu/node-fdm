@@ -4,7 +4,6 @@ import pandas as pd
 import numpy as np
 from tqdm import tqdm
 from torch.utils.data import Dataset
-from node_fdm.architectures.opensky_2025.columns import col_dist
 from node_fdm.data.flight_processor import FlightProcessor
 
 from joblib import Parallel, delayed
@@ -27,7 +26,7 @@ class SeqDataset(Dataset):
         self.shift = shift
         self.seq_len = seq_len
         self.x_cols, self.u_cols, self.e0_cols, self.e_cols, self.dx_cols = model_cols
-        self.dx_cols = [el[1] for el in self.dx_cols]
+        self.deriv_cols = [col.derivative for col in self.x_cols]
         self.model_cols = model_cols
         self.load_parallel = load_parallel
         self.n_jobs = n_jobs
@@ -63,7 +62,7 @@ class SeqDataset(Dataset):
             axis=0,
         )
 
-        all_cols = self.x_cols + self.u_cols + self.e0_cols + self.e_cols + self.dx_cols
+        all_cols = self.x_cols + self.u_cols + self.e0_cols + self.e_cols + self.deriv_cols 
 
         self.stats_dict = dict()
 
@@ -83,7 +82,7 @@ class SeqDataset(Dataset):
             x_seq = f[self.x_cols].values.astype(np.float32)
             u_seq = f[self.u_cols].values.astype(np.float32)
             e_seq = f[self.e0_cols + self.e_cols].values.astype(np.float32)
-            dx_seq = f[self.dx_cols].values.astype(np.float32)
+            dx_seq = f[self.deriv_cols].values.astype(np.float32)
 
             for start in range(0, N - self.seq_len + 1, self.shift):
                 custom_segment_filtering_bool= True
@@ -127,5 +126,5 @@ class SeqDataset(Dataset):
         x_seq = f[self.x_cols].values.astype(np.float32)
         u_seq = f[self.u_cols].values.astype(np.float32)
         e0_seq = f[self.e0_cols + self.e_cols].values.astype(np.float32)
-        dx_seq = f[self.dx_cols].values.astype(np.float32)
+        dx_seq = f[self.deriv_cols].values.astype(np.float32)
         return x_seq, u_seq, e0_seq, dx_seq, f
