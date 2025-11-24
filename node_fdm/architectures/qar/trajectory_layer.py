@@ -56,7 +56,7 @@ class TrajectoryLayer(nn.Module):
 
         temp = isa_temperature_torch(alt)
 
-        a = torch.sqrt(torch.clamp(gamma_ratio * R * temp, min=1e-6, max=1e8))
+        a = torch.sqrt(torch.clamp(gamma_ratio * R * temp, min=1e-6, max=1e6))
 
         mach = tas / torch.clamp(a, min=1e-6, max=1e8)
         output_dict[col_mach] = mach
