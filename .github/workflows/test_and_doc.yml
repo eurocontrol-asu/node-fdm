@@ -46,7 +46,7 @@ jobs:
 
       - name: Install documentation tools
         run: |
-          pip install mkdocs-material mkdocstrings
+          pip install mkdocs-material mkdocstrings[python]
 
       - name: Deploy production docs
         run: mkdocs gh-deploy --force
@@ -67,7 +67,7 @@ jobs:
 
       - name: Install documentation tools
         run: |
-          pip install mkdocs-material mkdocstrings
+          pip install mkdocs-material mkdocstrings[python]
 
       - name: Deploy preview docs
         run: mkdocs gh-deploy --force --config-file mkdocs-dev.yml

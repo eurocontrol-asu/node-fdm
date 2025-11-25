@@ -46,6 +46,11 @@ test = [
   "pytest>=7.4",
 ]
 
+docs = [
+  "mkdocs-material>=9",
+  "mkdocstrings[python]>=0.27",
+]
+
 [project.urls]
 Homepage = "https://github.com/eurocontrol"
 
