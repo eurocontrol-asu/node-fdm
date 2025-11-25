@@ -7,7 +7,23 @@ theme:
 
 nav:
   - Home: index.md
+  - Guide:
+      - Installation: guide/installation.md
+      - Quickstart: guide/quickstart.md
+      - Workflows: guide/workflows.md
+  - How-to:
+      - Train a model: howto/train_model.md
+      - Run inference: howto/run_inference.md
+      - Configure paths: howto/configure_params.md
+  - Concepts: concepts/index.md
+  - API Reference:
+      - node_fdm: reference/node_fdm.md
 
 plugins:
   - search
-  - mkdocstrings
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google
+            show_source: true
