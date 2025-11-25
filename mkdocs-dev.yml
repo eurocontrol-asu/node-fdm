@@ -15,9 +15,15 @@ nav:
       - Train a model: howto/train_model.md
       - Run inference: howto/run_inference.md
       - Configure paths: howto/configure_params.md
+      - Create an architecture: howto/create_architecture.md
   - Concepts: concepts/index.md
   - API Reference:
-      - node_fdm: reference/node_fdm.md
+      - Overview: reference/node_fdm.md
+      - Trainer: reference/ode_trainer.md
+      - Predictor: reference/predictor.md
+      - Data pipeline: reference/data.md
+      - Architectures: reference/architectures.md
+      - Model wrappers: reference/models.md
 
 plugins:
   - search

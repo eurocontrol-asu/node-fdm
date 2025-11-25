@@ -1,28 +1,32 @@
-# Train a Neural ODE model
+# Train a Neural ODE model (generic)
 
-Prerequisites: processed flights and `dataset_split.csv` produced by `04_weather_spd_process_data.py`.
+Prerequisites:
+- A processed dataset compatible with the target architecture (columns and preprocessing must match).
+- A file list DataFrame with at least `filepath` and `split` (`train` / `val` / `test`).
 
-## Minimal training script (single aircraft)
+## Minimal training script
+Set the architecture name you want to use (e.g., `opensky_2025`, `qar`, or your custom one registered in `architectures.mapping.valid_names`).
 ```python
-from pathlib import Path
 import pandas as pd
 from node_fdm.ode_trainer import ODETrainer
 from config import PROCESS_DIR, MODELS_DIR
 
+acft = "A320"  # or any grouping key you use
+arch = "opensky_2025"  # replace with your architecture
+
 split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
-acft = "A320"
 data_df = split_df[split_df.aircraft_type == acft]
 
 model_config = dict(
-    architecture_name="opensky_2025",
-    model_name=f"opensky_{acft}",
-    step=4,           # seconds between samples
-    shift=60,         # stride when sliding windows
-    seq_len=60,       # 4 minutes per sample
+    architecture_name=arch,
+    model_name=f"{arch}_{acft}",
+    step=4,           # sample period (seconds)
+    shift=60,         # stride for sliding windows
+    seq_len=60,       # window length (steps)
     lr=1e-3,
     weight_decay=1e-4,
-    model_params=[3, 2, 48],   # see architecture/model.py
-    loading_args=(False, False),
+    model_params=[3, 2, 48],   # architecture-specific (see model.py)
+    loading_args=(False, False),  # (load, load_loss)
     batch_size=512,
     num_workers=4,
 )
@@ -40,17 +44,17 @@ trainer.train(
     batch_size=model_config["batch_size"],
     val_batch_size=10_000,
     method="euler",   # or "rk4"
-    alpha_dict=None,  # defaults to 1.0 for each monitored column
+    alpha_dict=None,  # defaults to 1.0 per monitored column
 )
 ```
 
-Outputs in `models/opensky_<TYPECODE>/`:
+Outputs in `models/<arch>_<group>/`:
 - `meta.json` with architecture name, stats, hyperparameters.
-- `trajectory.pt` and `data_ode.pt` checkpoints (modular per layer).
+- Layer checkpoints (e.g., `trajectory.pt`, `data_ode.pt`).
 - `training_losses.csv` and `training_curve.png`.
 
 ## Tips
-- Remove the hard-coded `acft = "A320"` override in `code/opensky/05_training.py` to loop over all types in `config.TYPECODES`.
-- Reduce `batch_size` or `num_workers` on small GPUs/CPUs.
-- To resume from checkpoints, set `loading_args=(True, True)` in `model_config`.
-- Tune `alpha_dict` in `ODETrainer.train` to rebalance losses across monitored columns (`X_COLS + E_COLS`).
+- For multiple architectures, run the loop per `architecture_name` and per data subset that matches its preprocessing/columns.
+- `model_params` is defined by each architecture’s `model.py`; keep it in sync with your custom architecture.
+- To resume training, set `loading_args=(True, True)`.
+- Use `alpha_dict` in `trainer.train` to rebalance losses across monitored columns (`X_COLS + E_COLS`).

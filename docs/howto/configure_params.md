@@ -1,6 +1,6 @@
 # Configure project paths and options
 
-All runtime settings live in `config.py` (workspace root: `lib/python`):
+All runtime settings live in `config.py` (repository root):
 
 - `DATA_DIR` and subfolders: where raw, preprocessed, processed, predicted, and BADA flights are stored.
 - `MODELS_DIR`: checkpoints produced by `ODETrainer`.
@@ -20,7 +20,7 @@ print("ERA5 features:", ERA5_FEATURES)
 ```
 
 Recommendations:
-- Keep paths relative to `lib/python` to avoid surprises when running scripts.
+- Keep paths relative to the repository root to avoid surprises when running scripts.
 - Update `TYPECODES` once in `config.py` instead of editing each script.
 - Ensure the directories exist before running downloads/preprocessing (`mkdir -p ...`).
 - Set `BADA_4_2_DIR` to the directory containing the BADA 4.2 data files if you plan to run `07_bada_prediction.py`.

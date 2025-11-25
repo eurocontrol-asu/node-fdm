@@ -1,6 +1,6 @@
-# Quickstart (OpenSky 2025 pipeline)
+# Quickstart
 
-This follows the scripts in `code/opensky` to reproduce the ADS-B workflow. Paths below assume `cd lib/python`.
+Paths below assume you are at the repository root (where `config.py` lives). Pick an architecture that matches your data (`opensky_2025`, `qar`, or your own registered architecture). The example commands use the OpenSky 2025 pipeline; replace the script set with your own if you have a different data source/preprocessing.
 
 ## 0) Configure paths and types
 - Edit `config.py` if you need different directories or aircraft typecodes (`TYPECODES`).

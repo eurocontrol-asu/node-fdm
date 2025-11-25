@@ -7,7 +7,6 @@
 
 ## Install the package and extras
 ```bash
-cd lib/python
 pip install -e .[all]            # core + traffic/fastmeteo/click/tqdm/matplotlib
 pip install -e .[bada]           # adds pyBADA if you have the data
 # Docs (if you want to build this site locally)
@@ -15,7 +14,7 @@ pip install mkdocs-material mkdocstrings[python]
 ```
 
 ## Project directories
-`config.py` points everything under `lib/python/data` by default:
+`config.py` points everything under `data` by default (works for any architecture as long as your preprocessing writes here):
 - `data/downloaded_parquet` : raw OpenSky history/flightlist/extended downloads
 - `data/preprocessed_parquet` : decoded + resampled flights (4s)
 - `data/processed_flights` : ERA5-enriched segments ready for training
