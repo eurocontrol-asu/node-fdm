@@ -10,7 +10,6 @@ nav:
   - Guide:
       - Installation: guide/installation.md
       - Quickstart: guide/quickstart.md
-      - Workflows: guide/workflows.md
   - How-to:
       - Train a model: howto/train_model.md
       - Run inference: howto/run_inference.md
