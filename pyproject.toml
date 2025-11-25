@@ -17,6 +17,11 @@ authors = [{ name = "Gabriel JARRY", email = "gabriel.jarry@eurocontrol.int" },
 
 dynamic = ["version"]
 
+[tool.setuptools_scm]
+version_file = "node_fdm/_version.py"
+fallback_version = "0.0.0-dev"   # optional safety net
+ 
+
 dependencies = [
     "torch>=2.6.0",
     "torchdiffeq>=0.2.5",
@@ -63,3 +68,6 @@ include = [
     "pybada_predictor*",
     "utils*",
 ]
+
+
+
