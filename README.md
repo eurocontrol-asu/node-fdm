@@ -1,5 +1,5 @@
 <p align="center">
-  <img src="./logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
+  <img src="./docs/images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
 </p>
 <p align="center">
   <em>Neural Ordinary Differential Equation (Neural ODE) model for aircraft flight dynamics</em>

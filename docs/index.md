@@ -1,7 +1,5 @@
-# 🌟 node-fdm — Documentation
-
 <p align="center">
-  <img src="../logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
+  <img src="images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
 </p>
 
 <p align="center">
