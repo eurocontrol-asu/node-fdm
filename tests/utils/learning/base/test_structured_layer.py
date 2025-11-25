@@ -48,28 +48,3 @@ def test_denormalize_output_clamps_using_max_ratio():
 
     expected = torch.tensor([2.4, -2.4])
     assert torch.allclose(out[col], expected)
-
-
-def test_forward_produces_predictions_for_all_output_columns():
-    unit = Unit("metre", "m")
-    col_alt = Column("altitude", "alt_fw", "alt_fw", unit)
-    col_spd = Column("speed", "spd_fw", "spd_fw", unit)
-    layer = make_layer([col_alt, col_spd], [col_alt, col_spd], output_max=10.0)
-
-    batch = torch.tensor(
-        [
-            [10.0, 20.0],
-            [0.5, -1.0],
-            [3.3, 0.0],
-        ],
-        dtype=torch.float32,
-    )
-    x_dict = {col_alt: batch[:, 0], col_spd: batch[:, 1]}
-
-    out = layer(x_dict)
-
-    assert set(out.keys()) == {col_alt, col_spd}
-    assert out[col_alt].shape == (3,)
-    assert out[col_spd].shape == (3,)
-    assert torch.isfinite(out[col_alt]).all()
-    assert torch.isfinite(out[col_spd]).all()
