@@ -10,4 +10,3 @@ data/processed_flights/*
 data/predicted_flights/*
 data/bada_flights/*
 config.py
-
