@@ -1,0 +1,73 @@
+name: Test and Deploy Docs
+
+on:
+  push:
+    branches: [main, dev]
+  workflow_dispatch:
+
+permissions:
+  contents: write  # nécessaire pour mkdocs gh-deploy
+
+jobs:
+
+  tests:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+          cache: "pip"
+
+      - name: Install dependencies
+        run: |
+          python -m pip install --upgrade pip
+          python -m pip install -e .[test]
+
+      - name: Run tests
+        run: pytest tests
+
+
+  docs-main:
+    needs: tests
+    if: github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install documentation tools
+        run: |
+          pip install mkdocs-material mkdocstrings
+
+      - name: Deploy production docs
+        run: mkdocs gh-deploy --force
+
+
+  docs-dev:
+    needs: tests
+    if: github.ref == 'refs/heads/dev'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install documentation tools
+        run: |
+          pip install mkdocs-material mkdocstrings
+
+      - name: Deploy preview docs
+        run: mkdocs gh-deploy --force --config-file mkdocs-dev.yml
