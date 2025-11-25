@@ -7,6 +7,7 @@ from typing import Any, List, Union
 import pandas as pd
 from utils.data.column import Column
 
+
 class IlocIndexer:
     """Custom iloc indexer returning wrapped DataFrames."""
 
@@ -20,8 +21,9 @@ class IlocIndexer:
         if isinstance(result, pd.DataFrame):
             return DataFrameWrapper(result)
         else:
-            return result  # Série ou autre, on retourne brut        
-        
+            return result  # Série ou autre, on retourne brut
+
+
 class LocIndexer:
     """Custom loc indexer returning wrapped DataFrames."""
 
@@ -40,6 +42,7 @@ class LocIndexer:
     def __setitem__(self, key, value):
         """Assign by label-based indexing."""
         self.parent._df.loc[key] = value
+
 
 class DataFrameWrapper:
     """Wrapper to allow Column objects in DataFrame indexing and assignment."""
@@ -88,7 +91,9 @@ class DataFrameWrapper:
 
         raise TypeError(f"Unsupported key type: {type(key)}")
 
-    def __setitem__(self, key: Union[str, Column, List[Union[str, Column]]], value) -> None:
+    def __setitem__(
+        self, key: Union[str, Column, List[Union[str, Column]]], value
+    ) -> None:
         """Assign values using Column-aware keys."""
         if isinstance(key, list):
             col_names = []
@@ -101,7 +106,7 @@ class DataFrameWrapper:
                     raise TypeError(f"Unsupported key type in list: {type(k)}")
                 col_names.append(col_name)
 
-            if hasattr(value, '__getitem__'):
+            if hasattr(value, "__getitem__"):
                 for i, col in enumerate(col_names):
                     if isinstance(value, (list, tuple)):
                         self._df[col] = value[i]
@@ -110,7 +115,9 @@ class DataFrameWrapper:
                     else:
                         self._df[col] = value
             else:
-                raise TypeError("Value must be indexable (list, tuple, dict, DataFrame) when key is a list")
+                raise TypeError(
+                    "Value must be indexable (list, tuple, dict, DataFrame) when key is a list"
+                )
 
         elif isinstance(key, Column):
             self._df[key.col_name] = value

@@ -6,10 +6,11 @@ from typing import Any, Callable, Optional
 from dataclasses import dataclass
 
 from utils.data.conversions import (
-    identity, 
+    identity,
     correct_float,
     correct_str,
 )
+
 
 @dataclass
 class Unit:
@@ -26,7 +27,7 @@ class Unit:
 
     name: str
     abbr: str
-    value_type: str = 'float'
+    value_type: str = "float"
     si_unit: Optional["Unit"] = None
     derivative: Optional["Unit"] = None
     modifier: Callable = identity

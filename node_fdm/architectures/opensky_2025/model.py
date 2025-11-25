@@ -64,13 +64,7 @@ E1_COLS = [
 
 MODEL_COLS = X_COLS, U_COLS, E0_COLS, E1_COLS, DX_COLS
 
-TRAJECTORY_LAYER =  [
-    "trajectory",
-    TrajectoryLayer,
-    X_COLS + E0_COLS,
-    E1_COLS,
-    False
-    ]
+TRAJECTORY_LAYER = ["trajectory", TrajectoryLayer, X_COLS + E0_COLS, E1_COLS, False]
 
 
 DATA_ODE_LAYER = [
@@ -78,10 +72,7 @@ DATA_ODE_LAYER = [
     StructuredLayer,
     X_COLS + U_COLS + E0_COLS + E1_COLS,
     [col_tas.derivative, col_gamma.derivative],
-    True
+    True,
 ]
 
-ARCHITECTURE = [
-    TRAJECTORY_LAYER,
-    DATA_ODE_LAYER
-]
+ARCHITECTURE = [TRAJECTORY_LAYER, DATA_ODE_LAYER]

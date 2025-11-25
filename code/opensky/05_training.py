@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-root_path = Path.cwd().parents[1] 
+root_path = Path.cwd().parents[1]
 sys.path.append(str(root_path))
 
 from config import TYPECODES, MODELS_DIR
@@ -16,7 +16,6 @@ split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
 
 
 model_config = dict(
-    
     architecture_name="opensky_2025",
     step=4,
     shift=60,
@@ -25,8 +24,8 @@ model_config = dict(
     seq_len=60,
     num_workers=4,
     model_params=[3, 2, 48],
-    loading_args = (False, False),
-    batch_size = 512
+    loading_args=(False, False),
+    batch_size=512,
 )
 
 
@@ -45,13 +44,11 @@ for acft in TYPECODES:
     n_step_per_epoch = len(trainer.train_dataset) // 512
     coeff = 50 / n_step_per_epoch
     trainer.train(
-        epochs=10, 
-        batch_size=model_config['batch_size'],
+        epochs=10,
+        batch_size=model_config["batch_size"],
         val_batch_size=10000,
         method="euler",
     )
-
-
 
 
 # %%

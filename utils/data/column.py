@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from utils.data.unit import Unit
 from typing import Callable, Optional, ClassVar, List, Dict
 
+
 @dataclass
 class Column:
     """Represent a feature column with associated metadata.
@@ -28,7 +29,7 @@ class Column:
     normalize_mode: str = "normal"
     denormalize_mode: str = "normal_clamp"
     last_activation_fn: Optional[Callable] = None
-    loss_name : str = "mse"
+    loss_name: str = "mse"
 
     _instances_dict: ClassVar[Dict[str, "Column"]] = {}
 
@@ -42,11 +43,13 @@ class Column:
 
         if abbr is not None:
             display_list.append(f"({abbr})")
-            col_list.append(abbr.replace("/", "").replace("%", "pct").replace("²", "2").lower())
+            col_list.append(
+                abbr.replace("/", "").replace("%", "pct").replace("²", "2").lower()
+            )
 
         self.display_name: str = " ".join(display_list)
         self.col_name: str = "_".join(col_list)
-            
+
     def __str__(self) -> str:
         """Return the programmatic column name."""
         return self.col_name
@@ -83,8 +86,7 @@ class Column:
             List[Column]: Registered Column objects.
         """
         return list(cls._instances_dict.values())
-    
-    
+
     def __hash__(self):
         """Hash by column name for dict/set usage."""
         return hash(self.col_name)
@@ -94,4 +96,3 @@ class Column:
         if not isinstance(other, Column):
             return False
         return self.col_name == other.col_name
-    

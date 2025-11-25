@@ -7,6 +7,7 @@ import random
 import pandas as pd
 from pathlib import Path
 
+
 def split_by_icao_counts(
     output_dir_path: Path,
     test_sum_target: int = 100,
@@ -39,7 +40,11 @@ def split_by_icao_counts(
 
     test_icaos, total = [], 0
     for icao, count in counts.items():
-        if total < test_sum_target or len(test_icaos) < min_test_icaos or total < min_test_sum:
+        if (
+            total < test_sum_target
+            or len(test_icaos) < min_test_icaos
+            or total < min_test_sum
+        ):
             test_icaos.append(icao)
             total += count
         else:
@@ -70,7 +75,9 @@ def split_by_icao_counts(
     df["aircraft_type"] = output_dir_path.name
     df["filepath"] = df["file"].apply(lambda f: str(output_dir_path / f))
 
-    print(f"{output_dir_path.name}: test={len(df[df.split=='test'])}, val={len(df[df.split=='val'])}, train={len(df[df.split=='train'])}")
+    print(
+        f"{output_dir_path.name}: test={len(df[df.split=='test'])}, val={len(df[df.split=='val'])}, train={len(df[df.split=='train'])}"
+    )
 
     return df[["filepath", "aircraft_type", "split"]]
 

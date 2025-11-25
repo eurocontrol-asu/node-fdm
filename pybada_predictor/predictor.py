@@ -20,6 +20,7 @@ from pyBADA.TCL import (
     target,
 )
 
+
 def process_single_flight(row: Any, AC: Any, processor: Any, output_dir: Path):
     """Process one flight with BADA predictions and save outputs.
 

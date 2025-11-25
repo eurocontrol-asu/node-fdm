@@ -10,7 +10,9 @@ import torch.nn as nn
 class MultiLayerDict(nn.Module):
     """Create a dictionary of layers keyed by column."""
 
-    def __init__(self, output_cols: Sequence[Any], layer_factory: Callable[[Any], nn.Module]):
+    def __init__(
+        self, output_cols: Sequence[Any], layer_factory: Callable[[Any], nn.Module]
+    ):
         """Initialize layered dictionary.
 
         Args:
@@ -19,11 +21,9 @@ class MultiLayerDict(nn.Module):
         """
         super().__init__()
         self.output_cols = output_cols
-        col_dict = {
-            col.col_name : layer_factory(col)
-            for col in self.output_cols}
+        col_dict = {col.col_name: layer_factory(col) for col in self.output_cols}
         self.layer_dict = nn.ModuleDict(col_dict)
-        
+
     def forward(self, x: Any) -> dict:
         """Apply each sub-layer and return outputs keyed by column objects.
 
@@ -34,7 +34,6 @@ class MultiLayerDict(nn.Module):
             Dictionary mapping column objects to layer outputs.
         """
         output_dict = {
-            col: self.layer_dict[col.col_name](x) 
-            for col in self.output_cols
+            col: self.layer_dict[col.col_name](x) for col in self.output_cols
         }
         return output_dict

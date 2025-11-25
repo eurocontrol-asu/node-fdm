@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Training utilities for neural ODE-based flight dynamics models."""
 
-from typing import Any, Dict, Iterable, Optional, Sequence, Tuple
+from typing import Any, Dict, Optional, Sequence, Tuple
 
 import os
 import json
@@ -43,8 +43,12 @@ class ODETrainer:
         """
 
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-        architecture, self.model_cols, custom_fn = get_architecture_from_name(model_config["architecture_name"])
-        self.x_cols, self.u_cols, self.e0_cols, self.e_cols, self.dx_cols = self.model_cols
+        architecture, self.model_cols, custom_fn = get_architecture_from_name(
+            model_config["architecture_name"]
+        )
+        self.x_cols, self.u_cols, self.e0_cols, self.e_cols, self.dx_cols = (
+            self.model_cols
+        )
         self.model_dir = model_dir / model_config["model_name"]
         os.makedirs(self.model_dir, exist_ok=True)
         self.architecture = architecture
@@ -55,13 +59,13 @@ class ODETrainer:
         self.train_dataset, self.val_dataset = get_train_val_data(
             data_df,
             self.model_cols,
-            shift=model_config['shift'],
-            seq_len=model_config['seq_len'],
+            shift=model_config["shift"],
+            seq_len=model_config["seq_len"],
             custom_fn=custom_fn,
             load_parallel=load_parallel,
-            train_val_num = train_val_num
+            train_val_num=train_val_num,
         )
-        self.step = model_config['step']
+        self.step = model_config["step"]
         self.num_workers = num_workers
 
         self.stats_dict = self.train_dataset.stats_dict
@@ -69,13 +73,16 @@ class ODETrainer:
         self.model = self.get_or_create_model(*model_config["loading_args"])
 
         self.optimizer = torch.optim.AdamW(
-            self.model.parameters(), lr=model_config['lr'], weight_decay=model_config['weight_decay']
+            self.model.parameters(),
+            lr=model_config["lr"],
+            weight_decay=model_config["weight_decay"],
         )
         self.epoch = 1
         self.save_meta()
 
-
-    def get_or_create_model(self, load: bool = False, load_loss: bool = False) -> FlightDynamicsModel:
+    def get_or_create_model(
+        self, load: bool = False, load_loss: bool = False
+    ) -> FlightDynamicsModel:
         """Instantiate a new model or load existing checkpoints.
 
         Args:
@@ -86,7 +93,7 @@ class ODETrainer:
             Initialized or restored `FlightDynamicsModel` instance.
         """
         self.best_val_loss = float("inf")
-        if load and os.path.exists(self.model_dir /  "meta.json"):
+        if load and os.path.exists(self.model_dir / "meta.json"):
             model = self.load_best_checkpoint(load_loss=load_loss)
         else:
             print("Creating new model.")
@@ -157,7 +164,7 @@ class ODETrainer:
 
         Creates or updates `meta.json` within the model directory.
         """
-        saved_stats_dict = {str(col) : value for col, value in self.stats_dict.items()}
+        saved_stats_dict = {str(col): value for col, value in self.stats_dict.items()}
 
         meta_dict = {
             "architecture_name": self.architecture_name,
@@ -183,7 +190,7 @@ class ODETrainer:
         layer = self.model.layers_dict[layer_name]
         save_dict = {
             "layer_state": layer.state_dict(),
-            "optimizer_state": self.optimizer.state_dict(), 
+            "optimizer_state": self.optimizer.state_dict(),
             "best_val_loss": self.best_val_loss,
             "epoch": self.epoch + epoch,
         }
@@ -208,7 +215,9 @@ class ODETrainer:
         Returns:
             Normalized tensor.
         """
-        return (vect - self.stats_dict[col]["mean"]) / (self.stats_dict[col]["std"] + 1e-3 )
+        return (vect - self.stats_dict[col]["mean"]) / (
+            self.stats_dict[col]["std"] + 1e-3
+        )
 
     def cat_to_dict_vects(
         self,
@@ -233,8 +242,10 @@ class ODETrainer:
             if (col.normalize_mode == "normal") & (normalize):
                 return self.norm_vect(el, col)
             return el
-        
-        coeff_list = [alpha_dict[col] if col in alpha_dict.keys() else 0.0 for col in col_list]
+
+        coeff_list = [
+            alpha_dict[col] if col in alpha_dict.keys() else 0.0 for col in col_list
+        ]
 
         vects = torch.cat(vect_list, dim=2)
         vects_dict = {
@@ -380,9 +391,7 @@ class ODETrainer:
         )
 
         if alpha_dict is None:
-            alpha_dict = {
-                col: 1.0 for col in self.x_cols
-            }
+            alpha_dict = {col: 1.0 for col in self.x_cols}
 
         self.stats_dict = self.train_dataset.stats_dict
 

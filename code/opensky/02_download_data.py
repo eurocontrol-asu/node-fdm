@@ -1,6 +1,7 @@
 # %%
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path.cwd().parents[1]))
 
 from config import DATA_DIR, DOWNLOAD_DIR

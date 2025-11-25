@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Meteorological preprocessing utilities and parameter derivations."""
 
-from typing import Any, Dict, Iterable, List, Tuple
+from typing import Any, Dict, List, Tuple
 
 import pandas as pd
 import numpy as np
@@ -11,16 +11,7 @@ from scipy.signal import savgol_filter
 
 from joblib import Parallel, delayed
 
-from utils.physics.constants import (
-    T0,
-    p0,
-    g,
-    R,
-    gamma_ratio,
-    a0, 
-    ftmn,
-    kt
-)
+from utils.physics.constants import T0, p0, g, R, gamma_ratio, a0, ftmn, kt
 
 
 def detect_constant_segments(
@@ -62,7 +53,12 @@ def detect_constant_segments(
 
     if smooth_window is not None and smooth_window > 1:
         if smooth_method == "rolling":
-            y = pd.Series(y).rolling(window=smooth_window, center=True, min_periods=1).mean().values
+            y = (
+                pd.Series(y)
+                .rolling(window=smooth_window, center=True, min_periods=1)
+                .mean()
+                .values
+            )
         elif smooth_method == "savgol":
             win = min(smooth_window, len(y) - (len(y) % 2 == 0))
             y = savgol_filter(y, window_length=win, polyorder=2, mode="interp")
@@ -74,7 +70,9 @@ def detect_constant_segments(
         elif "Alt" in f.columns:
             alt = f["Alt"].values
         else:
-            raise ValueError("No altitude column found ('altitude' or 'Alt') while use_alt=True")
+            raise ValueError(
+                "No altitude column found ('altitude' or 'Alt') while use_alt=True"
+            )
 
     dy = np.abs(np.diff(y))
     stable = np.concatenate([[False], dy < tol])
@@ -140,7 +138,9 @@ def add_segment_column(f, segments, col_name, fill_value=0.0):
     return f
 
 
-def build_spd_and_vert_selected_from_segments(f: pd.DataFrame, config: Dict[str, Any]) -> pd.DataFrame:
+def build_spd_and_vert_selected_from_segments(
+    f: pd.DataFrame, config: Dict[str, Any]
+) -> pd.DataFrame:
     """Build selected variables (Mach, CAS, vertical_rate, altitude) from detected segments.
 
     Args:
@@ -181,7 +181,6 @@ def build_spd_and_vert_selected_from_segments(f: pd.DataFrame, config: Dict[str,
     return f
 
 
-
 def isa_pressure(h_m: np.ndarray) -> np.ndarray:
     """Compute ISA static pressure (Pa) for altitude in meters."""
     T_tropo = T0 - 0.0065 * h_m
@@ -189,6 +188,7 @@ def isa_pressure(h_m: np.ndarray) -> np.ndarray:
     T_strato = 216.65
     p_strato = 22632.06 * np.exp(-g * (h_m - 11000) / (R * T_strato))
     return np.where(h_m <= 11000, p_tropo, p_strato)
+
 
 def compute_mach_and_cas(
     tas_kt: np.ndarray,
@@ -205,21 +205,26 @@ def compute_mach_and_cas(
     Returns:
         Tuple of Mach number and calibrated airspeed in knots.
     """
-    tas = np.asarray(tas_kt) * 0.514444   # kt → m/s
-    h = np.asarray(alt_ft) * 0.3048       # ft → m
-    
+    tas = np.asarray(tas_kt) * 0.514444  # kt → m/s
+    h = np.asarray(alt_ft) * 0.3048  # ft → m
+
     a = np.sqrt(gamma_ratio * R * temp_K)
     mach = tas / a
 
     p = isa_pressure(h)
-    
-    pt_over_p = (1 + (gamma_ratio - 1) / 2 * mach**2) ** (gamma_ratio / (gamma_ratio - 1))
-    
+
+    pt_over_p = (1 + (gamma_ratio - 1) / 2 * mach**2) ** (
+        gamma_ratio / (gamma_ratio - 1)
+    )
+
     qc_p0 = (p / p0) * (pt_over_p - 1)
-    
-    cas = a0 * np.sqrt((2 / (gamma_ratio - 1)) * (((qc_p0 + 1) ** ((gamma_ratio - 1) / gamma_ratio)) - 1))
+
+    cas = a0 * np.sqrt(
+        (2 / (gamma_ratio - 1))
+        * (((qc_p0 + 1) ** ((gamma_ratio - 1) / gamma_ratio)) - 1)
+    )
     cas_kt = cas / 0.514444  # m/s → kt
-    
+
     return mach, cas_kt
 
 
@@ -239,10 +244,15 @@ def compute_tas(df: pd.DataFrame) -> pd.Series:
     track_rad = np.deg2rad(df["track"])
     u_ground = df["groundspeed"] * np.sin(track_rad)
     v_ground = df["groundspeed"] * np.cos(track_rad)
-    return np.sqrt((u_ground - u_wind_kt)**2 + (v_ground - v_wind_kt)**2)
+    return np.sqrt((u_ground - u_wind_kt) ** 2 + (v_ground - v_wind_kt) ** 2)
 
 
-def crop_on_distance_jump(f: pd.DataFrame, threshold: float = 200, min_speed: float = 90, upper_threshold: float = 3000) -> Tuple[pd.DataFrame, Any, Any]:
+def crop_on_distance_jump(
+    f: pd.DataFrame,
+    threshold: float = 200,
+    min_speed: float = 90,
+    upper_threshold: float = 3000,
+) -> Tuple[pd.DataFrame, Any, Any]:
     """Crop flight data to remove segments with large distance jumps.
 
     Args:
@@ -265,11 +275,21 @@ def crop_on_distance_jump(f: pd.DataFrame, threshold: float = 200, min_speed: fl
     else:
         f3 = f2.reset_index(drop=True)
     icao_24 = f3.icao24.iloc[0]
-    metric = len(f3)- len(f3[(f3["distance_along_track_m"].diff() > threshold) & (f3["distance_along_track_m"].diff() < upper_threshold)])
+    metric = len(f3) - len(
+        f3[
+            (f3["distance_along_track_m"].diff() > threshold)
+            & (f3["distance_along_track_m"].diff() < upper_threshold)
+        ]
+    )
     return f3, icao_24, metric
 
 
-def process_flight(f_id: Any, f: pd.DataFrame, output_dir_path: Any, selected_param_config: Dict[str, Any]):
+def process_flight(
+    f_id: Any,
+    f: pd.DataFrame,
+    output_dir_path: Any,
+    selected_param_config: Dict[str, Any],
+):
     """Process a single flight dataframe and persist if valid.
 
     Args:
@@ -285,8 +305,8 @@ def process_flight(f_id: Any, f: pd.DataFrame, output_dir_path: Any, selected_pa
         res = build_spd_and_vert_selected_from_segments(f, selected_param_config)
         res = add_cumulative_distance(res)
         res["long_wind"] = res["TAS"] - res["groundspeed"]
-        res['gamma_air'] = np.arcsin( (res["vertical_rate"] * ftmn) / (res["TAS"] * kt))
-        
+        res["gamma_air"] = np.arcsin((res["vertical_rate"] * ftmn) / (res["TAS"] * kt))
+
         typecode = res["typecode"].iloc[0]
 
         output_dir = output_dir_path / str(typecode)
@@ -302,9 +322,14 @@ def process_flight(f_id: Any, f: pd.DataFrame, output_dir_path: Any, selected_pa
     except Exception as e:
         print(f"❌ Error for flight {f_id}: {e}")
         return f_id, False
-    
 
-def save_all_flights(df: pd.DataFrame, output_dir_path: Any, selected_param_config: Dict[str, Any], n_jobs: int = 8):
+
+def save_all_flights(
+    df: pd.DataFrame,
+    output_dir_path: Any,
+    selected_param_config: Dict[str, Any],
+    n_jobs: int = 8,
+):
     """Process all flights in a DataFrame in parallel.
 
     Args:
@@ -318,13 +343,15 @@ def save_all_flights(df: pd.DataFrame, output_dir_path: Any, selected_param_conf
     """
     tasks = ((f_id, f) for f_id, f in df.groupby("flight_id"))
     results = Parallel(n_jobs=n_jobs, backend="loky", verbose=5)(
-        delayed(process_flight)(f_id, f, output_dir_path, selected_param_config) for f_id, f in tasks
+        delayed(process_flight)(f_id, f, output_dir_path, selected_param_config)
+        for f_id, f in tasks
     )
     return results
 
 
-
-def haversine(lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.ndarray) -> np.ndarray:
+def haversine(
+    lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.ndarray
+) -> np.ndarray:
     """Compute great-circle distance between coordinate pairs (meters).
 
     Args:
@@ -340,10 +367,13 @@ def haversine(lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.nda
     phi1, phi2 = np.radians(lat1), np.radians(lat2)
     dphi = phi2 - phi1
     dlambda = np.radians(lon2 - lon1)
-    a = np.sin(dphi / 2)**2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2)**2
+    a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
     return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
 
-def add_cumulative_distance(df: pd.DataFrame, lat_col: str = 'latitude', lon_col: str = 'longitude') -> pd.DataFrame:
+
+def add_cumulative_distance(
+    df: pd.DataFrame, lat_col: str = "latitude", lon_col: str = "longitude"
+) -> pd.DataFrame:
     """Add cumulative along-track distance column to a DataFrame.
 
     Args:
@@ -355,19 +385,26 @@ def add_cumulative_distance(df: pd.DataFrame, lat_col: str = 'latitude', lon_col
         DataFrame with `distance_along_track_m` appended.
     """
 
-    d = haversine(df[lat_col].iloc[:-1].values,
-                  df[lon_col].iloc[:-1].values,
-                  df[lat_col].iloc[1:].values,
-                  df[lon_col].iloc[1:].values)
+    d = haversine(
+        df[lat_col].iloc[:-1].values,
+        df[lon_col].iloc[:-1].values,
+        df[lat_col].iloc[1:].values,
+        df[lon_col].iloc[1:].values,
+    )
 
     cumulative_d = np.concatenate(([0], np.cumsum(d)))
 
     df = df.copy()
-    df['distance_along_track_m'] = cumulative_d
+    df["distance_along_track_m"] = cumulative_d
     return df
 
 
-def process_files(arco_grid: Any, file_path: Any, output_dir_path: Any, selected_param_config: Dict[str, Any]):
+def process_files(
+    arco_grid: Any,
+    file_path: Any,
+    output_dir_path: Any,
+    selected_param_config: Dict[str, Any],
+):
     """Process a parquet file through interpolation, TAS/CAS computation, and per-flight export.
 
     Args:
@@ -380,7 +417,7 @@ def process_files(arco_grid: Any, file_path: Any, output_dir_path: Any, selected
         None. Writes processed parquet files and logs progress.
     """
     df = pd.read_parquet(file_path)
-        
+
     df = df.drop(
         columns=[
             "bds05",
@@ -390,12 +427,14 @@ def process_files(arco_grid: Any, file_path: Any, output_dir_path: Any, selected
             "selected_fms",
             "target_source",
         ],
-        errors="ignore"   
+        errors="ignore",
     ).drop_duplicates()
-        
+
     df = arco_grid.interpolate(df)
     df["TAS"] = compute_tas(df)
-    df["Mach"], df["CAS"] = compute_mach_and_cas(df["TAS"], df["altitude"], df["temperature"])
+    df["Mach"], df["CAS"] = compute_mach_and_cas(
+        df["TAS"], df["altitude"], df["temperature"]
+    )
     results = save_all_flights(df, output_dir_path, selected_param_config, n_jobs=20)
     print("✅ Done.")
     print(pd.DataFrame(results, columns=["flight_id", "success"]))

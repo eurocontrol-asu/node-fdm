@@ -4,11 +4,15 @@
 
 import pandas as pd
 
-from node_fdm.architectures.opensky_2025.columns import col_alt_diff, col_alt_sel, col_alt, col_dist
+from node_fdm.architectures.opensky_2025.columns import (
+    col_alt_diff,
+    col_alt_sel,
+    col_alt,
+    col_dist,
+)
 
 LOW_THR = 200  # meters
 UPPER_THR = 3000  # meters
-
 
 
 def flight_processing(df: pd.DataFrame) -> pd.DataFrame:
@@ -44,7 +48,20 @@ def segment_filtering(f: pd.DataFrame, start_idx: int, seq_len: int) -> bool:
 
 selected_param_config = {
     "mach": {"tol": 0.002, "min_len": 120, "alt_threshold": 20000, "use_alt": True},
-    "cas":  {"tol": 1.0, "min_len": 60, "use_alt": False, "smooth_window": 15, "smooth_method": "savgol"},
-    "vz":   {"tol": 25, "min_len": 30, "use_alt": False, "min_abs_value": 50, "smooth_window": 15, "smooth_method": "savgol"},
-    "add_alt": False
+    "cas": {
+        "tol": 1.0,
+        "min_len": 60,
+        "use_alt": False,
+        "smooth_window": 15,
+        "smooth_method": "savgol",
+    },
+    "vz": {
+        "tol": 25,
+        "min_len": 30,
+        "use_alt": False,
+        "min_abs_value": 50,
+        "smooth_window": 15,
+        "smooth_method": "savgol",
+    },
+    "add_alt": False,
 }

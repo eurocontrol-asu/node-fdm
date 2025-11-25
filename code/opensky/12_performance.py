@@ -3,7 +3,7 @@ import sys
 import cairosvg
 from pathlib import Path
 
-root_path = Path.cwd().parents[1] 
+root_path = Path.cwd().parents[1]
 sys.path.append(str(root_path))
 
 from config import DATA_DIR, FIGURE_DIR
@@ -50,10 +50,7 @@ base = (
             labelAlign="right",
             labelPadding=-18,
         ),
-        alt.Opacity("BADA_gt_PRED:N")
-        .title(None)
-        .legend(None)
-        .scale(range=(0.4, 1)),
+        alt.Opacity("BADA_gt_PRED:N").title(None).legend(None).scale(range=(0.4, 1)),
         alt.Color("Model")
         .title(None)
         .legend(
@@ -84,9 +81,7 @@ def chart(typecode: str) -> alt.HConcatChart:
             ),
         )
         .properties(title=f"{typecode} performance model comparison")
-        .configure_title(
-            font="Roboto Condensed", fontSize=18, anchor="start", dy=-10
-        )
+        .configure_title(font="Roboto Condensed", fontSize=18, anchor="start", dy=-10)
         .configure_axisX(
             titleAnchor="start",
             titleFont="Roboto Condensed",
@@ -98,7 +93,7 @@ def chart(typecode: str) -> alt.HConcatChart:
         )
         .configure_facet(spacing=1)
     )
-    
+
     pdf_path = FIGURE_DIR / f"performance_{typecode}.pdf"
 
     chart.save(pdf_path)
@@ -107,4 +102,3 @@ def chart(typecode: str) -> alt.HConcatChart:
 
 for aircraft in df.Aircraft.unique():
     display(chart(aircraft))  # noqa: F821
-

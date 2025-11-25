@@ -100,7 +100,9 @@ class FlightDynamicsModel(nn.Module):
 
         return layer
 
-    def forward(self, x: torch.Tensor, u_t: torch.Tensor, e_t: torch.Tensor) -> torch.Tensor:
+    def forward(
+        self, x: torch.Tensor, u_t: torch.Tensor, e_t: torch.Tensor
+    ) -> torch.Tensor:
         """Compute state derivatives for the current batch.
 
         Args:
@@ -121,7 +123,7 @@ class FlightDynamicsModel(nn.Module):
             vect_dict = vect_dict | self.layers_dict[name](vect_dict)
 
         ode_output = torch.stack(
-            [coeff  * vect_dict[col] for coeff, col in self.dx_cols],
+            [coeff * vect_dict[col] for coeff, col in self.dx_cols],
             dim=1,
         )
 

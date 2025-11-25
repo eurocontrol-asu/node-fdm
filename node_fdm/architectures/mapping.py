@@ -56,7 +56,9 @@ def get_architecture_from_name(architecture_name: str) -> Tuple[Any, Any, Any]:
     return architecture, model_cols, custom_fn
 
 
-def get_architecture_params_from_meta(meta_path: str) -> Tuple[Any, Any, Any, Dict[Any, Any]]:
+def get_architecture_params_from_meta(
+    meta_path: str,
+) -> Tuple[Any, Any, Any, Dict[Any, Any]]:
     """Load architecture parameters and stats from a meta JSON file.
 
     Args:
@@ -75,8 +77,7 @@ def get_architecture_params_from_meta(meta_path: str) -> Tuple[Any, Any, Any, Di
 
     all_cols_dict = {str(col): col for cols in model_cols2 for col in cols}
     stats_dict = {
-        all_cols_dict[str_col]: stats
-        for str_col, stats in meta["stats_dict"].items()
+        all_cols_dict[str_col]: stats for str_col, stats in meta["stats_dict"].items()
     }
 
     return architecture, model_cols, meta["model_params"], stats_dict

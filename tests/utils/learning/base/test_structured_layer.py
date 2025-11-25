@@ -5,7 +5,15 @@ from utils.data.unit import Unit
 from utils.learning.base.structured_layer import StructuredLayer
 
 
-def make_layer(input_cols, output_cols, input_mean=0.0, input_std=1.0, output_mean=0.0, output_std=1.0, output_max=5.0):
+def make_layer(
+    input_cols,
+    output_cols,
+    input_mean=0.0,
+    input_std=1.0,
+    output_mean=0.0,
+    output_std=1.0,
+    output_max=5.0,
+):
     input_mean_dict = {str(col): input_mean for col in input_cols}
     input_std_dict = {str(col): input_std for col in input_cols}
     output_mean_dict = {str(col): output_mean for col in output_cols}

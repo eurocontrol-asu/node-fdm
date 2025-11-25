@@ -29,8 +29,8 @@ from node_fdm.architectures.qar.columns import (
     col_cross_wind_spd,
     col_aoa,
     col_pitch,
-    col_n1, 
-    col_ff, 
+    col_n1,
+    col_ff,
 )
 
 X_COLS = [
@@ -61,7 +61,7 @@ DX_COLS = [
     (1, col_vz),
     (1, col_gamma.derivative),
     (1, col_tas.derivative),
-    (-1, col_ff)
+    (-1, col_ff),
 ]
 
 
@@ -79,52 +79,26 @@ E2_COLS = [
     col_pitch,
 ]
 
-E3_COLS = [
-    col_n1, 
-    col_ff
-]
+E3_COLS = [col_n1, col_ff]
 
 E_COLS = E1_COLS + E2_COLS + E3_COLS
 
 
 MODEL_COLS = X_COLS, U_COLS, E0_COLS, E_COLS, DX_COLS
 
-TRAJECTORY_LAYER =  [
-    "trajectory",
-    TrajectoryLayer,
-    X_COLS + E0_COLS,
-    E1_COLS,
-    False
-]
+TRAJECTORY_LAYER = ["trajectory", TrajectoryLayer, X_COLS + E0_COLS, E1_COLS, False]
 
-ANGLE_LAYER =  [
-    "angle",
-    StructuredLayer,
-    X_COLS + E0_COLS + E1_COLS,
-    E2_COLS,
-    True
-]
+ANGLE_LAYER = ["angle", StructuredLayer, X_COLS + E0_COLS + E1_COLS, E2_COLS, True]
 
 
-ENGINE_LAYER =  [
-    "engine",
-    EngineLayer,
-    X_COLS + E0_COLS + E1_COLS,
-    E3_COLS,
-    True
-]
+ENGINE_LAYER = ["engine", EngineLayer, X_COLS + E0_COLS + E1_COLS, E3_COLS, True]
 
 DATA_ODE_LAYER = [
     "data_ode",
     StructuredLayer,
     X_COLS + U_COLS + E0_COLS + E1_COLS + E2_COLS + E3_COLS,
     [col_tas.derivative, col_gamma.derivative],
-    True
+    True,
 ]
 
-ARCHITECTURE = [
-    TRAJECTORY_LAYER,
-    ANGLE_LAYER,
-    ENGINE_LAYER,
-    DATA_ODE_LAYER
-]
+ARCHITECTURE = [TRAJECTORY_LAYER, ANGLE_LAYER, ENGINE_LAYER, DATA_ODE_LAYER]

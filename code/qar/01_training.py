@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-root_path = Path.cwd().parents[1] 
+root_path = Path.cwd().parents[1]
 sys.path.append(str(root_path))
 
 
@@ -24,8 +24,8 @@ model_config = dict(
     seq_len=60,
     num_workers=4,
     model_params=[2, 1, 24],
-    loading_args = (False, False),
-    batch_size = 500
+    loading_args=(False, False),
+    batch_size=500,
 )
 
 acft = "A320"
@@ -38,40 +38,40 @@ trainer = ODETrainer(
     MODELS_DIR,
     num_workers=4,
     train_val_num=(100, 100),
-    load_parallel=True
+    load_parallel=True,
 )
 
 
-#%%
-alpha_dict = {
-    col: 1.0 for col in trainer.x_cols
-}
+# %%
+alpha_dict = {col: 1.0 for col in trainer.x_cols}
 
-for col in  E2_COLS+ E3_COLS:
-    alpha_dict[col] =  1.0
+for col in E2_COLS + E3_COLS:
+    alpha_dict[col] = 1.0
 
 trainer.train(
-    epochs=20, 
-    batch_size=model_config['batch_size'],
+    epochs=20,
+    batch_size=model_config["batch_size"],
     val_batch_size=10000,
     method="euler",
-    alpha_dict=alpha_dict
+    alpha_dict=alpha_dict,
 )
 
 
 # %%
 import matplotlib.pyplot as plt
+
 f = trainer.train_dataset.get_full_flight(0)
 f = f[-1]
 
 
 for col in f.columns:
-    print(col, f[col].isna().sum()>0)
+    print(col, f[col].isna().sum() > 0)
     plt.plot(f[col])
     plt.title(col)
     plt.show()
 # %%
 from node_fdm.architectures.qar.columns import col_ff
+
 f[col_ff].isna().sum()
 # %%
 
@@ -85,10 +85,7 @@ from config import PROCESS_DIR, MODELS_DIR
 from node_fdm.architectures.qar.model import X_COLS, E2_COLS, E3_COLS
 
 
-
-alpha_dict = {
-    col: 1.0 for col in X_COLS + E2_COLS+ E3_COLS
-}
+alpha_dict = {col: 1.0 for col in X_COLS + E2_COLS + E3_COLS}
 
 alpha_dict
 # %%

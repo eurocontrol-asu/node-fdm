@@ -28,7 +28,9 @@ class FlightDynamicsModelProd(nn.Module):
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
         meta_path = model_path / "meta.json"
-        self.architecture, self.model_cols, model_params, self.stats_dict = get_architecture_params_from_meta(meta_path)
+        self.architecture, self.model_cols, model_params, self.stats_dict = (
+            get_architecture_params_from_meta(meta_path)
+        )
         self.backbone_depth, self.head_depth, self.neurons_num = model_params
         self.layers_dict = nn.ModuleDict({})
         self.layers_name = []

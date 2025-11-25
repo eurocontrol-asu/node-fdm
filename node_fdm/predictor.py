@@ -15,12 +15,12 @@ class NodeFDMPredictor:
     """Predict flight trajectories using a pretrained FlightDynamicsModelProd."""
 
     def __init__(
-            self, 
-            model_cols: list,
-            model_path: Path, 
-            dt: float = 4.0, 
-            device: str = "cuda:0"
-        ):
+        self,
+        model_cols: list,
+        model_path: Path,
+        dt: float = 4.0,
+        device: str = "cuda:0",
+    ):
         """Initialize predictor with model path and column definitions.
 
         Args:
@@ -48,7 +48,10 @@ class NodeFDMPredictor:
         Returns:
             Dictionary mapping column identifiers to 1-sample tensors.
         """
-        return {col: torch.tensor(f[col].iloc[i:i+1].values.astype(np.float32)) for col in cols}
+        return {
+            col: torch.tensor(f[col].iloc[i : i + 1].values.astype(np.float32))
+            for col in cols
+        }
 
     def _get_state(self, f: pd.DataFrame, i: int) -> Dict:
         """Extract state columns at a specific timestep.
@@ -89,7 +92,9 @@ class NodeFDMPredictor:
             new_state[x_col] = current_state[x_col] + coeff * self.dt * res_dict[dx_col]
         return new_state
 
-    def predict_flight(self, flight_df: pd.DataFrame, add_cols: list = []) -> pd.DataFrame:
+    def predict_flight(
+        self, flight_df: pd.DataFrame, add_cols: list = []
+    ) -> pd.DataFrame:
         """Generate model predictions for an entire flight.
 
         Args:
@@ -104,12 +109,19 @@ class NodeFDMPredictor:
         current_state = self._get_state(flight_df, 0)
         current_state = {k: v.to(self.device) for k, v in current_state.items()}
         for i in range(len(flight_df)):
-            input_dict = {**current_state, **self._get_ctrl(flight_df, i), **self._get_env(flight_df, i)}
+            input_dict = {
+                **current_state,
+                **self._get_ctrl(flight_df, i),
+                **self._get_env(flight_df, i),
+            }
             input_dict = {k: v.to(self.device) for k, v in input_dict.items()}
             res_dict = self.model.forward(input_dict)
             for col in display_dict.keys():
                 display_dict[col].append(res_dict[col].cpu().detach().numpy())
             current_state = self._next_state(current_state, res_dict)
 
-        pred_df = pd.DataFrame({f"pred_{col}": np.concatenate(display_dict[col]) for col in display_dict}, index=flight_df.index)
+        pred_df = pd.DataFrame(
+            {f"pred_{col}": np.concatenate(display_dict[col]) for col in display_dict},
+            index=flight_df.index,
+        )
         return pred_df

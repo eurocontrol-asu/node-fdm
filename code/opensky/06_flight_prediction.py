@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-root_path = Path.cwd().parents[1]  
+root_path = Path.cwd().parents[1]
 sys.path.append(str(root_path))
 
 import pandas as pd
@@ -13,12 +13,11 @@ from node_fdm.predictor import NodeFDMPredictor
 
 from node_fdm.architectures.opensky_2025.flight_process import flight_processing
 from node_fdm.data.flight_processor import FlightProcessor
-from node_fdm.architectures.opensky_2025.model import MODEL_COLS#, DX_COLS2
+from node_fdm.architectures.opensky_2025.model import MODEL_COLS  # , DX_COLS2
 
 split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
 
 processor = FlightProcessor(MODEL_COLS, custom_processing_fn=flight_processing)
-
 
 
 # Boucle sur chaque type d'avion
@@ -55,4 +54,3 @@ for acft in TYPECODES:
         pred_df.to_parquet(out_path, index=False)
 
     print(f"✅ Finished predictions for {acft}")
-

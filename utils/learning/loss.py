@@ -6,7 +6,7 @@ from typing import Any
 
 import torch.nn as nn
 
-        
+
 def get_loss(loss_name: str) -> Any:
     """Return a loss function instance by name.
 

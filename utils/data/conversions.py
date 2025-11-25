@@ -75,7 +75,7 @@ class CategoryMapper:
             return self.cat_dict[el]
         except KeyError:
             return np.nan
-    
+
     def _inv_map(self, el: Any) -> Any:
         """Map a numeric code back to its original label."""
         return self.inv_cat_dict[el]
@@ -91,7 +91,7 @@ class CategoryMapper:
         """
         vectorized = np.vectorize(self._map, otypes=[float])
         return vectorized(array_like)
-    
+
     def inverse(self, array_like: Any) -> np.ndarray:
         """Map category codes back to original labels.
 
@@ -102,8 +102,6 @@ class CategoryMapper:
             NumPy array of original labels.
         """
         return self.inv_vectorized(array_like)
-
-
 
 
 def identity(value: Any) -> Any:
@@ -117,7 +115,6 @@ def identity(value: Any) -> Any:
     """
     return value
 
-    
 
 def linear_unit_conversion(unit: float) -> Callable[[Any], Any]:
     """Return a function that multiplies values by a unit factor.
@@ -142,7 +139,6 @@ class LinearUnitConverter:
         return value * self.unit
 
 
-
 def addition_unit_conversion(unit: float) -> Callable[[Any], Any]:
     """Return a function that adds a unit offset to values.
 
@@ -155,7 +151,6 @@ def addition_unit_conversion(unit: float) -> Callable[[Any], Any]:
     return lambda value: value + unit
 
 
-
 class AdditionUnitConverter:
     """Apply an additive offset to values."""
 
@@ -165,7 +160,6 @@ class AdditionUnitConverter:
     def __call__(self, value: Any) -> Any:
         """Add the configured offset to the provided value."""
         return value + self.unit
-
 
 
 def correct_float_col(df_col: pd.Series) -> pd.Series:

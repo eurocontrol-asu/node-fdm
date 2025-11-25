@@ -2,7 +2,7 @@
 import sys
 from pathlib import Path
 
-root_path = Path.cwd().parents[1] 
+root_path = Path.cwd().parents[1]
 sys.path.append(str(root_path))
 
 import os
@@ -29,7 +29,9 @@ processor = FlightProcessor(MODEL_COLS, custom_processing_fn=flight_processing)
 pd.options.display.float_format = "{:.2f}".format
 
 
-def compute_errors_by_phase(df, pred_col, target_col, vertical_rate_col="vz_ms", eps=1e-8):
+def compute_errors_by_phase(
+    df, pred_col, target_col, vertical_rate_col="vz_ms", eps=1e-8
+):
     """Compute MAE, MAPE, ME and their std by phase, with optional rad→deg conversion."""
     climb_mask = df[vertical_rate_col] > 1.0
     descent_mask = df[vertical_rate_col] < -1.0
@@ -85,43 +87,51 @@ def compute_errors_by_phase(df, pred_col, target_col, vertical_rate_col="vz_ms",
 
     return pd.DataFrame(
         results,
-        columns=["Phase", "MAE", "MAE_std", "MAPE (%)", "MAPE_std", "ME", "ME_std", "Count"]
+        columns=[
+            "Phase",
+            "MAE",
+            "MAE_std",
+            "MAPE (%)",
+            "MAPE_std",
+            "ME",
+            "ME_std",
+            "Count",
+        ],
     ).set_index("Phase")
-
 
 
 variables = {
     "alt_std_m": "Altitude [m]",
     "tas_ms": "True airspeed [m/s]",
-    "gamma_rad": "Flight path angle [deg]"  # handled specially
+    "gamma_rad": "Flight path angle [deg]",  # handled specially
 }
 all_results = []
 
 for acft in TYPECODES:
     acft_records = []
-    acft_dir = BADA_DIR /  acft
+    acft_dir = BADA_DIR / acft
     if not os.path.exists(acft_dir):
         continue
-    files = os.listdir(BADA_DIR /  acft)
+    files = os.listdir(BADA_DIR / acft)
     print(f"Processing {acft}: {len(files)} flights")
 
     for file in tqdm(files, desc=f"{acft} flights"):
-        
-        f = pd.read_parquet(PROCESS_DIR /  acft /  file)
+
+        f = pd.read_parquet(PROCESS_DIR / acft / file)
         f1 = processor.process_flight(f)
-        f2 = pd.read_parquet(PREDICT_DIR /  acft /  file)
-        f3 = pd.read_parquet(BADA_DIR /  acft /  file)
+        f2 = pd.read_parquet(PREDICT_DIR / acft / file)
+        f3 = pd.read_parquet(BADA_DIR / acft / file)
         f = f.join(f2).join(f3)
         f = f[f.altitude > 5000]
-        if (len(f.alt_sel_m.unique()) > 3):
-            if f.alt_sel_m.iloc[-1]>5000:
+        if len(f.alt_sel_m.unique()) > 3:
+            if f.alt_sel_m.iloc[-1] > 5000:
                 mask = (f.alt_sel_m - f.alt_std_m).abs() > 5000
-                pos = np.where(~mask.values[::-1])[0][0]  
-                pos_from_start = len(mask) - 1 - pos 
+                pos = np.where(~mask.values[::-1])[0][0]
+                pos_from_start = len(mask) - 1 - pos
                 f = f.iloc[:pos_from_start]
             diff = f["latitude"].diff(1).abs().max()
             diff2 = f.distance_along_track_m.diff(1).abs().max()
-            if (diff<0.3) & (diff2<10000):
+            if (diff < 0.3) & (diff2 < 10000):
                 acft_records.append(f)
 
     if not acft_records:
@@ -139,7 +149,9 @@ for acft in TYPECODES:
                 print(f"⚠️ Missing {var} or {pred_col} in {acft}, skipping.")
                 continue
 
-            metrics = compute_errors_by_phase(df_acft, pred_col=pred_col, target_col=target_col)
+            metrics = compute_errors_by_phase(
+                df_acft, pred_col=pred_col, target_col=target_col
+            )
             metrics["Aircraft"] = acft
             metrics["Variable"] = label
             metrics["Model"] = prefix[:-1].upper()  # “BADA” or “PRED”
@@ -148,20 +160,36 @@ for acft in TYPECODES:
 
 # === Combine all results ===
 final_df = pd.concat(all_results, ignore_index=True)
-final_df = final_df[[
-    "Aircraft", "Variable", "Phase", "Model",
-    "MAE", "MAE_std", "MAPE (%)", "MAPE_std", "ME", "ME_std", "Count"
-]]
+final_df = final_df[
+    [
+        "Aircraft",
+        "Variable",
+        "Phase",
+        "Model",
+        "MAE",
+        "MAE_std",
+        "MAPE (%)",
+        "MAPE_std",
+        "ME",
+        "ME_std",
+        "Count",
+    ]
+]
 
 phase_order = ["All phases", "Climb", "Level flight", "Descent"]
-final_df["Phase"] = pd.Categorical(final_df["Phase"], categories=phase_order, ordered=True)
-final_df = final_df.sort_values(by=["Aircraft", "Variable", "Phase", "Model"]).reset_index(drop=True)
+final_df["Phase"] = pd.Categorical(
+    final_df["Phase"], categories=phase_order, ordered=True
+)
+final_df = final_df.sort_values(
+    by=["Aircraft", "Variable", "Phase", "Model"]
+).reset_index(drop=True)
 final_df = final_df.round(2)
 
 final_df
 
 from config import DATA_DIR
-final_df.to_parquet(DATA_DIR / "performance.parquet",index=False)
+
+final_df.to_parquet(DATA_DIR / "performance.parquet", index=False)
 
 # %%
 

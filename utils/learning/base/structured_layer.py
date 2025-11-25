@@ -1,4 +1,3 @@
-
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Structured layer combining normalization, shared trunk, and per-column heads."""
@@ -66,7 +65,9 @@ class StructuredLayer(nn.Module):
             output_mean_dict, output_std_dict, output_max_dict
         )
 
-    def normalize_input(self, x_dict: Dict[Any, torch.Tensor]) -> Sequence[torch.Tensor]:
+    def normalize_input(
+        self, x_dict: Dict[Any, torch.Tensor]
+    ) -> Sequence[torch.Tensor]:
         """Normalize input tensors according to column stats.
 
         Args:
@@ -83,7 +84,9 @@ class StructuredLayer(nn.Module):
             out_list.append(norm_vect)
         return out_list
 
-    def denormalize_output(self, out_norm_dict: Dict[Any, torch.Tensor]) -> Dict[Any, torch.Tensor]:
+    def denormalize_output(
+        self, out_norm_dict: Dict[Any, torch.Tensor]
+    ) -> Dict[Any, torch.Tensor]:
         """Denormalize outputs from heads back to physical scale.
 
         Args:
@@ -98,7 +101,9 @@ class StructuredLayer(nn.Module):
             out_pred_dict[col] = self.denormalizer(out_norm.squeeze(-1), col)
         return out_pred_dict
 
-    def forward_trunk_head(self, x_dict: Dict[Any, torch.Tensor]) -> Dict[Any, torch.Tensor]:
+    def forward_trunk_head(
+        self, x_dict: Dict[Any, torch.Tensor]
+    ) -> Dict[Any, torch.Tensor]:
         """Run normalization, trunk, and heads to produce normalized outputs.
 
         Args:

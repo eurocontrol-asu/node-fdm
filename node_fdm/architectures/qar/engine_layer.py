@@ -16,6 +16,7 @@ from node_fdm.architectures.qar.columns import (
 )
 from utils.learning.base.structured_layer import StructuredLayer
 
+
 class EngineLayer(StructuredLayer):
     """Engine-specific structured layer for predicting normalized outputs."""
 
@@ -44,12 +45,12 @@ class EngineLayer(StructuredLayer):
             tensors for N1 and fuel flow.
         """
         out_norm_dict = self.forward_trunk_head(x_dict)
-        
+
         fuel_flow_norm = out_norm_dict[col_ff].squeeze(-1)
         fuel_flow_pred = self.denormalizer(fuel_flow_norm, col_ff)
 
         out_pred_dict = dict()
         out_pred_dict[col_n1] = self.n1_max * out_norm_dict[col_n1].squeeze(-1)
         out_pred_dict[col_ff] = fuel_flow_pred
-        
+
         return out_pred_dict

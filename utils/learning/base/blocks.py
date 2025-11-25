@@ -7,6 +7,7 @@ from typing import Any, Callable, Optional
 import torch
 import torch.nn as nn
 
+
 class MLPBlock(nn.Module):
     """Simple configurable multi-layer perceptron block."""
 
@@ -27,7 +28,7 @@ class MLPBlock(nn.Module):
             num_layers: Number of hidden layers.
             last_activation: Optional callable producing a final activation module.
         """
-        
+
         super().__init__()
         layers = []
         prev_dim = input_dim
@@ -39,7 +40,7 @@ class MLPBlock(nn.Module):
         if last_activation is not None:
             layers.append(last_activation())
         self.net = nn.Sequential(*layers)
-    
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Run the MLP block on the input tensor.
 
@@ -51,28 +52,43 @@ class MLPBlock(nn.Module):
         """
         return self.net(x)
 
+
 class Backbone(MLPBlock):
     """Backbone MLP used before output heads."""
 
-    def __init__(self, input_dim: int, hidden_dim: int = 48, num_layers: int = 2, last_activation: Optional[Callable[[], Any]] = None):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 48,
+        num_layers: int = 2,
+        last_activation: Optional[Callable[[], Any]] = None,
+    ):
         """Initialize backbone with symmetric hidden dimensions."""
         super().__init__(
-            input_dim, 
-            hidden_dim, 
-            hidden_dim, 
-            num_layers=num_layers, 
-            last_activation=last_activation
+            input_dim,
+            hidden_dim,
+            hidden_dim,
+            num_layers=num_layers,
+            last_activation=last_activation,
         )
+
 
 class Head(MLPBlock):
     """Head MLP producing final outputs."""
 
-    def __init__(self, input_dim: int, hidden_dim: int = 24, output_dim: int = 1, num_layers: int = 1, last_activation: Optional[Callable[[], Any]] = None):
+    def __init__(
+        self,
+        input_dim: int,
+        hidden_dim: int = 24,
+        output_dim: int = 1,
+        num_layers: int = 1,
+        last_activation: Optional[Callable[[], Any]] = None,
+    ):
         """Initialize head with optional activation and custom sizes."""
         super().__init__(
-            input_dim, 
-            hidden_dim, 
-            output_dim, 
+            input_dim,
+            hidden_dim,
+            output_dim,
             num_layers=num_layers,
-            last_activation=last_activation
+            last_activation=last_activation,
         )

@@ -5,11 +5,11 @@
 import numpy as np
 from utils.data.unit import Unit
 from utils.physics.constants import (
-    NM, 
-    ft, 
-    kt, 
-    ftmn, 
-    T_k_c, 
+    NM,
+    ft,
+    kt,
+    ftmn,
+    T_k_c,
     kgh,
     gear_set_dict,
     flap_dict,
@@ -105,9 +105,22 @@ rad = Unit("radian", "rad", derivative=rad_per_sec)
 degree = Unit("degree", "°", si_unit=rad, modifier=np.deg2rad)
 
 # Aircraft specific units
-on_ground = Unit("on ground", "bool", value_type="str", modifier=CategoryMapper(on_ground_dict))
+on_ground = Unit(
+    "on ground", "bool", value_type="str", modifier=CategoryMapper(on_ground_dict)
+)
 rpm_percent = Unit("rotation per minute", "%")
-flap_conf = Unit("flaps", "category", value_type="str", modifier=CategoryMapper(flap_dict))
-gear_up = Unit("gear up", "bool", value_type="str", modifier=CategoryMapper(gear_set_dict))
-spd_brake_commanded = Unit("speed brake commanded", "bool", value_type="str", modifier=CategoryMapper(spd_brake_dict))
-fma_col_2 = Unit("FMA column 2", "category", value_type="str", modifier=CategoryMapper(fma_2_dict))
+flap_conf = Unit(
+    "flaps", "category", value_type="str", modifier=CategoryMapper(flap_dict)
+)
+gear_up = Unit(
+    "gear up", "bool", value_type="str", modifier=CategoryMapper(gear_set_dict)
+)
+spd_brake_commanded = Unit(
+    "speed brake commanded",
+    "bool",
+    value_type="str",
+    modifier=CategoryMapper(spd_brake_dict),
+)
+fma_col_2 = Unit(
+    "FMA column 2", "category", value_type="str", modifier=CategoryMapper(fma_2_dict)
+)

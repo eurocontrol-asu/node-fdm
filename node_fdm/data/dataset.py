@@ -26,7 +26,10 @@ class SeqDataset(Dataset):
         shift: int = 60,
         n_jobs: int = DEFAULT_CPU_COUNT,
         load_parallel: bool = True,
-        custom_fn: Tuple[Optional[Callable[[pd.DataFrame], pd.DataFrame]], Optional[Callable[..., bool]]] = (None, None),
+        custom_fn: Tuple[
+            Optional[Callable[[pd.DataFrame], pd.DataFrame]],
+            Optional[Callable[..., bool]],
+        ] = (None, None),
     ) -> None:
         """Initialize the dataset with flight paths and model column definitions.
 
@@ -48,7 +51,9 @@ class SeqDataset(Dataset):
         self.load_parallel = load_parallel
         self.n_jobs = n_jobs
         custom_processing_fn, custom_segment_filtering_fn = custom_fn
-        self.processor = FlightProcessor(model_cols, custom_processing_fn=custom_processing_fn)
+        self.processor = FlightProcessor(
+            model_cols, custom_processing_fn=custom_processing_fn
+        )
         self.custom_segment_filtering_fn = custom_segment_filtering_fn
         self.init_flight_date()
 
@@ -82,7 +87,9 @@ class SeqDataset(Dataset):
             axis=0,
         )
 
-        all_cols = self.x_cols + self.u_cols + self.e0_cols + self.e_cols + self.deriv_cols
+        all_cols = (
+            self.x_cols + self.u_cols + self.e0_cols + self.e_cols + self.deriv_cols
+        )
 
         self.stats_dict = dict()
 
@@ -94,7 +101,9 @@ class SeqDataset(Dataset):
                 "max": np.percentile(np.abs(vals), 99.5),
             }
 
-    def process_one_flight(self, flight_path: str) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    def process_one_flight(
+        self, flight_path: str
+    ) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Process a single flight file into clean, nan-free sequences.
 
         Args:
@@ -115,8 +124,15 @@ class SeqDataset(Dataset):
             for start in range(0, N - self.seq_len + 1, self.shift):
                 custom_segment_filtering_bool = True
                 if self.custom_segment_filtering_fn is not None:
-                    custom_segment_filtering_bool = self.custom_segment_filtering_fn(f, start, self.seq_len)
-                nans = sum([np.isnan(seq[start:start + self.seq_len]).sum() for seq in [x_seq, u_seq, e_seq, dx_seq]])
+                    custom_segment_filtering_bool = self.custom_segment_filtering_fn(
+                        f, start, self.seq_len
+                    )
+                nans = sum(
+                    [
+                        np.isnan(seq[start : start + self.seq_len]).sum()
+                        for seq in [x_seq, u_seq, e_seq, dx_seq]
+                    ]
+                )
                 if (custom_segment_filtering_bool) & (nans == 0):
                     seqs.append(
                         (
@@ -136,7 +152,9 @@ class SeqDataset(Dataset):
         """
         return len(self.sequences)
 
-    def __getitem__(self, idx: int) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(
+        self, idx: int
+    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return tensors for a specific sequence index.
 
         Args:
@@ -165,7 +183,9 @@ class SeqDataset(Dataset):
         f = pd.read_parquet(flight_path)
         return self.processor.process_flight(f)
 
-    def get_full_flight(self, flight_idx: int) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
+    def get_full_flight(
+        self, flight_idx: int
+    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
         """Return full arrays for a specific flight index.
 
         Args:

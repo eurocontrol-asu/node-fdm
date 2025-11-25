@@ -1,6 +1,7 @@
 # %%
 import sys
 from pathlib import Path
+
 sys.path.append(str(Path.cwd().parents[1]))
 
 from config import DATA_DIR, TYPECODES as typecodes
@@ -54,9 +55,7 @@ typecodes = [
 
 sampled_ext.query("typecode in @typecodes", engine="python").groupby(
     ["typecode", "airline"]
-).agg({"icao24": "nunique"}).reset_index().sort_values(
-    "icao24", ascending=False
-)
+).agg({"icao24": "nunique"}).reset_index().sort_values("icao24", ascending=False)
 pivot_df = (
     sampled_ext.query("typecode in @typecodes", engine="python")
     .query("typecode=='A319'")
@@ -72,9 +71,7 @@ pivot_df
 
 
 # %%
-aircraft_db = sampled_ext[
-    ["icao24", "registration", "typecode", "age", "airline"]
-]
+aircraft_db = sampled_ext[["icao24", "registration", "typecode", "age", "airline"]]
 aircraft_db.to_csv(DATA_DIR / "aircraft_db.csv", index=False)
 aircraft_db
 

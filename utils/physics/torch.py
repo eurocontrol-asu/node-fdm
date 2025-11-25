@@ -7,6 +7,7 @@ from typing import Any
 import torch
 from utils.physics.constants import R, p0, T0
 
+
 def isa_pressure_torch(h: Any) -> torch.Tensor:
     """Compute ISA static pressure (Pa) for altitude (m) with torch operations.
 
@@ -29,6 +30,7 @@ def isa_pressure_torch(h: Any) -> torch.Tensor:
     p_strato = 22632.06 * torch.exp(exp_term)
 
     return torch.where(h <= 11000, p_tropo, p_strato)
+
 
 def isa_temperature_torch(h: Any) -> torch.Tensor:
     """Compute ISA temperature (K) for altitude (m) with torch operations.

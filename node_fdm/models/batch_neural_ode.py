@@ -44,7 +44,9 @@ class BatchNeuralODE(nn.Module):
             Model output of the wrapped dynamics at time `t`.
         """
         t = t.item()
-        idx = torch.searchsorted(self.t_grid, torch.tensor(t, device=self.t_grid.device)).item()
+        idx = torch.searchsorted(
+            self.t_grid, torch.tensor(t, device=self.t_grid.device)
+        ).item()
         idx0 = max(0, idx - 1)
         idx1 = min(idx, self.t_grid.shape[0] - 1)
 

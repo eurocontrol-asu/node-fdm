@@ -65,7 +65,7 @@ class TrajectoryLayer(nn.Module):
 
         pt_over_p = torch.pow(
             torch.clamp(1 + (gamma_ratio - 1) / 2 * mach**2, min=1e-6, max=1e6),
-            gamma_ratio / (gamma_ratio - 1)
+            gamma_ratio / (gamma_ratio - 1),
         )
 
         qc_p0 = (torch.clamp(p, min=1.0) / p0) * (pt_over_p - 1.0)
@@ -73,8 +73,8 @@ class TrajectoryLayer(nn.Module):
 
         CAS_term = torch.clamp(qc_p0 + 1.0, min=1e-8, max=1e6)
         CAS = a0 * torch.sqrt(
-            (2.0 / (gamma_ratio - 1.0)) *
-            (CAS_term ** ((gamma_ratio - 1.0) / gamma_ratio) - 1.0)
+            (2.0 / (gamma_ratio - 1.0))
+            * (CAS_term ** ((gamma_ratio - 1.0) / gamma_ratio) - 1.0)
         )
         CAS = torch.nan_to_num(CAS, nan=0.0, posinf=1e4, neginf=0.0)
         output_dict[col_cas] = CAS

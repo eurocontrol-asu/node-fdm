@@ -27,4 +27,3 @@ for file in os.listdir(PREPROCESS_DIR):
     break
 
 make_global_split_csv(PROCESS_DIR)
-
