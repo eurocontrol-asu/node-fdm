@@ -1,0 +1,13 @@
+site_name: node-fdm Documentation
+site_url: https://eurocontrol-asu.github.io/node-fdm/
+site_dir: site
+
+theme:
+  name: material
+
+nav:
+  - Home: index.md
+
+plugins:
+  - search
+  - mkdocstrings

@@ -6,7 +6,7 @@ on:
   workflow_dispatch:
 
 permissions:
-  contents: write  # nécessaire pour mkdocs gh-deploy
+  contents: write
 
 jobs:
 
