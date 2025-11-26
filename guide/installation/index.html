@@ -936,11 +936,14 @@
   Set their location in the relevant <code>config.yaml</code> (<code>scripts/opensky/config.yaml</code>).</li>
 </ul>
 <h3 id="install-the-package">📦 Install the Package</h3>
-<p>Install <code>node-fdm</code> in editable mode with all optional dependencies:</p>
+<p><strong>From PyPI (recommended for users)</strong>
+- Core library: <code>pip install node-fdm</code>
+- With optional deps (traffic, fastmeteo, viz): <code>pip install 'node-fdm[all]'</code>
+- BADA baseline support (pyBADA requirements are restrictive):<br />
+<code>pip install pybada --ignore-requires-python --no-deps</code><br />
+<code>pip install simplekml 'xlsxwriter&gt;=3.2.5'</code>  # pyBADA dependency</p>
+<p><strong>From source (contributors)</strong></p>
 <pre><code class="language-bash">pip install -e .[all]      # core + traffic + fastmeteo + click + tqdm + matplotlib
-</code></pre>
-<p>If you want the BADA baseline and have the BADA 4.2 dataset:</p>
-<pre><code class="language-bash">pip install -e .[bada]     # enables pyBADA support
 </code></pre>
 <h3 id="project-directories">📁 Project Directories</h3>
 <p>Each pipeline has its own <code>config.yaml</code> (<code>scripts/opensky/config.yaml</code>, <code>scripts/qar/config.yaml</code>) where you define:</p>
