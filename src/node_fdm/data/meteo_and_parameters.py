@@ -11,7 +11,7 @@ from scipy.signal import savgol_filter
 
 from joblib import Parallel, delayed
 
-from utils.physics.constants import T0, p0, g, R, gamma_ratio, a0, ftmn, kt
+from node_fdm.utils.physics.constants import T0, p0, g, R, gamma_ratio, a0, ftmn, kt
 
 
 def detect_constant_segments(

@@ -16,7 +16,7 @@ from node_fdm.data.loader import get_train_val_data
 from node_fdm.architectures.mapping import get_architecture_from_name
 from node_fdm.models.flight_dynamics_model import FlightDynamicsModel
 from node_fdm.models.batch_neural_ode import BatchNeuralODE
-from utils.learning.loss import get_loss
+from node_fdm.utils.learning.loss import get_loss
 
 
 class ODETrainer:

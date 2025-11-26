@@ -3,12 +3,12 @@ import os
 import yaml
 from pathlib import Path
 from fastmeteo.source import ArcoEra5
-from preprocessing.meteo_and_parameters import process_files
-from preprocessing.split import make_global_split_csv
+from node_fdm.data.meteo_and_parameters import process_files
+from node_fdm.data.split import make_global_split_csv
 
 from node_fdm.architectures.opensky_2025.flight_process import selected_param_config
 
-
+# %%
 cfg = yaml.safe_load(open("config.yaml"))
 
 data_dir = Path(cfg["paths"]["data_dir"])
