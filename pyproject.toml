@@ -1,12 +1,9 @@
-[build-system]
-requires = ["setuptools>=70", "wheel", "uv-dynamic-versioning"]
-build-backend = "setuptools.build_meta"
-
 [project]
 name = "node-fdm"
 description = "Neural ODE model for aircraft flight dynamics"
 readme = "README.md"
 requires-python = ">=3.11"
+dynamic = ["version"]
 license = { file = "LICENCE.md" }
 authors = [
   { name = "Gabriel JARRY", email = "gabriel.jarry@eurocontrol.int" },
@@ -15,7 +12,7 @@ authors = [
   { name = "Philippe VERY", email = "philippe.very@eurocontrol.int" }
 ]
 
-dynamic = ["version"]
+
 
 dependencies = [
   "torch>=2.6.0",
@@ -55,11 +52,15 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/eurocontrol/node-fdm"
+Documentation = "https://eurocontrol-asu.github.io/node-fdm/"
+Code = "https://github.com/eurocontrol-asu/node-fdm/"
+
+[build-system]
+requires = ["hatchling", "uv-dynamic-versioning"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "uv-dynamic-versioning"
 
 [tool.uv-dynamic-versioning]
-write = true
-write-path = "src/node_fdm/_version.py"
 fallback-version = "0.0.0"
-tag-pattern = "v{version}" 
-dirty-suffix = "dev"         
