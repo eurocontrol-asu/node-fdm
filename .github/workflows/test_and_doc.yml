@@ -44,9 +44,9 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install documentation tools
+      - name: Install package (needed for mkdocstrings)
         run: |
-          pip install mkdocs-material mkdocstrings[python]
+          pip install .[docs]
 
       - name: Deploy production docs
         run: mkdocs gh-deploy --force
