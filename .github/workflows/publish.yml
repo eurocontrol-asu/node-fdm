@@ -12,6 +12,9 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+          fetch-tags: true
 
       - name: Set up Python
         uses: actions/setup-python@v5
@@ -19,16 +22,18 @@ jobs:
           python-version: "3.11"
           cache: "pip"
 
-      - name: Install dependencies
+      - name: Install test dependencies
         run: |
           python -m pip install --upgrade pip
+          python -m pip install uv-dynamic-versioning
           python -m pip install -e .[test]
 
       - name: Run tests
         run: pytest tests
 
+
   build-and-publish:
-    needs: tests        # ⬅️ only runs if tests succeed
+    needs: tests
     runs-on: ubuntu-latest
 
     steps:
@@ -44,10 +49,16 @@ jobs:
         python-version: '3.11'
 
     - name: Install build backend
-      run: pip install build twine setuptools wheel
+      run: |
+        pip install --upgrade pip
+        pip install uv-dynamic-versioning
+        pip install build twine setuptools wheel
 
     - name: Build package
-      run: python -m build
+      run: |
+        # Optional but recommended: ensure version file regenerates cleanly
+        rm -f src/node_fdm/_version.py || true
+        python -m build
 
     - name: Publish package to PyPI
       env:

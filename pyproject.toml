@@ -1,5 +1,5 @@
 [build-system]
-requires = ["setuptools>=70", "wheel", "setuptools-scm[toml]>=8"]
+requires = ["setuptools>=70", "wheel", "uv-dynamic-versioning"]
 build-backend = "setuptools.build_meta"
 
 [project]
@@ -55,15 +55,11 @@ docs = [
 ]
 
 [project.urls]
-Homepage = "https://github.com/eurocontrol"
+Homepage = "https://github.com/eurocontrol/node-fdm"
 
-[tool.setuptools_scm]
-write_to = "src/node_fdm/_version.py"
-fallback_version = "0.0.0"
-
-[tool.setuptools]
-package-dir = { "" = "src" }
-
-[tool.setuptools.packages.find]
-where = ["src"]
-include = ["node_fdm*"]
+[tool.uv-dynamic-versioning]
+write = true
+write-path = "src/node_fdm/_version.py"
+fallback-version = "0.0.0"
+tag-pattern = "v{version}" 
+dirty-suffix = "dev"         
