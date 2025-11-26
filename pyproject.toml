@@ -59,7 +59,8 @@ Homepage = "https://github.com/eurocontrol"
 
 [tool.setuptools_scm]
 write_to = "src/node_fdm/_version.py"
-fallback_version = "0.0.0-dev"
+fallback_version = "0.0.0"
+tag_regex = r"^v(?P<version>\d+\.\d+\.\d+)$"
 
 [tool.setuptools]
 package-dir = { "" = "src" }
