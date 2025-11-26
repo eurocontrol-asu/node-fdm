@@ -1,17 +1,19 @@
 # %%
-import sys
-import cairosvg
+import os
+import yaml
 from pathlib import Path
 
-root_path = Path.cwd().parents[1]
-sys.path.append(str(root_path))
-
-from config import DATA_DIR, FIGURE_DIR
 import pandas as pd
-import os
 import altair as alt
 
-df = pd.read_parquet(DATA_DIR / "performance.parquet")
+cfg = yaml.safe_load(open("config.yaml"))
+
+data_dir = Path(cfg["paths"]["data_dir"])
+figure_dir = data_dir / cfg["paths"]["figure_dir"]
+os.makedirs(figure_dir, exist_ok=True)
+
+
+df = pd.read_parquet(data_dir / "performance.parquet")
 df = (
     df.replace("Altitude [m]", "altitude")
     .replace("Flight path angle [deg]", "flight path angle")
@@ -94,7 +96,7 @@ def chart(typecode: str) -> alt.HConcatChart:
         .configure_facet(spacing=1)
     )
 
-    pdf_path = FIGURE_DIR / f"performance_{typecode}.pdf"
+    pdf_path = figure_dir / f"performance_{typecode}.pdf"
 
     chart.save(pdf_path)
     return chart
@@ -102,3 +104,5 @@ def chart(typecode: str) -> alt.HConcatChart:
 
 for aircraft in df.Aircraft.unique():
     display(chart(aircraft))  # noqa: F821
+
+# %%

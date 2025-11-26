@@ -24,15 +24,17 @@ It combines **data-driven learning** with **physical consistency**, enabling the
 ### 📁 Repository Structure
 
 ```text
-├── code/                     # Scripts to download, preprocess, train and evaluate models
-├── node_fdm/                 # Core Neural ODE implementation and training utilities
-├── preprocessing/            # Data preparation and meteorological enrichment modules
-├── pybada_predictor/         # Basine performance models using BADA
-├── models/                   # Trained model checkpoints (per aircraft type)
-├── data/                     # Input and output data (raw, preprocessed, ERA5 cache)
-├── figures/                  # Generated figures from the paper (performance & trajectories)
-├── utils/                    # Helper functions for metrics, data handling and physics
-└── config.py                 # Global configuration file
+├── code/                     # Pipelines and scripts (OpenSky 2025 & QAR) with per-dataset configs
+├── node_fdm/                 # Core Neural ODE library
+│   ├── architectures/        # Dataset-specific definitions (opensky_2025, qar)
+│   ├── data/                 # Datasets, loaders, and flight processing
+│   ├── models/               # Neural ODE modules and production wrappers
+├── preprocessing/            # Shared preprocessing utilities (splits, meteo/parameter enrichment)
+├── pybada_predictor/         # BADA baseline predictor and aircraft mapping utilities
+├── utils/                    # Data helpers, learning blocks, and physics utilities
+├── models/                   # Pretrained checkpoints (OpenSky 2025 fleet + QAR A320 artifacts)
+├── docs/                     # MkDocs documentation (guide, how-to, reference, logo)
+└──tests/                    # Test scaffolding for shared utils
 ```
 
 ---

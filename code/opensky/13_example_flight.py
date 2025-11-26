@@ -1,17 +1,20 @@
 # %%
-import sys
+import os
+
+import yaml
 from pathlib import Path
 
-root_path = Path.cwd().parents[1]
-sys.path.append(str(root_path))
+import pandas as pd
+import altair as alt
 
-from config import DATA_DIR, FIGURE_DIR
 
-import altair as alt  # type: ignore
-import pandas as pd  # type: ignore
+cfg = yaml.safe_load(open("config.yaml"))
 
-dfi = pd.read_parquet(DATA_DIR / "example2.parquet")
+data_dir = Path(cfg["paths"]["data_dir"])
+figure_dir = data_dir / cfg["paths"]["figure_dir"]
+os.makedirs(figure_dir, exist_ok=True)
 
+dfi = pd.read_parquet(data_dir / "example.parquet")
 
 # Create a mapping for renaming the values
 rename_mapping = {
@@ -110,5 +113,7 @@ chart = alt.vconcat(
     titleFont="Roboto Condensed",
     titleFontSize=18,
 )
-chart.save(FIGURE_DIR / "traj_example2.pdf")
+chart.save(figure_dir / "traj_example.pdf")
 chart
+
+# %%

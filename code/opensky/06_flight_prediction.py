@@ -1,29 +1,42 @@
 # %%
-import sys
-from pathlib import Path
-
-root_path = Path.cwd().parents[1]
-sys.path.append(str(root_path))
-
+import os
+import yaml
 import pandas as pd
 from pathlib import Path
 from tqdm import tqdm
-from config import MODELS_DIR, PROCESS_DIR, PREDICT_DIR, TYPECODES
-from node_fdm.predictor import NodeFDMPredictor
+from importlib.resources import files
 
+from node_fdm.predictor import NodeFDMPredictor
 from node_fdm.architectures.opensky_2025.flight_process import flight_processing
 from node_fdm.data.flight_processor import FlightProcessor
 from node_fdm.architectures.opensky_2025.model import MODEL_COLS  # , DX_COLS2
+from node_fdm.architectures.opensky_2025.columns import col_cas
 
-split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
+
+cfg = yaml.safe_load(open("config.yaml"))
+
+data_dir = Path(cfg["paths"]["data_dir"])
+process_dir = data_dir / cfg["paths"]["process_dir"]
+models_dir = data_dir / cfg["paths"]["models_dir"]
+predict_dir = data_dir / cfg["paths"]["predicted_dir"]
+os.makedirs(predict_dir, exist_ok=True)
+
+typecodes = cfg["typecodes"]
+
+split_df = pd.read_csv(process_dir / "dataset_split.csv")
 
 processor = FlightProcessor(MODEL_COLS, custom_processing_fn=flight_processing)
 
+local_models = False
 
 # Boucle sur chaque type d'avion
-for acft in TYPECODES:
+for acft in typecodes[:1]:
     print(f"\n🛫 Predicting for aircraft: {acft}")
-    model_path = MODELS_DIR / f"opensky_{acft}"
+
+    if local_models:
+        model_path = models_dir / f"opensky_{acft}"
+    else:
+        model_path = files("models.opensky_2025").joinpath(f"opensky_{acft}")
 
     if not model_path.exists():
         print(f"⚠️  Model not found for {acft}: {model_path}")
@@ -36,7 +49,7 @@ for acft in TYPECODES:
     test_df = data_df[data_df.split == "test"]
 
     # Crée le dossier de sortie
-    output_dir = PREDICT_DIR / acft
+    output_dir = predict_dir / acft
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for _, row in tqdm(test_df.iterrows(), total=len(test_df), desc=f"{acft}"):
@@ -50,7 +63,9 @@ for acft in TYPECODES:
         out_path = output_dir / f"{flight_id}.parquet"
 
         # Prédiction
-        pred_df = predictor.predict_flight(f)
+        pred_df = predictor.predict_flight(f, add_cols=[col_cas])
         pred_df.to_parquet(out_path, index=False)
 
     print(f"✅ Finished predictions for {acft}")
+
+# %%

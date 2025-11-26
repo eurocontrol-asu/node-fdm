@@ -7,6 +7,9 @@ import pandas as pd
 from node_fdm.architectures.opensky_2025.columns import (
     col_alt_diff,
     col_alt_sel,
+    col_vz_sel,
+    col_mach_sel,
+    col_cas_sel,
     col_alt,
     col_dist,
 )
@@ -25,6 +28,10 @@ def flight_processing(df: pd.DataFrame) -> pd.DataFrame:
         DataFrame with altitude difference column added.
     """
     df[col_alt_diff] = df[col_alt_sel] - df[col_alt]
+
+    df[col_vz_sel] = df[col_vz_sel].fillna(0.0)
+    df[col_mach_sel] = df[col_mach_sel].fillna(0.0)
+    df[col_cas_sel] = df[col_cas_sel].fillna(0.0)
 
     return df
 
@@ -47,7 +54,12 @@ def segment_filtering(f: pd.DataFrame, start_idx: int, seq_len: int) -> bool:
 
 
 selected_param_config = {
-    "mach": {"tol": 0.002, "min_len": 120, "alt_threshold": 20000, "use_alt": True},
+    "mach": {
+        "tol": 0.002,
+        "min_len": 120,
+        "alt_threshold": 20000,
+        "use_alt": True,
+    },
     "cas": {
         "tol": 1.0,
         "min_len": 60,

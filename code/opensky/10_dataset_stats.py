@@ -1,19 +1,22 @@
 # %%
-import sys
-from pathlib import Path
-
-root_path = Path.cwd().parents[1]
-sys.path.append(str(root_path))
-
-from config import TYPECODES, PROCESS_DIR
+import yaml
 import pandas as pd
 from pathlib import Path
+
+
 from node_fdm.architectures.opensky_2025.model import MODEL_COLS
 from node_fdm.data.dataset import SeqDataset
 
-split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
+cfg = yaml.safe_load(open("config.yaml"))
 
-for acft in TYPECODES:
+data_dir = Path(cfg["paths"]["data_dir"])
+process_dir = data_dir / cfg["paths"]["process_dir"]
+
+typecodes = cfg["typecodes"]
+
+split_df = pd.read_csv(process_dir / "dataset_split.csv")
+
+for acft in typecodes:
 
     data_df = split_df[split_df.aircraft_type == acft]
     train_files = data_df[data_df.split == "train"].filepath.tolist()

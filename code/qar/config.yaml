@@ -1,0 +1,14 @@
+paths:
+  data_dir: "/data/common/data/QAR/PARQUET"
+  predicted_dir: "predicted_flights"
+  bada_dir: "bada_flights"
+  models_dir: "models"
+  figure_dir: "figures"
+
+
+typecodes:
+  - A320
+  
+
+computing:
+  default_cpu_count: 35

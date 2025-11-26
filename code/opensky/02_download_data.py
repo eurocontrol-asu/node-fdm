@@ -1,18 +1,23 @@
 # %%
-import sys
+import os
+import yaml
 from pathlib import Path
 
-sys.path.append(str(Path.cwd().parents[1]))
-
-from config import DATA_DIR, DOWNLOAD_DIR
 import pandas as pd
 from traffic.data import opensky
 
-sampled_ext = pd.read_csv(DATA_DIR / "aircraft_db.csv")
+
+cfg = yaml.safe_load(open("config.yaml"))
+
+data_dir = Path(cfg["paths"]["data_dir"])
+download_dir = data_dir / cfg["paths"]["download_dir"]
+os.makedirs(download_dir, exist_ok=True)
+
+sampled_ext = pd.read_csv(data_dir / "aircraft_db.csv")
 sampled_ext
 # %%
 
-for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
+for start in pd.date_range("2024-10-01", "2024-10-02", freq="480h"):  # "2025-10-15"
     path = Path(f"history_{start.strftime('%Y%m%d')}.parquet")
 
     if not path.exists():
@@ -20,13 +25,13 @@ for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
 
         t = opensky.history(
             start,
-            start + pd.Timedelta("24h"),
+            start + pd.Timedelta("10min"),  # 24h
             icao24=sampled_ext.icao24.tolist(),
         )
 
         assert t is not None
 
-        t.to_parquet(DOWNLOAD_DIR / f"history_{start.strftime('%Y%m%d')}.parquet")
+        t.to_parquet(download_dir / f"history_{start.strftime('%Y%m%d')}.parquet")
 
     path = Path(f"flightlist_{start.strftime('%Y%m%d')}.parquet")
     if not path.exists():
@@ -34,13 +39,13 @@ for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
 
         ft = opensky.flightlist(
             start,
-            start + pd.Timedelta("24h"),
+            start + pd.Timedelta("10min"),  # 24h
             icao24=sampled_ext.icao24.tolist(),
         )
 
         assert ft is not None
 
-        ft.to_parquet(DOWNLOAD_DIR / f"flightlist_{start.strftime('%Y%m%d')}.parquet")
+        ft.to_parquet(download_dir / f"flightlist_{start.strftime('%Y%m%d')}.parquet")
 
     path = Path(f"extended_{start.strftime('%Y%m%d')}.parquet")
 
@@ -49,12 +54,12 @@ for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
 
         ext = opensky.extended(
             start,
-            start + pd.Timedelta("24h"),
+            start + pd.Timedelta("10min"),  # #24h
             icao24=sampled_ext.icao24.tolist(),
         )
 
         assert ext is not None
 
-        ext.to_parquet(DOWNLOAD_DIR / f"extended_{start.strftime('%Y%m%d')}.parquet")
+        ext.to_parquet(download_dir / f"extended_{start.strftime('%Y%m%d')}.parquet")
 
 # %%

@@ -25,17 +25,20 @@ dependencies = [
   "scipy>=1.13.1",
   "pyarrow>=21.0",
   "joblib>=1.4.2",
+  "matplotlib>=3.10.1",
+  "tqdm>=4.67.1",
+  "pyyaml>=6.0.2",
 ]
 
 [project.optional-dependencies]
 all = [
   "traffic>=2.10.2",
   "fastmeteo>=1.1.0",
-  "click>=8.1",
-  "tqdm>=4.66",
-  "matplotlib>=3.7",
-  "altair>=5.0",
+  "click>=8.1.8",
+  "altair>=5.5",
   "cairosvg>=2.7",
+  "vl-convert-python>=1.8.0",
+  "ipykernel>=6.29.5",
 ]
 
 bada = [

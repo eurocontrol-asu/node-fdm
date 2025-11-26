@@ -1,27 +1,24 @@
 # %%
-import sys
-from pathlib import Path
-
-root_path = Path.cwd().parents[1]
-sys.path.append(str(root_path))
-
 import os
-import pandas as pd
-from pathlib import Path
-import matplotlib.pyplot as plt
-
-from config import DATA_DIR, PROCESS_DIR, PREDICT_DIR, BADA_DIR, TYPECODES
-
-import os
+import yaml
 import numpy as np
 import pandas as pd
 from tqdm import tqdm
-
+from pathlib import Path
 
 from node_fdm.data.flight_processor import FlightProcessor
 from node_fdm.architectures.opensky_2025.model import MODEL_COLS
 from node_fdm.architectures.opensky_2025.flight_process import flight_processing
 
+
+cfg = yaml.safe_load(open("config.yaml"))
+
+data_dir = Path(cfg["paths"]["data_dir"])
+process_dir = data_dir / cfg["paths"]["process_dir"]
+predict_dir = data_dir / cfg["paths"]["predicted_dir"]
+bada_dir = data_dir / cfg["paths"]["bada_dir"]
+
+typecodes = cfg["typecodes"]
 
 processor = FlightProcessor(MODEL_COLS, custom_processing_fn=flight_processing)
 
@@ -107,20 +104,20 @@ variables = {
 }
 all_results = []
 
-for acft in TYPECODES:
+for acft in typecodes:
     acft_records = []
-    acft_dir = BADA_DIR / acft
+    acft_dir = bada_dir / acft
     if not os.path.exists(acft_dir):
         continue
-    files = os.listdir(BADA_DIR / acft)
+    files = os.listdir(bada_dir / acft)
     print(f"Processing {acft}: {len(files)} flights")
 
     for file in tqdm(files, desc=f"{acft} flights"):
 
-        f = pd.read_parquet(PROCESS_DIR / acft / file)
+        f = pd.read_parquet(process_dir / acft / file)
         f1 = processor.process_flight(f)
-        f2 = pd.read_parquet(PREDICT_DIR / acft / file)
-        f3 = pd.read_parquet(BADA_DIR / acft / file)
+        f2 = pd.read_parquet(predict_dir / acft / file)
+        f3 = pd.read_parquet(bada_dir / acft / file)
         f = f.join(f2).join(f3)
         f = f[f.altitude > 5000]
         if len(f.alt_sel_m.unique()) > 3:
@@ -185,13 +182,6 @@ final_df = final_df.sort_values(
 ).reset_index(drop=True)
 final_df = final_df.round(2)
 
-final_df
+final_df.to_parquet(data_dir / "performance.parquet", index=False)
 
-from config import DATA_DIR
-
-final_df.to_parquet(DATA_DIR / "performance.parquet", index=False)
-
-# %%
-
-final_df[final_df.Aircraft == "A319"]
 # %%

@@ -1,0 +1,36 @@
+paths:
+  data_dir: "/data/common/dataiku/config/projects/NODEFDM/lib/data"#"/data/common/data/QAR/PARQUET/OPENSKY-NODE/opensky/node-fdm/data"
+
+  download_dir: "downloaded_parquet"
+  preprocess_dir: "preprocessed_parquet"
+  process_dir: "processed_flights"
+  predicted_dir: "predicted_flights"
+  bada_dir: "bada_flights"
+  models_dir: "models"
+  figure_dir: "figures"
+
+  era5_cache_dir: "era5_cache"
+
+  bada_4_2_dir: "/data/common/dataiku/config/projects/FUEL_MODEL/lib/python/BADA/4.2.1"
+
+era5_features:
+  - u_component_of_wind
+  - v_component_of_wind
+  - temperature
+
+typecodes:
+  - A320
+  - A20N
+  - A21N
+  - A319
+  - A321
+  - A333
+  - A359
+  - AT76
+  - B38M
+  - B738
+  - E190
+  
+
+computing:
+  default_cpu_count: 35

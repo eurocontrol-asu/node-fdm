@@ -1,18 +1,22 @@
 # %%
-import sys
+import os
+import yaml
 from pathlib import Path
+from traffic.data import opensky, aircraft
 
-sys.path.append(str(Path.cwd().parents[1]))
 
-from config import DATA_DIR, TYPECODES as typecodes
-from traffic.data import opensky
+cfg = yaml.safe_load(open("config.yaml"))
+
+data_dir = Path(cfg["paths"]["data_dir"])
+os.makedirs(data_dir, exist_ok=True)
+
+typecodes = cfg["typecodes"]
+
 
 opensky.trino_client.connect()
 fl = opensky.flightlist("2025-10-01", "2025-10-02")
 fl
-
 # %%
-from traffic.data import aircraft
 
 ext = (
     aircraft.data[["icao24", "registration", "typecode", "age"]]
@@ -72,7 +76,7 @@ pivot_df
 
 # %%
 aircraft_db = sampled_ext[["icao24", "registration", "typecode", "age", "airline"]]
-aircraft_db.to_csv(DATA_DIR / "aircraft_db.csv", index=False)
+aircraft_db.to_csv(data_dir / "aircraft_db.csv", index=False)
 aircraft_db
 
 # %%
@@ -81,3 +85,5 @@ sampled_ext.groupby(["typecode"]).agg(
 ).reset_index().sort_values("icao24", ascending=False).query(
     "typecode in @typecodes", engine="python"
 )
+
+# %%

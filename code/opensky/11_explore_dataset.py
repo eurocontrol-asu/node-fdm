@@ -1,9 +1,16 @@
 # %%
-
+import yaml
 import pandas as pd
+from pathlib import Path
 from traffic.core import Traffic
 
-t = Traffic.from_file("processed_20241001.parquet")
+cfg = yaml.safe_load(open("config.yaml"))
+
+data_dir = Path(cfg["paths"]["data_dir"])
+preprocess_dir = data_dir / cfg["paths"]["preprocess_dir"]
+
+date = "20241001"
+t = Traffic.from_file(preprocess_dir / f"processed_{date}.parquet")
 t
 
 # %%

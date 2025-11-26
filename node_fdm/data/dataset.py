@@ -11,7 +11,6 @@ from joblib import Parallel, delayed
 from torch.utils.data import Dataset
 from tqdm import tqdm
 
-from config import DEFAULT_CPU_COUNT
 from node_fdm.data.flight_processor import FlightProcessor
 
 
@@ -24,7 +23,7 @@ class SeqDataset(Dataset):
         model_cols: Tuple[Any, Any, Any, Any, Any],
         seq_len: int = 60,
         shift: int = 60,
-        n_jobs: int = DEFAULT_CPU_COUNT,
+        n_jobs: int = 35,
         load_parallel: bool = True,
         custom_fn: Tuple[
             Optional[Callable[[pd.DataFrame], pd.DataFrame]],
