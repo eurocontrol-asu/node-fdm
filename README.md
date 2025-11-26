@@ -20,6 +20,18 @@ It combines **data-driven learning** with **physical consistency**, enabling the
 
 ---
 
+### ⚡ Quick Install (PyPI)
+
+- Core: `pip install node-fdm`
+- With optional dependencies (traffic, fastmeteo, viz): `pip install 'node-fdm[all]'`
+- For BADA baseline support (pyBADA’s pinning is restrictive):  
+  `pip install pybada --ignore-requires-python --no-deps`  
+  `pip install simplekml 'xlsxwriter>=3.2.5'`  # pyBADA dependency
+
+Requires Python 3.11+. For editable/local development, clone the repo and run `pip install -e .[all]`.
+
+---
+
 
 ### 📁 Repository Structure
 

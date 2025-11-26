@@ -10,11 +10,15 @@ from node_fdm.architectures.opensky_2025.model import MODEL_COLS
 import pandas as pd
 from tqdm import tqdm
 from joblib import Parallel, delayed
+
+import sys
+
+sys.path.append(str(Path.cwd().parents[0]))
+
 from pybada_predictor.aircraft_mapping import BADA_4_2_MAPPING
 from pybada_predictor.predictor import process_single_flight
 
 from pyBADA.bada4 import Bada4Aircraft
-
 
 import warnings
 

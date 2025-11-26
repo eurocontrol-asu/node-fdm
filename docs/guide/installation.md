@@ -14,16 +14,16 @@ Before installing, ensure you have:
 
 ### 📦 Install the Package
 
-Install `node-fdm` in editable mode with all optional dependencies:
+**From PyPI (recommended for users)**
+- Core library: `pip install node-fdm`
+- With optional deps (traffic, fastmeteo, viz): `pip install 'node-fdm[all]'`
+- BADA baseline support (pyBADA requirements are restrictive):  
+  `pip install pybada --ignore-requires-python --no-deps`  
+  `pip install simplekml 'xlsxwriter>=3.2.5'`  # pyBADA dependency
 
+**From source (contributors)**
 ```bash
 pip install -e .[all]      # core + traffic + fastmeteo + click + tqdm + matplotlib
-```
-
-If you want the BADA baseline and have the BADA 4.2 dataset:
-
-```bash
-pip install -e .[bada]     # enables pyBADA support
 ```
 
 
