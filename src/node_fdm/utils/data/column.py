@@ -3,7 +3,7 @@
 """Column metadata definition with unit and normalization helpers."""
 
 from dataclasses import dataclass
-from utils.data.unit import Unit
+from node_fdm.utils.data.unit import Unit
 from typing import Callable, Optional, ClassVar, List, Dict
 
 

@@ -49,6 +49,4 @@ Go to:
 
 # 📌 Legal Notice
 
-This project is distributed under the **EUPL-1.2** licence with specific  
-EUROCONTROL amendments (see `AMENDMENT_TO_EUPL_license.md`).  
-It is intended **for research purposes only** and must not be used as a regulatory tool.
+This project is distributed under the **EUPL-1.2** licence with specific EUROCONTROL amendments (see `AMENDMENT_TO_EUPL_license.md`).  It is intended **for research purposes only** and must not be used as a regulatory tool.

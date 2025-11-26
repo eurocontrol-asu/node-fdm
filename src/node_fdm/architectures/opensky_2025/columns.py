@@ -2,9 +2,9 @@
 # -*- coding: utf-8 -*-
 """Column definitions and unit mappings for the OpenSky 2025 architecture."""
 
-from utils.data.column import Column
+from node_fdm.utils.data.column import Column
 
-from utils.physics.units import (
+from node_fdm.utils.physics.units import (
     nautical_miles,
     knot,
     feet,

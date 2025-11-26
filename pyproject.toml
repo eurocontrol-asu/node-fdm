@@ -58,18 +58,12 @@ docs = [
 Homepage = "https://github.com/eurocontrol"
 
 [tool.setuptools_scm]
-write_to = "node_fdm/_version.py"
+write_to = "src/node_fdm/_version.py"
 fallback_version = "0.0.0-dev"
 
 [tool.setuptools]
-package-dir = { "" = "." }
+package-dir = { "" = "src" }
 
 [tool.setuptools.packages.find]
-where = ["."]
-include = [
-  "node_fdm*",
-  "code*",
-  "preprocessing*",
-  "pybada_predictor*",
-  "utils*",
-]
+where = ["src"]
+include = ["node_fdm*"]

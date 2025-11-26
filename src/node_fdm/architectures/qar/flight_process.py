@@ -9,8 +9,8 @@ import pandas as pd
 
 from scipy.signal import butter, filtfilt
 
-from utils.data.column import Column
-from utils.physics.constants import (
+from node_fdm.utils.data.column import Column
+from node_fdm.utils.physics.constants import (
     gamma_ratio,
     R,
 )

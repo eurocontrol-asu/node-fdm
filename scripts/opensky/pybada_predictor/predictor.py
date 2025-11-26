@@ -8,7 +8,7 @@ import pandas as pd
 import numpy as np
 from pathlib import Path
 
-from utils.physics.constants import ft
+from node_fdm.utils.physics.constants import ft
 from pybada_predictor.utils import ms_to_kt, tas_to_cas, isa_temperature, get_phase
 
 

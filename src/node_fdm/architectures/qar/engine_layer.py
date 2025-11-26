@@ -14,7 +14,7 @@ from node_fdm.architectures.qar.columns import (
     col_n1,
     col_ff,
 )
-from utils.learning.base.structured_layer import StructuredLayer
+from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 
 
 class EngineLayer(StructuredLayer):

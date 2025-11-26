@@ -4,8 +4,8 @@
 
 from typing import Any, Callable, Optional, Tuple
 
-from utils.data.column import Column
-from utils.data.dataframe_wrapper import DataFrameWrapper
+from node_fdm.utils.data.column import Column
+from node_fdm.utils.data.dataframe_wrapper import DataFrameWrapper
 
 
 class FlightProcessor:

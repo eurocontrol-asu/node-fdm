@@ -19,8 +19,8 @@ from node_fdm.architectures.opensky_2025.columns import (
     col_alt_diff,
 )
 
-from utils.physics.constants import gamma_ratio, R, p0, a0
-from utils.physics.torch import isa_temperature_torch, isa_pressure_torch
+from node_fdm.utils.physics.constants import gamma_ratio, R, p0, a0
+from node_fdm.utils.physics.torch import isa_temperature_torch, isa_pressure_torch
 
 
 class TrajectoryLayer(nn.Module):

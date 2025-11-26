@@ -8,7 +8,7 @@ import matplotlib.pyplot as plt
 from node_fdm.architectures.opensky_2025.flight_process import flight_processing
 from node_fdm.data.flight_processor import FlightProcessor
 from node_fdm.architectures.opensky_2025.model import MODEL_COLS
-from ..pybada_predictor.utils import cas_to_mach, tas_to_cas
+from pybada_predictor.utils import cas_to_mach, tas_to_cas
 
 
 cfg = yaml.safe_load(open("config.yaml"))

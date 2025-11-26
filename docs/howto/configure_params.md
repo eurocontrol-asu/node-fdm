@@ -1,9 +1,8 @@
 # Configure project paths and options
 
 All runtime settings are now defined per pipeline:
-- `code/opensky/config.yaml` — OpenSky 2025 pipeline
-- `code/qar/config.yaml` — QAR pipeline
-- (Template) `../configs/opensky_2025.yaml` — copy/adapt for new setups
+- `scripts/opensky/config.yaml` — OpenSky 2025 pipeline
+- `scripts/qar/config.yaml` — QAR pipeline
 
 Key fields (OpenSky example):
 ```yaml

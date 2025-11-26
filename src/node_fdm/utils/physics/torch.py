@@ -5,7 +5,7 @@
 from typing import Any
 
 import torch
-from utils.physics.constants import R, p0, T0
+from node_fdm.utils.physics.constants import R, p0, T0
 
 
 def isa_pressure_torch(h: Any) -> torch.Tensor:

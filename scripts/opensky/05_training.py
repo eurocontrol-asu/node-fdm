@@ -57,7 +57,7 @@ for acft in typecodes:
     coeff = 50 / n_step_per_epoch
 
     trainer.train(
-        epochs=800 * coeff,
+        epochs=int(800 * coeff),
         batch_size=model_config["batch_size"],
         val_batch_size=10000,
         method="euler",

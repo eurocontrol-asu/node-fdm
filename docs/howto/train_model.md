@@ -12,7 +12,7 @@ from node_fdm.ode_trainer import ODETrainer
 import yaml
 from pathlib import Path
 
-cfg = yaml.safe_load(open("config.yaml"))  # run inside code/opensky or code/qar
+cfg = yaml.safe_load(open("config.yaml"))  # run inside scripts/opensky or scripts/qar
 paths = cfg["paths"]
 process_dir = Path(paths["data_dir"]) / paths["process_dir"]
 models_dir = Path(paths["data_dir"]) / paths["models_dir"]

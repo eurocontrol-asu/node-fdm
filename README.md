@@ -24,29 +24,24 @@ It combines **data-driven learning** with **physical consistency**, enabling the
 ### 📁 Repository Structure
 
 ```text
-├── code/                     # Pipelines and scripts (OpenSky 2025 & QAR) with per-dataset configs
-│   ├── opensky/              # OpenSky 2025 data download/preprocess/train/infer (config.yaml inside)
-│   └── qar/                  # QAR training and inference scripts (config.yaml inside)
-├── node_fdm/                 # Core Neural ODE library
-│   ├── architectures/        # Dataset-specific definitions (opensky_2025, qar)
+├── src/node_fdm/             # Core Neural ODE library (installed as a package)
+│   ├── architectures/        # Architecture specific definitions (opensky_2025, qar)
 │   ├── data/                 # Datasets, loaders, and flight processing
-│   ├── models/               # Neural ODE modules and production wrappers
-│   ├── ode_trainer.py        # Training loop and schedulers
-│   └── predictor.py          # Inference entry point
-├── preprocessing/            # Shared preprocessing utilities (splits, meteo/parameter enrichment)
-├── pybada_predictor/         # BADA baseline predictor and aircraft mapping utilities
-├── utils/                    # Data helpers, learning blocks, and physics utilities
-├── models/                   # Pretrained checkpoints (OpenSky 2025 fleet + QAR A320 artifacts)
+│   ├── models/               # Neural ODE modules, pretrained checkpoints, wrappers
+│   └── utils/                # Data helpers, learning blocks, and physics utilities
+├── scripts/                  # End-to-end pipelines and runnable scripts
+│   ├── opensky/              # OpenSky 2025 download/preprocess/train/infer steps
+│   └── qar/                  # QAR training and inference scripts + config.yaml
 ├── docs/                     # MkDocs documentation (guide, how-to, reference, logo)
-├── tests/                    # Test scaffolding for shared utils
-├── mkdocs.yml                # Documentation site configuration
+├── tests/                    # Unit/integration tests for shared utilities
+├── mkdocs.yml                # Documentation site configuration (mkdocs-dev.yml for local)
 ├── pyproject.toml            # Packaging configuration and dependencies
 ├── LICENCE.md                # EUPL-1.2 licence (see AMENDMENT_TO_EUPL_license.md)
 └── AMENDMENT_TO_EUPL_license.md
 ```
 
 **Configuration**  
-- Each pipeline ships its own `config.yaml` under `code/opensky/` and `code/qar/`
+- Each pipeline ships its own `config.yaml` under `scripts/opensky/` and `scripts/qar/`
 - Edit dataset paths, model names, and training hyperparameters directly in the relevant subproject config before running scripts.
 
 ---
@@ -93,6 +88,6 @@ Want to extend the library with another dataset or modelling choice? Use the exi
 3) **Build layers**: in `model.py`, wire your layers (e.g., `TrajectoryLayer`, `EngineLayer`, `StructuredLayer`) and expose `ARCHITECTURE` and `MODEL_COLS`. The OpenSky model shows a two-layer baseline; QAR illustrates stacking several derived layers.
 4) **Preprocess & filter**: implement `flight_processing` and `segment_filtering` in `flight_process.py` to clean/augment your raw data (see altitude diffs in OpenSky vs. smoothing and engine reduction in QAR).
 5) **Register the name**: add your architecture key to `valid_names` in `node_fdm/architectures/mapping.py` so loaders and training scripts can find it.
-6) **Test a small run**: train or run inference on a tiny slice to validate column ordering and tensor shapes before opening a pull request; sample pipelines live in `code/` (e.g., OpenSky scripts).
+6) **Test a small run**: train or run inference on a tiny slice to validate column ordering and tensor shapes before opening a pull request; sample pipelines live in `scripts/` (e.g., OpenSky scripts).
 
 If you contribute back, include a short note on your data assumptions, any proprietary constraints, and a minimal script/notebook that exercises the new architecture.

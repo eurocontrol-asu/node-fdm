@@ -5,7 +5,7 @@
 from typing import Any, List, Union
 
 import pandas as pd
-from utils.data.column import Column
+from node_fdm.utils.data.column import Column
 
 
 class IlocIndexer:

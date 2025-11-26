@@ -6,9 +6,9 @@ from typing import Any, Dict, Sequence
 
 import torch
 import torch.nn as nn
-from utils.learning.base.blocks import Backbone, Head
-from utils.learning.base.normalizers import InputNormalizer, OutputDenormalizer
-from utils.learning.base.multi_layer_dict import MultiLayerDict
+from node_fdm.utils.learning.base.blocks import Backbone, Head
+from node_fdm.utils.learning.base.normalizers import InputNormalizer, OutputDenormalizer
+from node_fdm.utils.learning.base.multi_layer_dict import MultiLayerDict
 
 
 class StructuredLayer(nn.Module):

@@ -10,7 +10,7 @@ Before installing, ensure you have:
 - **Python 3.11+**
 - **OpenSky Trino access** (required only if you plan to run the full OpenSky 2025 pipeline)
 - **Optional:** BADA 4.2 model files  
-  Set their location in the relevant `config.yaml` (`code/opensky/config.yaml` or `../configs/opensky_2025.yaml` template).
+  Set their location in the relevant `config.yaml` (`scripts/opensky/config.yaml`).
 
 ### 📦 Install the Package
 
@@ -29,7 +29,7 @@ pip install -e .[bada]     # enables pyBADA support
 
 ### 📁 Project Directories
 
-Each pipeline has its own `config.yaml` (`code/opensky/config.yaml`, `code/qar/config.yaml`) where you define:
+Each pipeline has its own `config.yaml` (`scripts/opensky/config.yaml`, `scripts/qar/config.yaml`) where you define:
 
 - `paths.data_dir` — root for all data artifacts  
 - `paths.download_dir`, `preprocess_dir`, `process_dir`, `predicted_dir`, `bada_dir`, `models_dir`, `figure_dir`  

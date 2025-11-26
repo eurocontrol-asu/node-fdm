@@ -7,7 +7,7 @@ from typing import Any, Sequence
 import os
 import torch
 import torch.nn as nn
-from utils.learning.base.structured_layer import StructuredLayer
+from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 from node_fdm.architectures.mapping import get_architecture_params_from_meta
 
 

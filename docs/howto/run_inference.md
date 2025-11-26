@@ -16,7 +16,7 @@ from node_fdm.predictor import NodeFDMPredictor
 from node_fdm.data.flight_processor import FlightProcessor
 from node_fdm.architectures import mapping
 
-cfg = yaml.safe_load(open("config.yaml"))  # run inside code/opensky or code/qar
+cfg = yaml.safe_load(open("config.yaml"))  # run inside scripts/opensky or scripts/qar
 paths = cfg["paths"]
 process_dir = Path(paths["data_dir"]) / paths["process_dir"]
 models_dir = Path(paths["data_dir"]) / paths["models_dir"]
@@ -50,4 +50,4 @@ print(pred_df.head())
 
 `predict_flight` returns `pred_<column>` for each state/environment output defined by the architecture.
 
-Batch runs: adapt `code/opensky/06_flight_prediction.py` or build a small loop over your test split, reusing `FlightProcessor` + `NodeFDMPredictor`.
+Batch runs: adapt `scripts/opensky/06_flight_prediction.py` or build a small loop over your test split, reusing `FlightProcessor` + `NodeFDMPredictor`.

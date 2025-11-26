@@ -3,8 +3,8 @@
 """Unit definitions specific to physics utilities."""
 
 import numpy as np
-from utils.data.unit import Unit
-from utils.physics.constants import (
+from node_fdm.utils.data.unit import Unit
+from node_fdm.utils.physics.constants import (
     NM,
     ft,
     kt,
@@ -18,7 +18,7 @@ from utils.physics.constants import (
     fma_2_dict,
 )
 
-from utils.data.conversions import (
+from node_fdm.utils.data.conversions import (
     LinearUnitConverter,
     AdditionUnitConverter,
     CategoryMapper,

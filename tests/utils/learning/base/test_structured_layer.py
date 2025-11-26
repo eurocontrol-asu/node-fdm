@@ -1,8 +1,8 @@
 import torch
 
-from utils.data.column import Column
-from utils.data.unit import Unit
-from utils.learning.base.structured_layer import StructuredLayer
+from node_fdm.utils.data.column import Column
+from node_fdm.utils.data.unit import Unit
+from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 
 
 def make_layer(

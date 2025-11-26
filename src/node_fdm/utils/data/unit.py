@@ -5,7 +5,7 @@
 from typing import Any, Callable, Optional
 from dataclasses import dataclass
 
-from utils.data.conversions import (
+from node_fdm.utils.data.conversions import (
     identity,
     correct_float,
     correct_str,

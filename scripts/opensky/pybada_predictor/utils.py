@@ -5,7 +5,7 @@
 from typing import Any
 
 import numpy as np
-from utils.physics.constants import gamma_ratio, a0, p0, R, T0
+from node_fdm.utils.physics.constants import gamma_ratio, a0, p0, R, T0
 
 
 def ms_to_kt(el: float) -> float:

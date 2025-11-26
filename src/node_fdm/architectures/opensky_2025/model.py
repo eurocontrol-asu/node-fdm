@@ -3,7 +3,7 @@
 """Layer configuration and column grouping for the OpenSky 2025 architecture."""
 
 from node_fdm.architectures.opensky_2025.trajectory_layer import TrajectoryLayer
-from utils.learning.base.structured_layer import StructuredLayer
+from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 
 from node_fdm.architectures.opensky_2025.columns import (
     col_dist,

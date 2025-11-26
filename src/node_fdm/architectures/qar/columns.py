@@ -3,8 +3,8 @@
 """Column definitions and unit mappings for the QAR architecture."""
 
 from torch import nn
-from utils.data.column import Column
-from utils.physics.units import (
+from node_fdm.utils.data.column import Column
+from node_fdm.utils.physics.units import (
     boolean,
     degree,
     degree_celsius,
