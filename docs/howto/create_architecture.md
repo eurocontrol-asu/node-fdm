@@ -36,4 +36,4 @@ Follow these steps to add and register a new architecture (see the README guidan
 Tips:
 - Keep column names consistent between preprocessing and model definitions.
 - Use `Column` units to avoid silent scale bugs.
-- Update `config.py` paths and `TYPECODES` if your dataset layout differs from the existing pipelines.
+- Update the relevant pipeline `config.yaml` (paths, `typecodes`) if your dataset layout differs from the existing pipelines.

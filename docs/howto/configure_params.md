@@ -1,26 +1,40 @@
 # Configure project paths and options
 
-All runtime settings live in `config.py` (repository root):
+All runtime settings are now defined per pipeline:
+- `code/opensky/config.yaml` — OpenSky 2025 pipeline
+- `code/qar/config.yaml` — QAR pipeline
+- (Template) `../configs/opensky_2025.yaml` — copy/adapt for new setups
 
-- `DATA_DIR` and subfolders: where raw, preprocessed, processed, predicted, and BADA flights are stored.
-- `MODELS_DIR`: checkpoints produced by `ODETrainer`.
-- `ERA5_CACHE_DIR` and `ERA5_FEATURES`: meteorological cache and variables used in enrichment.
-- `TYPECODES`: aircraft types processed by the OpenSky pipeline.
-- `BADA_4_2_DIR`: **must be set** if you want to run the BADA baseline.
-- `DEFAULT_CPU_COUNT`: used by preprocessing and parallel baselines.
+Key fields (OpenSky example):
+```yaml
+paths:
+  data_dir: "/path/to/data"
+  download_dir: "downloaded_parquet"
+  preprocess_dir: "preprocessed_parquet"
+  process_dir: "processed_flights"
+  predicted_dir: "predicted_flights"
+  bada_dir: "bada_flights"
+  models_dir: "models"
+  figure_dir: "figures"
+  era5_cache_dir: "era5_cache"
 
-Example:
-```python
-from config import DATA_DIR, MODELS_DIR, TYPECODES, ERA5_FEATURES
+era5_features:
+  - u_component_of_wind
+  - v_component_of_wind
+  - temperature
 
-print("Data root:", DATA_DIR)
-print("Model dir:", MODELS_DIR)
-print("Types:", TYPECODES)
-print("ERA5 features:", ERA5_FEATURES)
+typecodes:
+  - A320
+  - A20N
+  # ...
+
+bada:
+  bada_4_2_dir: "/path/to/BADA/4.2.1"
 ```
 
-Recommendations:
-- Keep paths relative to the repository root to avoid surprises when running scripts.
-- Update `TYPECODES` once in `config.py` instead of editing each script.
-- Ensure the directories exist before running downloads/preprocessing (`mkdir -p ...`).
-- Set `BADA_4_2_DIR` to the directory containing the BADA 4.2 data files if you plan to run `07_bada_prediction.py`.
+Tips:
+- Keep `data_dir` absolute; subfolders are resolved relative to it.
+- Adjust `typecodes` once in the relevant `config.yaml` instead of editing scripts.
+- Ensure directories exist before running downloads/preprocessing (`mkdir -p ...`).
+- Set `bada.bada_4_2_dir` if you plan to run `07_bada_prediction.py`.
+- For QAR, only the needed paths are kept (`data_dir`, `predicted_dir`, `bada_dir`, `models_dir`, `figure_dir`) plus `typecodes` and `computing.default_cpu_count`.

@@ -31,7 +31,6 @@ for file in os.listdir(preprocess_dir):
     file_path = preprocess_dir / file
     print(file_path)
     process_files(arco_grid, file_path, process_dir, selected_param_config)
-    break
 
 make_global_split_csv(process_dir)
 

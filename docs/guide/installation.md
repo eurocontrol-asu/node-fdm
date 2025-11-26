@@ -10,10 +10,7 @@ Before installing, ensure you have:
 - **Python 3.11+**
 - **OpenSky Trino access** (required only if you plan to run the full OpenSky 2025 pipeline)
 - **Optional:** BADA 4.2 model files  
-  Set their location in `config.py`:
-  ```python
-  BADA_4_2_DIR = "/path/to/BADA_4.2/"
-  ```
+  Set their location in the relevant `config.yaml` (`code/opensky/config.yaml` or `../configs/opensky_2025.yaml` template).
 
 ### 📦 Install the Package
 
@@ -32,23 +29,13 @@ pip install -e .[bada]     # enables pyBADA support
 
 ### 📁 Project Directories
 
-`config.py` centralises paths and points everything to the `data/` directory by default.  
-These folders are used across the pipelines (OpenSky / ERA5 / training / inference):
+Each pipeline has its own `config.yaml` (`code/opensky/config.yaml`, `code/qar/config.yaml`) where you define:
 
-- `data/downloaded_parquet` — raw OpenSky flight history, flightlist, and extended datasets  
-- `data/preprocessed_parquet` — decoded & resampled flights (4 s)  
-- `data/processed_flights` — ERA5-enriched segments ready for training  
-- `data/predicted_flights` — Neural ODE predictions  
-- `data/bada_flights` — BADA baseline outputs  
-- `data/era5_cache` — local cache for meteorological fields
+- `paths.data_dir` — root for all data artifacts  
+- `paths.download_dir`, `preprocess_dir`, `process_dir`, `predicted_dir`, `bada_dir`, `models_dir`, `figure_dir`  
+- `paths.era5_cache_dir` — local cache for meteorological fields  
+- `bada.bada_4_2_dir` — required if you run the BADA baseline (`07_bada_prediction.py`)
 
-Create all required directories:
-
-```bash
-mkdir -p data/downloaded_parquet data/preprocessed_parquet \
-         data/processed_flights data/predicted_flights \
-         data/bada_flights data/era5_cache
-```
 
 ### ✔️ Quick Check
 

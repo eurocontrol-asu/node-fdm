@@ -1,4 +1,4 @@
-#%%
+# %%
 import os
 import yaml
 from pathlib import Path
@@ -48,13 +48,12 @@ for acft in typecodes:
 
         rows = list(test_df.itertuples(index=False))
 
-        results = Parallel(n_jobs=cfg["computing"]["default_cpu_count"], backend="loky")(
+        results = Parallel(
+            n_jobs=cfg["computing"]["default_cpu_count"], backend="loky"
+        )(
             delayed(process_single_flight)(row, AC, processor, output_dir)
             for row in tqdm(rows, total=len(rows), desc=f"{acft}")
         )
         print(f"✅ Finished BADA predictions for {acft}")
-        break
     except KeyError:
         print(acft, "not avalaible in bada 4.2")
-
-

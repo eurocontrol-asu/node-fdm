@@ -29,8 +29,8 @@ processor = FlightProcessor(MODEL_COLS, custom_processing_fn=flight_processing)
 
 local_models = False
 
-# Boucle sur chaque type d'avion
-for acft in typecodes[:1]:
+
+for acft in typecodes:
     print(f"\n🛫 Predicting for aircraft: {acft}")
 
     if local_models:
@@ -44,25 +44,20 @@ for acft in typecodes[:1]:
 
     predictor = NodeFDMPredictor(MODEL_COLS, model_path, dt=4.0, device="cuda:0")
 
-    # Sélectionne les vols test
     data_df = split_df[split_df.aircraft_type == acft]
     test_df = data_df[data_df.split == "test"]
 
-    # Crée le dossier de sortie
     output_dir = predict_dir / acft
     output_dir.mkdir(parents=True, exist_ok=True)
 
     for _, row in tqdm(test_df.iterrows(), total=len(test_df), desc=f"{acft}"):
         flight_path = Path(row.filepath)
         flight_id = flight_path.stem
-        print(flight_path)
-        # Prépare les données
+
         f = processor.process_flight(pd.read_parquet(flight_path))
 
-        # Fichier de sortie
         out_path = output_dir / f"{flight_id}.parquet"
 
-        # Prédiction
         pred_df = predictor.predict_flight(f, add_cols=[col_cas])
         pred_df.to_parquet(out_path, index=False)
 

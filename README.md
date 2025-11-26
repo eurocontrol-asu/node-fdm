@@ -25,17 +25,29 @@ It combines **data-driven learning** with **physical consistency**, enabling the
 
 ```text
 ├── code/                     # Pipelines and scripts (OpenSky 2025 & QAR) with per-dataset configs
+│   ├── opensky/              # OpenSky 2025 data download/preprocess/train/infer (config.yaml inside)
+│   └── qar/                  # QAR training and inference scripts (config.yaml inside)
 ├── node_fdm/                 # Core Neural ODE library
 │   ├── architectures/        # Dataset-specific definitions (opensky_2025, qar)
 │   ├── data/                 # Datasets, loaders, and flight processing
 │   ├── models/               # Neural ODE modules and production wrappers
+│   ├── ode_trainer.py        # Training loop and schedulers
+│   └── predictor.py          # Inference entry point
 ├── preprocessing/            # Shared preprocessing utilities (splits, meteo/parameter enrichment)
 ├── pybada_predictor/         # BADA baseline predictor and aircraft mapping utilities
 ├── utils/                    # Data helpers, learning blocks, and physics utilities
 ├── models/                   # Pretrained checkpoints (OpenSky 2025 fleet + QAR A320 artifacts)
 ├── docs/                     # MkDocs documentation (guide, how-to, reference, logo)
-└──tests/                    # Test scaffolding for shared utils
+├── tests/                    # Test scaffolding for shared utils
+├── mkdocs.yml                # Documentation site configuration
+├── pyproject.toml            # Packaging configuration and dependencies
+├── LICENCE.md                # EUPL-1.2 licence (see AMENDMENT_TO_EUPL_license.md)
+└── AMENDMENT_TO_EUPL_license.md
 ```
+
+**Configuration**  
+- Each pipeline ships its own `config.yaml` under `code/opensky/` and `code/qar/`
+- Edit dataset paths, model names, and training hyperparameters directly in the relevant subproject config before running scripts.
 
 ---
 

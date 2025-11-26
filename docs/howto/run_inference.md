@@ -10,14 +10,19 @@ Example (adapt the architecture import and paths):
 import json
 from pathlib import Path
 import pandas as pd
+import yaml
 
 from node_fdm.predictor import NodeFDMPredictor
 from node_fdm.data.flight_processor import FlightProcessor
 from node_fdm.architectures import mapping
-from config import PROCESS_DIR, MODELS_DIR
+
+cfg = yaml.safe_load(open("config.yaml"))  # run inside code/opensky or code/qar
+paths = cfg["paths"]
+process_dir = Path(paths["data_dir"]) / paths["process_dir"]
+models_dir = Path(paths["data_dir"]) / paths["models_dir"]
 
 # Load meta to recover the architecture name
-model_path = MODELS_DIR / "opensky_A320"   # replace with your model folder
+model_path = models_dir / "opensky_A320"   # replace with your model folder
 meta = json.loads((model_path / "meta.json").read_text())
 arch_name = meta["architecture_name"]
 
@@ -26,7 +31,7 @@ _, model_cols, custom_fn = mapping.get_architecture_from_name(arch_name)
 custom_processing_fn, _ = custom_fn
 
 # Prepare one processed flight
-flight_path = Path(PROCESS_DIR / "A320" / "20241001_A320_00001.parquet")
+flight_path = process_dir / "A320" / "20241001_A320_00001.parquet"
 processor = FlightProcessor(model_cols, custom_processing_fn=custom_processing_fn)
 f = processor.process_flight(pd.read_parquet(flight_path))
 

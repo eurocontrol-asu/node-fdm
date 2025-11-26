@@ -9,12 +9,18 @@ Set the architecture name you want to use (e.g., `opensky_2025`, `qar`, or your 
 ```python
 import pandas as pd
 from node_fdm.ode_trainer import ODETrainer
-from config import PROCESS_DIR, MODELS_DIR
+import yaml
+from pathlib import Path
+
+cfg = yaml.safe_load(open("config.yaml"))  # run inside code/opensky or code/qar
+paths = cfg["paths"]
+process_dir = Path(paths["data_dir"]) / paths["process_dir"]
+models_dir = Path(paths["data_dir"]) / paths["models_dir"]
 
 acft = "A320"  # or any grouping key you use
 arch = "opensky_2025"  # replace with your architecture
 
-split_df = pd.read_csv(PROCESS_DIR / "dataset_split.csv")
+split_df = pd.read_csv(process_dir / "dataset_split.csv")
 data_df = split_df[split_df.aircraft_type == acft]
 
 model_config = dict(
@@ -34,7 +40,7 @@ model_config = dict(
 trainer = ODETrainer(
     data_df=data_df,
     model_config=model_config,
-    model_dir=MODELS_DIR,
+    model_dir=models_dir,
     num_workers=model_config["num_workers"],
     load_parallel=True,
 )

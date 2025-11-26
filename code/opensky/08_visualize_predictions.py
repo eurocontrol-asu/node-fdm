@@ -29,7 +29,7 @@ node_pred_dir = predict_dir / acft
 output_dir = bada_dir / acft
 
 
-for idx, row in test_df.iloc[0:50].iterrows():
+for idx, row in test_df.iterrows():
     flight_path = row.filepath
     print(flight_path)
     if not os.path.exists(output_dir / flight_path.split("/")[-1]):

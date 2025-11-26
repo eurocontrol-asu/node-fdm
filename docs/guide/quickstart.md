@@ -1,6 +1,6 @@
 # Quickstart
 
-This guide provides a complete overview of how to run **node-fdm** end-to-end. It provide the general workflow used by all architectures and the full OpenSky 2025 pipeline example. All paths assume you are at the repository root (where `config.py` lives).
+This guide provides a complete overview of how to run **node-fdm** end-to-end. It provide the general workflow used by all architectures and the full OpenSky 2025 pipeline example. All paths assume you are at the repository root; each pipeline ships its own `config.yaml` under `code/opensky/` or `code/qar/`.
 
 ### General Pattern (Any Architecture)
 
@@ -30,7 +30,7 @@ This guide provides a complete overview of how to run **node-fdm** end-to-end. I
 ### OpenSky 2025 (ADS-B) Example Pipeline
 
 1) **Aircraft sampling**  
-   `code/opensky/01_aircraft_list.py` builds `data/aircraft_db.csv` using OpenSky Trino and `config.TYPECODES`.
+   `code/opensky/01_aircraft_list.py` builds `data/aircraft_db.csv` using OpenSky Trino and the `typecodes` declared in `code/opensky/config.yaml`.
 
 2) **Download raw data**  
    `code/opensky/02_download_data.py` fetches history, flightlist, and extended tables into `data/downloaded_parquet/`.
@@ -39,7 +39,7 @@ This guide provides a complete overview of how to run **node-fdm** end-to-end. I
    `code/opensky/03_preprocess_data.py <history.parquet>` decodes BDS 4/5/6, filters short flights, computes ADEP/ADES distances, and resamples to 4 seconds.
 
 4) **Weather enrichment and smoothing**  
-   `code/opensky/04_weather_spd_process_data.py` adds ERA5 wind/temperature (`ERA5_FEATURES`), applies `selected_param_config`, and writes enriched segments to  
+   `code/opensky/04_weather_spd_process_data.py` adds ERA5 wind/temperature (`era5_features`), applies `selected_param_config`, and writes enriched segments to  
    `data/processed_flights/<TYPECODE>/` plus `dataset_split.csv`.
 
 5) **Train Neural ODEs**  
@@ -58,9 +58,6 @@ This guide provides a complete overview of how to run **node-fdm** end-to-end. I
 
 ### General Tips
 
-- Use `config.py` as the single source of paths, typecodes, architecture names, and shared parameters.  
-- Remove hard-coded overrides (e.g., `acft = "A320"` in `05_training.py`) if you want to train all types in a loop.  
-- Remove the temporary `break` in `04_weather_spd_process_data.py` to process *all* preprocessed parquet files.  
+- Use the pipeline `config.yaml` (`code/opensky/config.yaml` or `code/qar/config.yaml`) as the single source of paths, typecodes, architecture names, and shared parameters.  
 - Make sure caches (e.g., `data/era5_cache`) exist to avoid repeated downloads of ERA5 fields.  
 - For hardware constraints, adjust `batch_size`, `num_workers`, and `seq_len` inside `model_config`.
-

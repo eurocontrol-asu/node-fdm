@@ -17,7 +17,7 @@ sampled_ext = pd.read_csv(data_dir / "aircraft_db.csv")
 sampled_ext
 # %%
 
-for start in pd.date_range("2024-10-01", "2024-10-02", freq="480h"):  # "2025-10-15"
+for start in pd.date_range("2024-10-01", "2025-10-15", freq="480h"):
     path = Path(f"history_{start.strftime('%Y%m%d')}.parquet")
 
     if not path.exists():
@@ -25,7 +25,7 @@ for start in pd.date_range("2024-10-01", "2024-10-02", freq="480h"):  # "2025-10
 
         t = opensky.history(
             start,
-            start + pd.Timedelta("10min"),  # 24h
+            start + pd.Timedelta("24h"),
             icao24=sampled_ext.icao24.tolist(),
         )
 
@@ -39,7 +39,7 @@ for start in pd.date_range("2024-10-01", "2024-10-02", freq="480h"):  # "2025-10
 
         ft = opensky.flightlist(
             start,
-            start + pd.Timedelta("10min"),  # 24h
+            start + pd.Timedelta("24h"),
             icao24=sampled_ext.icao24.tolist(),
         )
 
@@ -54,7 +54,7 @@ for start in pd.date_range("2024-10-01", "2024-10-02", freq="480h"):  # "2025-10
 
         ext = opensky.extended(
             start,
-            start + pd.Timedelta("10min"),  # #24h
+            start + pd.Timedelta("24h"),
             icao24=sampled_ext.icao24.tolist(),
         )
 

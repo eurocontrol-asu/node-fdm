@@ -1,5 +1,5 @@
 paths:
-  data_dir: "/data/common/dataiku/config/projects/NODEFDM/lib/data"#"/data/common/data/QAR/PARQUET/OPENSKY-NODE/opensky/node-fdm/data"
+  data_dir: "TODO" #TO COMPLETE
 
   download_dir: "downloaded_parquet"
   preprocess_dir: "preprocessed_parquet"
@@ -11,7 +11,7 @@ paths:
 
   era5_cache_dir: "era5_cache"
 
-  bada_4_2_dir: "/data/common/dataiku/config/projects/FUEL_MODEL/lib/python/BADA/4.2.1"
+  bada_4_2_dir: "TODO" # TO COMPLETE
 
 era5_features:
   - u_component_of_wind

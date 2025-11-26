@@ -9,12 +9,11 @@
 
 ## ✈️ What is node-fdm?
 
-**node-fdm** is a framework for learning and simulating **aircraft flight dynamics** using  
-**Neural Ordinary Differential Equations** guided by **physical constraints**.
+**node-fdm** is a framework for learning and simulating **aircraft flight dynamics** using  **Neural Ordinary Differential Equations** guided by **physical constraints**.
 
 It is designed to:
 
-- reconstruct ** aircraft trajectories** from ADS-B or QAR data  
+- reconstruct **aircraft trajectories** from ADS-B or QAR data  
 - simulate aircraft behaviour using physics-aware latent dynamics  
 - support multiple architectures (OpenSky 2025, QAR, custom)
 - benchmark results against physics-based baselines such as **BADA**  

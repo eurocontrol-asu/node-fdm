@@ -1,5 +1,5 @@
 paths:
-  data_dir: "/data/common/data/QAR/PARQUET"
+  data_dir: "TODO" #TO COMPLETE
   predicted_dir: "predicted_flights"
   bada_dir: "bada_flights"
   models_dir: "models"
