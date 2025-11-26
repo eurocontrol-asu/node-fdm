@@ -1,52 +1,52 @@
 <p align="center">
-  <img src="images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
+  <img src="images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
 </p>
 
 <p align="center">
-  <em>A physics-guided Neural Ordinary Differential Equation (Neural ODE) framework for aircraft flight dynamics</em>
+  <em>A physics-guided Neural Ordinary Differential Equation (Neural ODE) framework for aircraft flight dynamics.</em>
 </p>
 
+---
 
-## ✈️ What is node-fdm?
+## 🎯 node-fdm: At a Glance
 
-**node-fdm** is a framework for learning and simulating **aircraft flight dynamics** using  **Neural Ordinary Differential Equations** guided by **physical constraints**.
+**node-fdm** is a Python library designed for **learning** and **simulation of aircraft flight dynamics**.
 
-It is designed to:
+It couples the efficiency of **Neural Ordinary Differential Equations (Neural ODE)** with **physical laws** from aeronautics to:
 
-- reconstruct **aircraft trajectories** from ADS-B or QAR data  
-- simulate aircraft behaviour using physics-aware latent dynamics  
-- support multiple architectures (OpenSky 2025, QAR, custom)
-- benchmark results against physics-based baselines such as **BADA**  
+* Reconstruct **coherent aircraft trajectories** from data (ADS-B or QAR).
+* Simulate aircraft behavior through **physically aware** latent dynamics.
+* Offer ready-to-use (**OpenSky 2025**, **QAR**) and customizable architectures.
+* Enable **benchmarking** against established physical models such as **BADA**.
 
-This documentation will help you install the library, understand the concepts, run the pipelines, and extend the framework with your own architectures.
+This documentation will guide you through installation, core concepts, running pipelines, and extending the framework.
 
+---
 
-# 🚀 Quick Navigation
+## 🚀 Quick Start & Navigation
 
-Use this documentation as your main entry point for the project.
+Start from installation, then follow the end-to-end pipelines mirrored in the repository layout.
 
-### 👉 If you are new
-Start here:  
-**Guide → Quickstart**
+### 🌟 Start here
+- **[Installation](/guide/installation/)**: set up Python, optional extras, and editable installs.
+- **[Quickstart](/guide/quickstart/)**: full workflow overview for any architecture plus the OpenSky 2025 example.
 
-### 👉 If you want to run the full OpenSky pipeline  
-See:  
-**Guide → OpenSky 2025 Pipeline**
+### 🧪 Run the pipelines
+- **[Configure parameters](/howto/configure_params/)**: edit `scripts/opensky/config.yaml` or `scripts/qar/config.yaml` to set paths, typecodes, and hyperparameters.
+- **[Train a model](/howto/train_model/)**: launch `opensky_2025` or `qar` training via `ODETrainer` and monitor checkpoints.
+- **[Run inference](/howto/run_inference/)**: load saved models with `NodeFDMPredictor`, roll out trajectories, and export predictions.
 
-### 👉 If you want to train or test models  
-Go to:  
-**How-to → Training**  
-**How-to → Inference**
+### 🛠️ Extend or customise
+- **[Create an architecture](/howto/create_architecture/)**: clone the OpenSky/QAR templates, declare columns, hooks, and layer stacks.
+- **[Core concepts](/concepts/)**: learn about column groups, processing hooks, and architecture registration.
 
-### 👉 If you want to understand the architecture  
-Check:  
-**Concepts → Model Structure**  
-**Concepts → Column Groups**
+### 📚 API reference
+- **[Architectures](/reference/architectures/)**, **[Data](/reference/data/)**, **[Models](/reference/models/)**, **[Trainer](/reference/ode_trainer/)**, **[Predictor](/reference/predictor/)**, **[Package index](/reference/node_fdm/)**.
 
-### 👉 If you need the API  
-Go to:  
-**Reference API**
+---
 
-# 📌 Legal Notice
+## 📌 Legal Notice
 
-This project is distributed under the **EUPL-1.2** licence with specific EUROCONTROL amendments (see `AMENDMENT_TO_EUPL_license.md`).  It is intended **for research purposes only** and must not be used as a regulatory tool.
+This project is distributed under the **EUPL-1.2** license with specific EUROCONTROL amendments (see `AMENDMENT_TO_EUPL_license.md`).
+
+It is intended **for research purposes only** and must not be used as a regulatory or operational tool under any circumstances.
