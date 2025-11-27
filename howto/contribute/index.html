@@ -1315,11 +1315,13 @@ Ensure the current codebase is stable before making changes.
 <h2 id="contributing-new-architectures">🏗️ Contributing New Architectures<a class="headerlink" href="#contributing-new-architectures" title="Permanent link">&para;</a></h2>
 <p>The most common way to extend <strong>node-fdm</strong> is by adding support for a new aircraft type or a new data source. We call these <strong>Architectures</strong>.</p>
 <p>Instead of modifying the core engine, you should create a self-contained module in <code>node_fdm/architectures/</code>.</p>
-<p><strong>Steps to contribute an architecture:</strong>
-1.  <strong>Duplicate a Template</strong>: Copy <code>opensky_2025</code> (for sparse data) or <code>qar</code> (for rich data) into a new folder.
-2.  <strong>Define Columns</strong>: Update <code>columns.py</code> to map your specific data inputs to SI units.
-3.  <strong>Implement Logic</strong>: Adjust <code>flight_process.py</code> (cleaning) and <code>model.py</code> (layer stack).
-4.  <strong>Register</strong>: Add your architecture to <code>node_fdm/architectures/mapping.py</code>.</p>
+<p><strong>Steps to contribute an architecture:</strong></p>
+<ol>
+<li><strong>Duplicate a Template</strong>: Copy <code>opensky_2025</code> (for sparse data) or <code>qar</code> (for rich data) into a new folder.</li>
+<li><strong>Define Columns</strong>: Update <code>columns.py</code> to map your specific data inputs to SI units.</li>
+<li><strong>Implement Logic</strong>: Adjust <code>flight_process.py</code> (cleaning) and <code>model.py</code> (layer stack).</li>
+<li><strong>Register</strong>: Add your architecture to <code>node_fdm/architectures/mapping.py</code>.</li>
+</ol>
 <blockquote>
 <p>📘 <strong>Documentation Reference</strong>: Please strictly follow the <a href="https://eurocontrol-asu.github.io/node-fdm/howto/create_architecture/">Create an Architecture</a> guide in the documentation to ensure your contribution is compatible with the <code>ODETrainer</code>.</p>
 </blockquote>
@@ -1334,10 +1336,12 @@ Ensure the current codebase is stable before making changes.
 Then open <code>http://127.0.0.1:8000/node-fdm/</code> in your browser.</p>
 <hr />
 <h2 id="style-guide">🎨 Style Guide<a class="headerlink" href="#style-guide" title="Permanent link">&para;</a></h2>
-<p>We do not want to be overly strict, but consistency helps review.
-* <strong>Python</strong>: Follow PEP 8. We recommend running <code>ruff</code> or <code>black</code> before committing.
-* <strong>Type Hints</strong>: Please use Python type hints (<code>def func(df: pd.DataFrame) -&gt; torch.Tensor:</code>) for all core functions.
-* <strong>Existing Code</strong>: Avoid reformatting unrelated existing code, as this makes diffs harder to read.</p>
+<p>We do not want to be overly strict, but consistency helps review.</p>
+<ul>
+<li><strong>Python</strong>: Follow PEP 8. We recommend running <code>ruff</code> or <code>black</code> before committing.</li>
+<li><strong>Type Hints</strong>: Please use Python type hints (<code>def func(df: pd.DataFrame) -&gt; torch.Tensor:</code>) for all core functions.</li>
+<li><strong>Existing Code</strong>: Avoid reformatting unrelated existing code, as this makes diffs harder to read.</li>
+</ul>
 <hr />
 <h2 id="license-proprietary-data">⚖️ License &amp; Proprietary Data<a class="headerlink" href="#license-proprietary-data" title="Permanent link">&para;</a></h2>
 <ul>
