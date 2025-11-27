@@ -71,6 +71,14 @@ extra_css:
 plugins:
   - search
   - social
+  - mkdocstrings:
+      handlers:
+        python:
+          options:
+            docstring_style: google   # or numpy, sphinx
+            show_root_full_path: false
+            show_signature: true
+            show_source: false
 
 markdown_extensions:
   - admonition
