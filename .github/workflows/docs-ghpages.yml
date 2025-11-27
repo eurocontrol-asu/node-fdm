@@ -29,16 +29,14 @@ jobs:
         uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-          
+      
       - name: Install Project and Documentation Dependencies
         run: |
-          uv install mkdocs mkdocs-material[imaging] mkdocstrings[python]
-          uv install -e .
-          
+          uvx pip install -e .[all]
 
       - name: Build the site
         run: |
-          mkdocs build -d site
+          uvx --with "mkdocs-material[imaging]" mkdocs build -d site
 
       - name: Deploy pages to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
