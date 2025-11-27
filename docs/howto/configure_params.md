@@ -1,21 +1,28 @@
-# Configure project paths and options
+# ⚙️ Configure Project Paths and Options
 
-All runtime settings are now defined per pipeline:
+Runtime settings are centralized in YAML files, defining project paths, data scope, and feature flags per pipeline.
 
-- `scripts/opensky/config.yaml` — OpenSky 2025 pipeline
-- `scripts/qar/config.yaml` — QAR pipeline
+---
 
-Key fields (OpenSky example):
-```yaml
+## 📂 Configuration Files
+
+All configuration settings are defined per pipeline. Edit the file corresponding to your use case:
+
+* 📡 **OpenSky 2025**: `scripts/opensky/config.yaml`
+* ✈️ **QAR (Private)**: `scripts/qar/config.yaml`
+
+---
+
+## 📝 Configuration Structure Example
+
+This example shows the primary fields in the OpenSky configuration.
+
+```yaml title="scripts/opensky/config.yaml"
 paths:
   data_dir: "/path/to/data"
   download_dir: "downloaded_parquet"
   preprocess_dir: "preprocessed_parquet"
-  process_dir: "processed_flights"
-  predicted_dir: "predicted_flights"
-  bada_dir: "bada_flights"
-  models_dir: "models"
-  figure_dir: "figures"
+  # ... (more directories)
   era5_cache_dir: "era5_cache"
 
 era5_features:
@@ -32,10 +39,29 @@ bada:
   bada_4_2_dir: "/path/to/BADA/4.2.1"
 ```
 
-Tips:
+---
 
-- Keep `data_dir` absolute; subfolders are resolved relative to it.
-- Adjust `typecodes` once in the relevant `config.yaml` instead of editing scripts.
-- Ensure directories exist before running downloads/preprocessing (`mkdir -p ...`).
-- Set `bada.bada_4_2_dir` if you plan to run `07_bada_prediction.py`.
-- For QAR, only the needed paths are kept (`data_dir`, `predicted_dir`, `bada_dir`, `models_dir`, `figure_dir`) plus `typecodes` and `computing.default_cpu_count`.
+## 🔑 Key Parameters and Best Practices
+
+| Section | Parameter | Type | Best Practice / Description |
+| :--- | :--- | :--- | :--- |
+| **Paths** | **`data_dir`** | Path | **Crucial:** Keep this path **absolute**. All subfolders (`download_dir`, `models_dir`, etc.) are resolved relative to this root. |
+| **Paths** | `era5_cache_dir` | Path | Path for local cache of meteorological fields. Setting this prevents re-downloading large files. |
+| **Scope** | `typecodes` | List | **Single Source:** Adjust aircraft type scope here, not by modifying pipeline scripts. |
+| **BADA** | `bada_4_2_dir` | Path | Set this **only if** you plan to run baseline evaluation (`07_bada_prediction.py`). |
+| **ERA5** | `era5_features` | List | Defines the specific meteorological fields (wind components, temperature) to be used as exogenous inputs. |
+
+!!! info "QAR Pipeline Variations"
+    The **QAR** configuration is minimal. It typically only retains essential paths (`data_dir`, `predicted_dir`, `models_dir`), `typecodes`, and options for parallel processing (`computing.default_cpu_count`).
+
+!!! warning "Directory Existence"
+    Ensure your main directories exist **before** running data downloads or preprocessing scripts.
+    ```bash
+    mkdir -p /path/to/data/
+    ```
+
+---
+
+## 🚀 Next Steps
+
+* **[Create an Architecture](../create_architecture/)**: Now that paths are configured, learn how to build the model's core components.

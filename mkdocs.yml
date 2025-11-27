@@ -4,19 +4,19 @@ repo_name: eurocontrol-asu/node-fdm
 site_url: https://eurocontrol-asu.github.io/node-fdm/
 repo_url: https://github.com/eurocontrol-asu/node-fdm
 
-
-
+# 1. Navigation Logic
 nav:
   - Home: index.md
-  - Guide:
-      - Installation: guide/installation.md
-      - Quickstart: guide/quickstart.md
-  - How-to:
+  - Quickstart:
+      - Installation: quickstart/installation.md
+      - Core concepts: quickstart/concepts.md
+      - Pipelines Overview : quickstart/pipelines.md
+  - How to:
+      - Configure project: howto/configure_params.md
+      - Create an architecture: howto/create_architecture.md
       - Train a model: howto/train_model.md
       - Run inference: howto/run_inference.md
-      - Configure paths: howto/configure_params.md
-      - Create an architecture: howto/create_architecture.md
-  - Concepts: concepts/index.md
+  
   - API Reference:
       - Overview: reference/node_fdm.md
       - Trainer: reference/ode_trainer.md
@@ -25,21 +25,30 @@ nav:
       - Architectures: reference/architectures.md
       - Model wrappers: reference/models.md
 
-
+# 2. Visual Theme Configuration
 theme:
   name: material
-  logo: icons/favicon.png
+  logo: icons/favicon.png # Ensure this image exists
   favicon: icons/favicon.ico
+  
+  # Feature flags for UI behavior
   features:
-    - content.code.annotate
-    - content.code.copy
-    - navigation.expand
-    - navigation.footer
-    - navigation.indexes
-    - navigation.tabs
-    - navigation.tabs.sticky
-    - search.highlight
-    - search.suggest
+    - content.code.annotate      # Adds (+) markers in code
+    - content.code.copy          # Copy button on code blocks
+    - content.tooltips           # Hover tooltips
+    - navigation.expand          # Open sidebar by default
+    - navigation.footer          # "Next/Prev" buttons at bottom
+    - navigation.indexes         # Allow section headers to be pages
+    - navigation.tabs            # Top-level tabs
+    - navigation.tabs.sticky     # Tabs stay visible on scroll
+    - navigation.top             # "Back to Top" arrow
+    - navigation.tracking        # URL updates as you scroll
+    - search.highlight           # Highlight search results
+    - search.share               # Share search results button
+    - search.suggest             # Type-ahead suggestions
+    - toc.follow                 # TOC sidebar follows scroll
+
+  # Color Palettes (Light/Dark Toggle)
   palette:
     - media: "(prefers-color-scheme)"
       toggle:
@@ -59,6 +68,7 @@ theme:
       toggle:
         icon: material/toggle-switch-off
         name: Switch to system preference
+
   font:
     text: Roboto
     code: Roboto Mono
@@ -68,28 +78,63 @@ theme:
 extra_css:
   - css/extra.css
 
+# 3. Plugins
 plugins:
   - search
   - social
   - mkdocstrings
 
+
+# 4. Extensions (The Power Tools)
 markdown_extensions:
-  - admonition
+  # Metadata
+  - meta
+  - abbr
   - attr_list
   - footnotes
-  - pymdownx.emoji:
-      emoji_index: !!python/name:material.extensions.emoji.twemoji
-      emoji_generator: !!python/name:material.extensions.emoji.to_svg
-  - pymdownx.blocks.tab:
-      alternate_style: true
-      slugify: !!python/object/apply:pymdownx.slugs.slugify
-        kwds:
-          case: lower
+  - def_list        # Great for parameter lists
+  - md_in_html
+
+  # Admonitions (Callouts like !!! warning)
+  - admonition
+  - pymdownx.details # Allows collapsible admonitions (???)
+  - pymdownx.keys    # Renders keyboard keys like <kbd>Ctrl</kbd>
+
+  # Code Highlighting
   - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
       pygments_lang_class: true
-  - pymdownx.superfences
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+
+  # Diagrams and Tabs (Superfences is crucial here)
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+
+  # Math / LaTeX Support (Essential for Neural ODEs)
+  - pymdownx.arithmatex:
+      generic: true
+
+  # Tabbed interfaces
   - pymdownx.tabbed:
       alternate_style: true
+
+  # Emoji support
+  - pymdownx.emoji:
+      emoji_index: !!python/name:materialx.emoji.twemoji
+      emoji_generator: !!python/name:materialx.emoji.to_svg
+
+  # Auto-Table of Contents
   - toc:
       permalink: true
       baselevel: 1
+
+# 5. MathJax Configuration (Required for LaTeX to render)
+extra_javascript:
+  - javascripts/mathjax.js
+  - https://polyfill.io/v3/polyfill.min.js?features=es6
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js

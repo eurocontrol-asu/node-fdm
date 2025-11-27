@@ -1,16 +1,39 @@
-# node_fdm package overview
+# 📚 API Overview
 
-Core namespaces and their responsibilities (all architectures share these):
-- `node_fdm.ode_trainer` — training loop and checkpointing for modular Neural ODEs.
-- `node_fdm.predictor` — inference helper to roll out trajectories.
-- `node_fdm.data` — dataset construction, preprocessing hooks, loaders.
-- `node_fdm.architectures` — architecture registry and built-in definitions (`opensky_2025`, `qar`, add your own).
-- `node_fdm.models` — model wrappers and ODE integration utilities.
+The **node_fdm** package is designed with modularity in mind. It separates data handling, physical/neural architectures, and the training/inference engines into distinct namespaces.
 
-Use the dedicated pages in this section for full API details. If you need a top-level view of package exports:
+---
 
-::: node_fdm
-    options:
-      show_root_heading: true
-      show_root_full_path: false
-      show_source: true
+## 🗺️ Module Map
+
+Here is a high-level view of how the sub-packages interact to form a complete pipeline:
+
+```mermaid
+graph LR
+    %% Data Flow
+    Data[node_fdm.data] --> Trainer
+    Data --> Predictor
+
+    %% Logic Flow
+    Arch[node_fdm.architectures] -->|Defines| Model[node_fdm.models]
+    
+    %% Execution Flow
+    Model -->|Instantiated by| Trainer[node_fdm.ode_trainer]
+    Model -->|Used by| Predictor[node_fdm.predictor]
+
+    %% Styling
+    classDef package fill:#e1f5fe,stroke:#01579b,stroke-width:2px;
+    class Data,Arch,Model,Trainer,Predictor package;
+```
+
+---
+
+## 📦 Core Namespaces
+
+| Module | Description | Key Classes |
+| :--- | :--- | :--- |
+| **[`node_fdm.ode_trainer`](ode_trainer.md)** | **The Training Engine.**<br>Handles the training loop, validation, and PyTorch Lightning integration. | `ODETrainer` |
+| **[`node_fdm.predictor`](predictor.md)** | **The Inference Engine.**<br>Wraps trained models to perform trajectory rollouts and simulations. | `NodeFDMPredictor` |
+| **[`node_fdm.data`](data.md)** | **Data Pipeline.**<br>Tools for dataset construction, loading, and batching. | `SeqDataset`, `FlightProcessor` |
+| **[`node_fdm.architectures`](architectures.md)** | **The Registry.**<br>Contains the built-in definitions (`opensky_2025`, `qar`) and the mapping logic. | `mapping.py`, `columns.py` |
+| **[`node_fdm.models`](models.md)** | **Model Wrappers.**<br>The underlying PyTorch modules and ODE integration utilities. | `StructuredLayer`, `PhysicsLayer` |

@@ -1,47 +1,96 @@
-# Create a new architecture
+# 🏗️ Create a New Architecture
 
-Follow these steps to add and register a new architecture (see the README guidance):
+Follow these steps to add and register a new architecture to the framework (see README guidance).
 
-1) **Copy a skeleton**
+---
 
-- Duplicate `node_fdm/architectures/opensky_2025` (minimal) or `node_fdm/architectures/qar` (stacked layers) into `node_fdm/architectures/<your_arch>`.
-- Keep the same file names: `columns.py`, `flight_process.py`, `model.py` (plus extra layers as needed).
+## 1. Copy a Skeleton
 
-2) **Declare columns** (`columns.py`)
+Start by duplicating an existing architecture folder into `node_fdm/architectures/<your_arch>`.
 
-- Define state (`X_COLS`), controls (`U_COLS`), environment (`E0_COLS`), derived outputs (`E1_COLS`), and derivatives (`DX_COLS`), using `utils.data.column.Column` and units.
-- Make sure derivative columns match the ODE targets you want to learn.
+* **Minimal start**: Copy `node_fdm/architectures/opensky_2025`.
+* **Advanced stack**: Copy `node_fdm/architectures/qar` (includes stacked layers).
 
-3) **Custom preprocessing** (`flight_process.py`)
+**Required Files:**
+* `columns.py`
+* `flight_process.py`
+* `model.py`
+* `__init__.py` (plus any extra layer files).
 
-- Implement `flight_processing(df)` to add derived columns or smoothing.
-- Optional `segment_filtering(df, start_idx, seq_len)` can reject bad segments (e.g., distance jumps).
-- Expose any config you need (e.g., `selected_param_config`).
+---
 
-4) **Wire the model** (`model.py`)
+## 2. Declare Columns (`columns.py`)
 
-- Build `X_COLS`, `U_COLS`, `E0_COLS`, `E1_COLS`, `DX_COLS`, and `MODEL_COLS`.
-- Define layers (e.g., a physics/feature layer, then an ODE/data layer) and assemble `ARCHITECTURE` as a list of layer specs.
-- Set `MODEL_COLS` to match the ordering expected by `FlightProcessor` and `SeqDataset`.
+Define the variable groups using `utils.data.column.Column`. Ensure you specify units to avoid silent scale bugs.
 
-5) **Add any custom layers**
+* **`X_COLS`**: State variables (ODE inputs/outputs).
+* **`U_COLS`**: Control variables.
+* **`E0_COLS`**: Environmental inputs.
+* **`E1_COLS`**: Derived outputs.
+* **`DX_COLS`**: Derivatives predicted by the ODE layer.
 
-- Put them in the same folder (e.g., `trajectory_layer.py`, `engine_layer.py`).
-- Export them via `__init__.py` if you need external imports.
+!!! warning "Target Matching"
+    Make sure your derivative columns (`DX_COLS`) exactly match the ODE targets you want the model to learn.
 
-6) **Register the name** (`architectures/mapping.py`)
+---
 
-- Add your key to `valid_names`.
-- Ensure `get_architecture_module` imports your `columns`, `flight_process`, and `model`.
+## 3. Custom Preprocessing (`flight_process.py`)
 
-7) **Test a tiny run**
+Implement the data preparation logic.
 
-- Prepare a minimal processed dataset conforming to your columns.
-- Run a short training with `ODETrainer` (small `seq_len`, small `batch_size`) to check shapes and stats.
-- Verify inference with `NodeFDMPredictor` using your `MODEL_COLS` and `flight_processing`.
+* **`flight_processing(df)`**: Augment raw data (e.g., add derived columns, apply smoothing). Expose specific configs here (e.g., `selected_param_config`).
+* **`segment_filtering(df, start_idx, seq_len)`** *(Optional)*: Reject bad segments (e.g., segments with large distance jumps) before they reach the trainer.
 
-Tips:
+---
 
-- Keep column names consistent between preprocessing and model definitions.
-- Use `Column` units to avoid silent scale bugs.
-- Update the relevant pipeline `config.yaml` (paths, `typecodes`) if your dataset layout differs from the existing pipelines.
+## 4. Wire the Model (`model.py`)
+
+This is where you define the architecture stack.
+
+1.  **Build Column Lists**: Build `X_COLS`, `U_COLS`, `E0_COLS`, `E1_COLS`, `DX_COLS`, and `MODEL_COLS`.
+2.  **Define Layers**: Define layers (e.g., a physics/feature layer, then an ODE/data layer) and assemble `ARCHITECTURE` as a list of layer specs.
+
+!!! danger "Column Ordering"
+    Set `MODEL_COLS` carefully. It must match the ordering expected by `FlightProcessor` and `SeqDataset`.
+
+---
+
+## 5. Add Custom Layers
+
+If your model requires specific physics or feature logic:
+1.  Place the files in your architecture folder (e.g., `trajectory_layer.py`, `engine_layer.py`).
+2.  Export them via `__init__.py` if external imports are needed.
+
+---
+
+## 6. Register the Name
+
+To make your architecture discoverable, edit `architectures/mapping.py`.
+
+1.  Add your unique key to `valid_names`.
+2.  Ensure `get_architecture_module` correctly imports your `columns`, `flight_process`, and `model` modules.
+
+---
+
+## 7. Test a Tiny Run
+
+Before launching a full training job, verify the integration:
+
+* **Data preparation**: Prepare a minimal processed dataset conforming to your new columns.
+* **Training loop**: Run a short training with `ODETrainer` (using small `seq_len` and `batch_size`) to check tensor shapes and statistics.
+* **Inference flow**: Verify `NodeFDMPredictor` using your `MODEL_COLS` and `flight_processing`.
+
+---
+
+## 💡 Pro Tips
+
+!!! tip "Best Practices"
+    * **Consistency**: Keep column names consistent between preprocessing and model definitions.
+    * **Units**: Use `Column` units definition strictly to prevent silent scale bugs.
+    * **Config**: Update the relevant pipeline `config.yaml` (paths, `typecodes`) if your dataset layout differs from the standard pipelines.
+
+---
+
+## 🚀 Next Steps
+
+* **[Train a Model](../train_model/)**: Now that your architecture is registered, train it.

@@ -9,6 +9,7 @@ data/preprocessed_parquet/*
 data/processed_flights/*
 data/predicted_flights/*
 data/bada_flights/*
-
+.cache/
+site/
 *.egg-info/
 node_fdm.egg-info

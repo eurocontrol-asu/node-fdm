@@ -1,56 +1,152 @@
+---
+title: Home
+hide:
+  - navigation
+  - toc
+---
+
 <p align="center">
-  <img src="images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
+  <img src="images/logo.jpg" alt="Neural ODE Flight Dynamics" width="450">
+</p>
+
+<p align="center" style="font-size: 1.2em; color: #555;">
+  A physics-guided <strong>Neural Ordinary Differential Equation (Neural ODE)</strong> framework for aircraft flight dynamics.
 </p>
 
 <p align="center">
-  <em>A physics-guided Neural Ordinary Differential Equation (Neural ODE) framework for aircraft flight dynamics.</em>
+  <a href="quickstart/installation/" class="md-button md-button--primary">Get Started</a>
+  <a href="howto/train_model/" class="md-button">View Examples</a>
 </p>
 
 ---
 
-## 🎯 node-fdm: At a Glance
+## 🎯 At a Glance
 
-**node-fdm** is a Python library designed for **learning** and **simulation of aircraft flight dynamics**.
+**node-fdm** bridges the gap between deep learning and aeronautics. It allows you to compose **hybrid dynamical models** by stacking physical principles, analytical features, and neural networks.
 
-It couples the efficiency of **Neural Ordinary Differential Equations (Neural ODE)** with **physical laws** from aeronautics to:
+The diagram below illustrates the standard architecture used for **ADS-B data (OpenSky 2025)**, where an analytical layer pre-processes physical features before feeding them into a neural network:
 
-* Reconstruct **coherent aircraft trajectories** from data (ADS-B or QAR).
-* Simulate aircraft behavior through **physically aware** latent dynamics.
-* Offer ready-to-use (**OpenSky 2025**, **QAR**) and customizable architectures.
-* Enable **benchmarking** against established physical models such as **BADA**.
+```mermaid
+graph LR
+    subgraph Inputs ["System Inputs"]
+        direction TB
+        X((State x))
+        U((Control u))
+        E((Context e))
+    end
 
-This documentation will guide you through installation, core concepts, running pipelines, and extending the framework.
+    subgraph Core ["Node-FDM Core (ADS-B Arch)"]
+        direction LR
+        B1[Analytical Layer]
+        B2[Neural Net Layer]
+    end
+
+    subgraph Solver ["Temporal Integration"]
+        direction TB
+        DX((Derivative dx/dt))
+        ODE[ODE Solver]
+    end
+
+    %% Connexions (Ordre strict pour l'index linkStyle)
+    %% Index 0, 1, 2
+    X --> B1
+    U --> B1
+    E --> B1
+    %% Index 3
+    B1 --> B2
+    %% Index 4
+    B2 --> DX
+    %% Index 5
+    DX --> ODE
+    
+    %% Index 6 : Feedback Loop (Cible pour le style rouge)
+    ODE -.->|Loss| X
+
+    %% Styles
+    classDef cInput fill:#9ECAE9,stroke:#333,stroke-width:2px,color:black
+    classDef cControl fill:#FF9D98,stroke:#333,stroke-width:2px,color:black
+    classDef cContext fill:#88D27A,stroke:#333,stroke-width:2px,color:black
+    classDef cAnalytics fill:#F2CF5B,stroke:#333,stroke-width:2px,color:black
+    classDef cNeural fill:#83BCB6,stroke:#333,stroke-width:2px,color:black
+    classDef cDerivative fill:#D6A5C9,stroke:#333,stroke-width:2px,color:black
+
+    class X cInput
+    class U cControl
+    class E cContext
+    class B1,ODE cAnalytics
+    class B2 cNeural
+    class DX cDerivative
+
+    %% Application du style rouge sur le lien d'index 6
+    linkStyle 6 stroke:red,stroke-width:2px,stroke-dasharray: 5 5,color:red
+```
+
+### Key Capabilities
+
+!!! quote ""
+    * **Reconstruct Trajectories**: Generate coherent flight paths from ADS-B or QAR data.
+    * **Physics-Aware**: Simulate behavior using latent dynamics constrained by aeronautical laws.
+    * **Ready-to-Use**: Includes architectures for **OpenSky 2025** and **QAR**.
+    * **Benchmark Ready**: Compare directly against physical models like **BADA**.
 
 ---
 
-## 🚀 Quick Start & Navigation
+## 🚀 Workflow & Navigation
 
-Start from installation, then follow the end-to-end pipelines mirrored in the repository layout.
+Follow the pipelines mirrored in the repository layout.
 
-### 🌟 Start here
+<div class="grid cards" markdown>
 
-- **[Installation](guide/installation/)**: set up Python, optional extras, and editable installs.
-- **[Quickstart](guide/quickstart/)**: full workflow overview for any architecture plus the OpenSky 2025 example.
+-   [:material-flag-checkered: **Quickstart**](quickstart/installation/)
 
-### 🧪 Run the pipelines
+    ---
 
-- **[Configure parameters](howto/configure_params/)**: edit `scripts/opensky/config.yaml` or `scripts/qar/config.yaml` to set paths, typecodes, and hyperparameters.
-- **[Train a model](howto/train_model/)**: launch `opensky_2025` or `qar` training via `ODETrainer` and monitor checkpoints.
-- **[Run inference](howto/run_inference/)**: load saved models with `NodeFDMPredictor`, roll out trajectories, and export predictions.
+    Get started with the essentials.
 
-### 🛠️ Extend or customise
+    * [Installation](quickstart/installation/)
+    * [Core Concepts](quickstart/concepts/)
+    * [Pipelines Overview](quickstart/pipeline/)
 
-- **[Create an architecture](howto/create_architecture/)**: clone the OpenSky/QAR templates, declare columns, hooks, and layer stacks.
-- **[Core concepts](concepts/)**: learn about column groups, processing hooks, and architecture registration.
+-   [:material-tools: **How to**](howto/configure_params/)
 
-### 📚 API reference
+    ---
 
-- **[Overview](reference/node_fdm/)**, **[Architectures](reference/architectures/)**, **[Data](reference/data/)**, **[Models](reference/models/)**, **[Trainer](reference/ode_trainer/)**, **[Predictor](reference/predictor/)**, **[Package index](reference/node_fdm/)**.
+    Configure and customize your project.
+
+    * [Configure Project](howto/configure_params/)
+    * [Create Architecture](howto/create_architecture/)
+    * [Train a Model](howto/train_model/)
+    * [Run Inference](howto/run_inference/)
+
+
+-   [:material-book-open-page-variant: **API Reference**](reference/node_fdm/)
+
+    ---
+
+    Technical documentation for developers.
+
+    * [Overview](reference/node_fdm/)
+    * [Architectures](reference/architectures/) 
+    * [Trainer](reference/ode_trainer/) & [Predictor](reference/predictor/)
+    * [Data](reference/data/) & [Models](reference/models/)
+
+</div>
 
 ---
 
-## 📌 Legal Notice
+## ⚡ Quick Install
 
-This project is distributed under the **EUPL-1.2** license with specific EUROCONTROL amendments (see `AMENDMENT_TO_EUPL_license.md`).
+You can install the core package directly via pip:
 
-It is intended **for research purposes only** and must not be used as a regulatory or operational tool under any circumstances.
+```bash
+pip install node-fdm
+# Or for editable research mode:
+pip install -e .[dev]
+```
+
+---
+
+!!! danger "Legal Notice"
+    **This project is intended for research purposes only.**
+    
+    This project is distributed under the **EUPL-1.2** license with specific EUROCONTROL amendments. It must **not** be used as a regulatory or operational tool under any circumstances. See `AMENDMENT_TO_EUPL_license.md` for details.
