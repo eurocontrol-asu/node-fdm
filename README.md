@@ -130,7 +130,6 @@ This framework supports the following research publications.
   booktitle = {Proceedings of the 13th OpenSky Symposium},
   journal = {Journal of Open Aviation Science},
   year = {2025},
-  publisher = {Journal of Open Aviation Science},
   note = {Under review}
 }
 ```

@@ -97,6 +97,7 @@ import sys
 print(f"Python version: {sys.version.split()[0]}")
 print(f"Torch version:  {torch.__version__}")
 print("✅ node_fdm import successful")
+```
 
 ---
 
