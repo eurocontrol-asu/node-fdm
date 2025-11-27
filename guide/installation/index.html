@@ -1187,12 +1187,14 @@
   Set their location in the relevant <code>config.yaml</code> (<code>scripts/opensky/config.yaml</code>).</li>
 </ul>
 <h3 id="install-the-package">📦 Install the Package<a class="headerlink" href="#install-the-package" title="Permanent link">&para;</a></h3>
-<p><strong>From PyPI (recommended for users)</strong>
-- Core library: <code>pip install node-fdm</code>
-- With optional deps (traffic, fastmeteo, viz): <code>pip install 'node-fdm[all]'</code>
-- BADA baseline support (pyBADA requirements are restrictive):<br />
+<p><strong>From PyPI (recommended for users)</strong></p>
+<ul>
+<li>Core library: <code>pip install node-fdm</code></li>
+<li>With optional deps (traffic, fastmeteo, viz): <code>pip install 'node-fdm[all]'</code></li>
+<li>BADA baseline support (pyBADA requirements are restrictive):<br />
 <code>pip install pybada --ignore-requires-python --no-deps</code><br />
-<code>pip install simplekml 'xlsxwriter&gt;=3.2.5'</code>  # pyBADA dependency</p>
+<code>pip install simplekml 'xlsxwriter&gt;=3.2.5'</code>  # pyBADA dependency</li>
+</ul>
 <p><strong>From source (contributors)</strong>
 <div class="language-bash highlight"><pre><span></span><code>pip<span class="w"> </span>install<span class="w"> </span>-e<span class="w"> </span>.<span class="o">[</span>all<span class="o">]</span><span class="w">      </span><span class="c1"># core + traffic + fastmeteo + click + tqdm + matplotlib</span>
 </code></pre></div></p>

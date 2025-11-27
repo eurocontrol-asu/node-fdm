@@ -1044,9 +1044,11 @@
 
 
 <h1 id="configure-project-paths-and-options">Configure project paths and options<a class="headerlink" href="#configure-project-paths-and-options" title="Permanent link">&para;</a></h1>
-<p>All runtime settings are now defined per pipeline:
-- <code>scripts/opensky/config.yaml</code> — OpenSky 2025 pipeline
-- <code>scripts/qar/config.yaml</code> — QAR pipeline</p>
+<p>All runtime settings are now defined per pipeline:</p>
+<ul>
+<li><code>scripts/opensky/config.yaml</code> — OpenSky 2025 pipeline</li>
+<li><code>scripts/qar/config.yaml</code> — QAR pipeline</li>
+</ul>
 <p>Key fields (OpenSky example):
 <div class="language-yaml highlight"><pre><span></span><code><span class="nt">paths</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">data_dir</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/path/to/data&quot;</span>
@@ -1072,12 +1074,14 @@
 <span class="nt">bada</span><span class="p">:</span>
 <span class="w">  </span><span class="nt">bada_4_2_dir</span><span class="p">:</span><span class="w"> </span><span class="s">&quot;/path/to/BADA/4.2.1&quot;</span>
 </code></pre></div></p>
-<p>Tips:
-- Keep <code>data_dir</code> absolute; subfolders are resolved relative to it.
-- Adjust <code>typecodes</code> once in the relevant <code>config.yaml</code> instead of editing scripts.
-- Ensure directories exist before running downloads/preprocessing (<code>mkdir -p ...</code>).
-- Set <code>bada.bada_4_2_dir</code> if you plan to run <code>07_bada_prediction.py</code>.
-- For QAR, only the needed paths are kept (<code>data_dir</code>, <code>predicted_dir</code>, <code>bada_dir</code>, <code>models_dir</code>, <code>figure_dir</code>) plus <code>typecodes</code> and <code>computing.default_cpu_count</code>.</p>
+<p>Tips:</p>
+<ul>
+<li>Keep <code>data_dir</code> absolute; subfolders are resolved relative to it.</li>
+<li>Adjust <code>typecodes</code> once in the relevant <code>config.yaml</code> instead of editing scripts.</li>
+<li>Ensure directories exist before running downloads/preprocessing (<code>mkdir -p ...</code>).</li>
+<li>Set <code>bada.bada_4_2_dir</code> if you plan to run <code>07_bada_prediction.py</code>.</li>
+<li>For QAR, only the needed paths are kept (<code>data_dir</code>, <code>predicted_dir</code>, <code>bada_dir</code>, <code>models_dir</code>, <code>figure_dir</code>) plus <code>typecodes</code> and <code>computing.default_cpu_count</code>.</li>
+</ul>
 
 
 

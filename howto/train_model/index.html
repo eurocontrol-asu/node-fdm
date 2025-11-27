@@ -1133,9 +1133,11 @@
 
 
 <h1 id="train-a-neural-ode-model-generic">Train a Neural ODE model (generic)<a class="headerlink" href="#train-a-neural-ode-model-generic" title="Permanent link">&para;</a></h1>
-<p>Prerequisites:
-- A processed dataset compatible with the target architecture (columns and preprocessing must match).
-- A file list DataFrame with at least <code>filepath</code> and <code>split</code> (<code>train</code> / <code>val</code> / <code>test</code>).</p>
+<p>Prerequisites:</p>
+<ul>
+<li>A processed dataset compatible with the target architecture (columns and preprocessing must match).</li>
+<li>A file list DataFrame with at least <code>filepath</code> and <code>split</code> (<code>train</code> / <code>val</code> / <code>test</code>).</li>
+</ul>
 <h2 id="minimal-training-script">Minimal training script<a class="headerlink" href="#minimal-training-script" title="Permanent link">&para;</a></h2>
 <p>Set the architecture name you want to use (e.g., <code>opensky_2025</code>, <code>qar</code>, or your custom one registered in <code>architectures.mapping.valid_names</code>).
 <div class="language-python highlight"><pre><span></span><code><span class="kn">import</span><span class="w"> </span><span class="nn">pandas</span><span class="w"> </span><span class="k">as</span><span class="w"> </span><span class="nn">pd</span>
@@ -1184,10 +1186,12 @@
     <span class="n">alpha_dict</span><span class="o">=</span><span class="kc">None</span><span class="p">,</span>  <span class="c1"># defaults to 1.0 per monitored column</span>
 <span class="p">)</span>
 </code></pre></div></p>
-<p>Outputs in <code>models/&lt;arch&gt;_&lt;group&gt;/</code>:
-- <code>meta.json</code> with architecture name, stats, hyperparameters.
-- Layer checkpoints (e.g., <code>trajectory.pt</code>, <code>data_ode.pt</code>).
-- <code>training_losses.csv</code> and <code>training_curve.png</code>.</p>
+<p>Outputs in <code>models/&lt;arch&gt;_&lt;group&gt;/</code>:</p>
+<ul>
+<li><code>meta.json</code> with architecture name, stats, hyperparameters.</li>
+<li>Layer checkpoints (e.g., <code>trajectory.pt</code>, <code>data_ode.pt</code>).</li>
+<li><code>training_losses.csv</code> and <code>training_curve.png</code>.</li>
+</ul>
 <h2 id="tips">Tips<a class="headerlink" href="#tips" title="Permanent link">&para;</a></h2>
 <ul>
 <li>For multiple architectures, run the loop per <code>architecture_name</code> and per data subset that matches its preprocessing/columns.</li>
