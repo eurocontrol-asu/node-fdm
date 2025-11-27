@@ -28,20 +28,20 @@ This documentation will guide you through installation, core concepts, running p
 Start from installation, then follow the end-to-end pipelines mirrored in the repository layout.
 
 ### 🌟 Start here
-- **[Installation](node-fdm/guide/installation/)**: set up Python, optional extras, and editable installs.
-- **[Quickstart](node-fdm/guide/quickstart/)**: full workflow overview for any architecture plus the OpenSky 2025 example.
+- **[Installation](guide/installation/)**: set up Python, optional extras, and editable installs.
+- **[Quickstart](guide/quickstart/)**: full workflow overview for any architecture plus the OpenSky 2025 example.
 
 ### 🧪 Run the pipelines
-- **[Configure parameters](node-fdm/howto/configure_params/)**: edit `scripts/opensky/config.yaml` or `scripts/qar/config.yaml` to set paths, typecodes, and hyperparameters.
-- **[Train a model](node-fdm/howto/train_model/)**: launch `opensky_2025` or `qar` training via `ODETrainer` and monitor checkpoints.
-- **[Run inference](node-fdm/howto/run_inference/)**: load saved models with `NodeFDMPredictor`, roll out trajectories, and export predictions.
+- **[Configure parameters](howto/configure_params/)**: edit `scripts/opensky/config.yaml` or `scripts/qar/config.yaml` to set paths, typecodes, and hyperparameters.
+- **[Train a model](howto/train_model/)**: launch `opensky_2025` or `qar` training via `ODETrainer` and monitor checkpoints.
+- **[Run inference](howto/run_inference/)**: load saved models with `NodeFDMPredictor`, roll out trajectories, and export predictions.
 
 ### 🛠️ Extend or customise
-- **[Create an architecture](node-fdm/howto/create_architecture/)**: clone the OpenSky/QAR templates, declare columns, hooks, and layer stacks.
-- **[Core concepts](node-fdm/concepts/)**: learn about column groups, processing hooks, and architecture registration.
+- **[Create an architecture](howto/create_architecture/)**: clone the OpenSky/QAR templates, declare columns, hooks, and layer stacks.
+- **[Core concepts](concepts/)**: learn about column groups, processing hooks, and architecture registration.
 
 ### 📚 API reference
-- **[Architectures](node-fdm/reference/architectures/)**, **[Data](node-fdm/reference/data/)**, **[Models](node-fdm/reference/models/)**, **[Trainer](node-fdm/reference/ode_trainer/)**, **[Predictor](node-fdm/reference/predictor/)**, **[Package index](node-fdm/reference/node_fdm/)**.
+- **[Overview](reference/node_fdm/)**, **[Architectures](reference/architectures/)**, **[Data](reference/data/)**, **[Models](reference/models/)**, **[Trainer](reference/ode_trainer/)**, **[Predictor](reference/predictor/)**, **[Package index](reference/node_fdm/)**.
 
 ---
 
