@@ -1266,20 +1266,24 @@
 <h1 id="contributing-to-node-fdm">Contributing to node-fdm<a class="headerlink" href="#contributing-to-node-fdm" title="Permanent link">&para;</a></h1>
 <p>Thank you for your interest in contributing to <strong>node-fdm</strong>!</p>
 <p>We aim to provide a robust, physics-guided framework for flight dynamics research. Whether you are a researcher correcting a physical formula, a data scientist adding a new preprocessing hook, or a developer fixing a bug, your help is welcome.</p>
-<p>We welcome contributions in several forms:
-1.  <strong>Bug Reports &amp; Issues</strong>
-2.  <strong>Documentation Improvements</strong>
-3.  <strong>New Architectures</strong> (Adapting the model to new aircraft or datasets)
-4.  <strong>Core Improvements</strong> (Solvers, Physics Layers)</p>
+<p>We welcome contributions in several forms:</p>
+<ol>
+<li><strong>Bug Reports &amp; Issues</strong></li>
+<li><strong>Documentation Improvements</strong></li>
+<li><strong>New Architectures</strong> (Adapting the model to new aircraft or datasets)</li>
+<li><strong>Core Improvements</strong> (Solvers, Physics Layers)</li>
+</ol>
 <hr />
 <h2 id="bug-reports">🐛 Bug Reports<a class="headerlink" href="#bug-reports" title="Permanent link">&para;</a></h2>
 <p>Please file bug reports on the <a href="https://github.com/eurocontrol-asu/node-fdm/issues">GitHub Issue Tracker</a>.</p>
-<p>When filing a report, please include:
-* <strong>Description</strong>: A clear summary of the issue.
-* <strong>Context</strong>: Which pipeline were you running? (e.g., <em>OpenSky 2025</em> or <em>QAR</em>).
-* <strong>Configuration</strong>: Relevant parts of your <code>config.yaml</code> (especially <code>model_config</code>).
-* <strong>Logs</strong>: The full traceback or error message.
-* <strong>Environment</strong>: Your Python version, OS, and whether you are using GPU/CUDA.</p>
+<p>When filing a report, please include:</p>
+<ul>
+<li><strong>Description</strong>: A clear summary of the issue.</li>
+<li><strong>Context</strong>: Which pipeline were you running? (e.g., <em>OpenSky 2025</em> or <em>QAR</em>).</li>
+<li><strong>Configuration</strong>: Relevant parts of your <code>config.yaml</code> (especially <code>model_config</code>).</li>
+<li><strong>Logs</strong>: The full traceback or error message.</li>
+<li><strong>Environment</strong>: Your Python version, OS, and whether you are using GPU/CUDA.</li>
+</ul>
 <blockquote>
 <p><strong>Note on Data Privacy</strong>: If the error occurs on a private QAR dataset, <strong>do not</strong> upload the data samples. Try to reproduce the issue with synthetic data or the public OpenSky sample if possible.</p>
 </blockquote>
@@ -1327,7 +1331,7 @@ Ensure the current codebase is stable before making changes.
 </span><span id="__span-3-2"><a id="__codelineno-3-2" name="__codelineno-3-2" href="#__codelineno-3-2"></a>mkdocs<span class="w"> </span>build<span class="w"> </span>--clean
 </span><span id="__span-3-3"><a id="__codelineno-3-3" name="__codelineno-3-3" href="#__codelineno-3-3"></a>mkdocs<span class="w"> </span>serve
 </span></code></pre></div>
-Then open <code>http://127.0.0.1:8000</code> in your browser.</p>
+Then open <code>http://127.0.0.1:8000/node-fdm/</code> in your browser.</p>
 <hr />
 <h2 id="style-guide">🎨 Style Guide<a class="headerlink" href="#style-guide" title="Permanent link">&para;</a></h2>
 <p>We do not want to be overly strict, but consistency helps review.
