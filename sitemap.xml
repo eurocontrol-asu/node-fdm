@@ -5,18 +5,6 @@
          <lastmod>2025-11-27</lastmod>
     </url>
     <url>
-         <loc>https://eurocontrol-asu.github.io/node-fdm/concepts/</loc>
-         <lastmod>2025-11-27</lastmod>
-    </url>
-    <url>
-         <loc>https://eurocontrol-asu.github.io/node-fdm/guide/installation/</loc>
-         <lastmod>2025-11-27</lastmod>
-    </url>
-    <url>
-         <loc>https://eurocontrol-asu.github.io/node-fdm/guide/quickstart/</loc>
-         <lastmod>2025-11-27</lastmod>
-    </url>
-    <url>
          <loc>https://eurocontrol-asu.github.io/node-fdm/howto/configure_params/</loc>
          <lastmod>2025-11-27</lastmod>
     </url>
@@ -30,6 +18,18 @@
     </url>
     <url>
          <loc>https://eurocontrol-asu.github.io/node-fdm/howto/train_model/</loc>
+         <lastmod>2025-11-27</lastmod>
+    </url>
+    <url>
+         <loc>https://eurocontrol-asu.github.io/node-fdm/quickstart/concepts/</loc>
+         <lastmod>2025-11-27</lastmod>
+    </url>
+    <url>
+         <loc>https://eurocontrol-asu.github.io/node-fdm/quickstart/installation/</loc>
+         <lastmod>2025-11-27</lastmod>
+    </url>
+    <url>
+         <loc>https://eurocontrol-asu.github.io/node-fdm/quickstart/pipelines/</loc>
          <lastmod>2025-11-27</lastmod>
     </url>
     <url>
