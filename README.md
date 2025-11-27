@@ -1,105 +1,180 @@
-<p align="center">
-  <img src="./docs/images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="45%">
-</p>
-<p align="center">
-  <em>Neural Ordinary Differential Equation (Neural ODE) model for aircraft flight dynamics</em>
-</p>
+<div align="center">
+  <img src="docs/images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="450">
+  
+  <br />
+  <br />
+
+  <em>A physics-guided Neural Ordinary Differential Equation (Neural ODE) framework for aircraft flight dynamics simulation and learning.</em>
+
+  <br />
+  <br />
+
+  <a href="https://eurocontrol-asu.github.io/node-fdm/">
+    <img src="https://img.shields.io/badge/📖_Docs-Read_The_Docs-1E88E5?style=flat-square" alt="Documentation">
+  </a>
+  <a href="https://pypi.org/project/node-fdm/">
+    <img src="https://img.shields.io/pypi/v/node-fdm?style=flat-square&color=blue" alt="PyPI version">
+  </a>
+  <a href="LICENSE.md">
+    <img src="https://img.shields.io/badge/License-EUPL_1.2-43A047?style=flat-square" alt="License">
+  </a>
+  <a href="https://www.python.org/downloads/release/python-3110/">
+    <img src="https://img.shields.io/badge/Python-3.11+-F2CF5B?style=flat-square&logo=python&logoColor=black" alt="Python Version">
+  </a>
+  <a href="https://github.com/eurocontrol-asu/node-fdm/actions">
+    <img src="https://img.shields.io/github/actions/workflow/status/eurocontrol-asu/node-fdm/test.yml?branch=main&label=tests&style=flat-square" alt="Tests">
+  </a>
+
+  <br />
+  <br />
+
+  <p>
+    <a href="#-overview">Overview</a> •
+    <a href="#-quick-install">Installation</a> •
+    <a href="#-repository-structure">Structure</a> •
+    <a href="#-use-cases--publications">Publications</a> •
+    <a href="#-contributing">Contributing</a>
+  </p>
+</div>
+
+---
+
+### 📚 Documentation
+
+**Full documentation, tutorials, and API reference available at:** 👉 **[eurocontrol-asu.github.io/node-fdm](https://eurocontrol-asu.github.io/node-fdm/)**
 
 ---
 
 ### ✈️ Overview
-**node-fdm** implements a physics-guided Neural ODE framework for learning and simulating aircraft flight dynamics.  
-It combines **data-driven learning** with **physical consistency**, enabling the reproduction of vertical motion and energy exchanges during flight.
+
+**node-fdm** implements a physics-guided **Neural Ordinary Differential Equation (Neural ODE)** framework for learning and simulating aircraft flight dynamics. It combines **data-driven learning** with **physical consistency**, enabling the reproduction of vertical motion and energy exchanges during flight.
+
+It allows researchers to:
+* 📉 **Reconstruct** coherent trajectories from sparse data.
+* 🎮 **Simulate** aircraft behavior using learned latent dynamics.
+* 📊 **Benchmark** new models against industry standards like BADA.
 
 ---
 
-### ⚖️ Important Legal & Usage Notes
-- Distributed under the **EUPL-1.2** licence, with exceptions detailed in `AMENDMENT_TO_EUPL_license.md`, reflecting EUROCONTROL’s status as an international organisation.  
-- <ins>**This repository is provided for research purposes only and does not constitute a regulatory framework.**</ins>  
-  EUROCONTROL disclaims any responsibility for misuse or operational application of these models.
+### ⚖️ Legal & Usage
+
+> [!IMPORTANT]
+> **Research Use Only**
+>
+> * This repository is provided **for research purposes only** and does not constitute a regulatory framework or operational tool.
+> * EUROCONTROL disclaims any responsibility for misuse or operational application.
+> * Distributed under the **EUPL-1.2** license, with exceptions detailed in `AMENDMENT_TO_EUPL_license.md`.
 
 ---
 
-### ⚡ Quick Install (PyPI)
+### ⚡ Quick Install
 
-- Core: `pip install node-fdm`
-- With optional dependencies (traffic, fastmeteo, viz): `pip install 'node-fdm[all]'`
-- For BADA baseline support (pyBADA’s pinning is restrictive):  
-  `pip install pybada --ignore-requires-python --no-deps`  
-  `pip install simplekml 'xlsxwriter>=3.2.5'`  # pyBADA dependency
+**node-fdm** is available on PyPI. Requires **Python 3.11+**.
 
-Requires Python 3.11+. For editable/local development, clone the repo and run `pip install -e .[all]`.
+#### 1. Standard Installation
+For core modeling and training functionalities:
+```bash
+pip install node-fdm
+```
+
+#### 2. Full Installation (Recommended)
+Includes support for traffic processing, fast meteorology, and visualization tools:
+```bash
+pip install 'node-fdm[all]'
+```
+
+#### 3. BADA Baseline Support
+Support for the BADA physical model is optional. `pybada` has restrictive dependencies, so install it separately:
+```bash
+pip install pybada --ignore-requires-python --no-deps
+pip install simplekml 'xlsxwriter>=3.2.5'
+```
+
+> **Developers**: Clone the repository and install in editable mode via `pip install -e .[all]`.
 
 ---
-
 
 ### 📁 Repository Structure
 
 ```text
-├── src/node_fdm/             # Core Neural ODE library (installed as a package)
-│   ├── architectures/        # Architecture specific definitions (opensky_2025, qar)
-│   ├── data/                 # Datasets, loaders, and flight processing
-│   ├── models/               # Neural ODE modules, pretrained checkpoints, wrappers
-│   └── utils/                # Data helpers, learning blocks, and physics utilities
-├── scripts/                  # End-to-end pipelines and runnable scripts
-│   ├── opensky/              # OpenSky 2025 download/preprocess/train/infer steps
-│   └── qar/                  # QAR training and inference scripts + config.yaml
-├── docs/                     # MkDocs documentation (guide, how-to, reference, logo)
-├── tests/                    # Unit/integration tests for shared utilities
-├── mkdocs.yml                # Documentation site configuration (mkdocs-dev.yml for local)
-├── pyproject.toml            # Packaging configuration and dependencies
-├── LICENCE.md                # EUPL-1.2 licence (see AMENDMENT_TO_EUPL_license.md)
+├── src/node_fdm/             # 📦 CORE LIBRARY
+│   ├── architectures/        #    - Registry of model definitions (opensky_2025, qar)
+│   ├── data/                 #    - Datasets, loaders, and flight processing
+│   ├── models/               #    - Neural ODE modules, checkpoints, wrappers
+│   └── utils/                #    - Data helpers, learning blocks, physics utils
+├── scripts/                  # 🚀 PIPELINES
+│   ├── opensky/              #    - OpenSky 2025: End-to-end public data pipeline
+│   └── qar/                  #    - QAR: training/inference scripts
+├── docs/                     # 📚 DOCUMENTATION (MkDocs)
+│   └── mkdocs.yml            #    - Site configuration
+├── tests/                    # 🧪 Unit/integration tests
 └── AMENDMENT_TO_EUPL_license.md
 ```
 
-**Configuration**  
-- Each pipeline ships its own `config.yaml` under `scripts/opensky/` and `scripts/qar/`
-- Edit dataset paths, model names, and training hyperparameters directly in the relevant subproject config before running scripts.
-
 ---
 
-### 🎨 Use Case:
+### 🎨 Use Cases & Publications
 
-- #### OpenSky Symposium 2025 — ADS-B Models
+This framework supports the following research publications.
 
+#### 1. OpenSky Symposium 2025 (ADS-B)
 *Jarry, G. & Olive, X. (2025). "Generation of Vertical Profiles with Neural Ordinary Differential Equations Trained on Open Trajectory Data," Journal of Open Aviation Science, Proceedings of the 13th OpenSky Symposium.*
 
-This repository enables **full reproducibility** of the study. All code used to **download and preprocess the data**, **train the models**, **perform trajectory inference**, and **generate the figures** presented in the paper is provided here.
+<details>
+<summary><strong>👇 Click to copy BibTeX</strong></summary>
 
-- #### SESAR Innovation Days 2025 — QAR Model
+```bibtex
+@inproceedings{jarry2025profiles,
+  author = {Jarry, Gabriel and Olive, Xavier},
+  title = {Generation of Vertical Profiles with Neural Ordinary Differential Equations Trained on Open Trajectory Data},
+  booktitle = {Proceedings of the 13th OpenSky Symposium},
+  journal = {Journal of Open Aviation Science},
+  year = {2025},
+  publisher = {Journal of Open Aviation Science},
+  note = {Under review}
+}
+```
+</details>
 
-*Jarry, G., Dalmau, R., Olive, X., & Very, P. (2025). "A Neural ODE Approach to Aircraft Flight Dynamics Modelling,"*  
-*Proceedings of the SESAR Innovation Days 2025, arXiv:2509.23307.*
+This repository enables **full reproducibility** of this study (data download, preprocessing, training, and figure generation).
 
-For the QAR-based model, the repository provides the **full training pipeline**,  the **complete model implementation**, the **inference scripts**, and the **final trained model weights**.  
+#### 2. SESAR Innovation Days 2025 (QAR)
+*Jarry, G., Dalmau, R., Olive, X., & Very, P. (2025). "A Neural ODE Approach to Aircraft Flight Dynamics Modelling," arXiv:2509.23307.*
 
-⚠️ Due to proprietary restrictions, the **QAR datasets themselves cannot be released**; only the model, code, and weights are included.
+<details>
+<summary><strong>👇 Click to copy BibTeX</strong></summary>
 
+```bibtex
+@misc{jarry2025neural,
+  title={A Neural ODE Approach to Aircraft Flight Dynamics Modelling}, 
+  author={Gabriel Jarry and Ramon Dalmau and Xavier Olive and Philippe Very},
+  year={2025},
+  eprint={2509.23307},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  note = {Proceedings of the SESAR Innovation Days 2025}
+}
+```
+</details>
+
+Includes the **full training pipeline** and **model implementation**.
+*⚠️ Note: Raw QAR datasets are proprietary and cannot be released.*
 
 ---
 
-### 🚧 Work in Progress
+### 🤝 Contributing
 
-This repository is under active development. Future updates will include:
-
-- Improve **Mode S feature reconstruction** to reduce errors in training and evaluation  
-- Extend to **lateral dynamics** for full trajectory generation and enhanced speed modelling  
-- Incorporate stronger **physical constraints** through physics-based loss regularization  
-- Train models to **complete ADS-B data** or **generate trajectories** directly from flight plans  
+Community contributions are welcome! See the **[Contribution Guide](https://eurocontrol-asu.github.io/node-fdm/howto/create_architecture/)** for the full details on adding a new architecture.
 
 ---
 
-### 🤝 Community — Adding a New Architecture
+### 🚧 Roadmap
 
-Community feedback and contributions are welcome to help advance the model’s robustness and applicability.
+This repository is under active development. We are focusing on the following strategic improvements:
 
-Want to extend the library with another dataset or modelling choice? Use the existing `opensky_2025` and `qar` packages as templates:
-
-1) **Copy a package skeleton**: duplicate `node_fdm/architectures/opensky_2025` (minimal) or `node_fdm/architectures/qar` (multi-layer example) into a new folder `node_fdm/architectures/<your_arch>`, keep the same file names (`columns.py`, `flight_process.py`, `model.py`, extra layers as needed).
-2) **Declare columns**: in `columns.py`, define your state (`X_COLS`), control (`U_COLS`), exogenous (`E0_COLS`), and extra outputs, following the existing column objects. Keep derivative columns for ODE targets.
-3) **Build layers**: in `model.py`, wire your layers (e.g., `TrajectoryLayer`, `EngineLayer`, `StructuredLayer`) and expose `ARCHITECTURE` and `MODEL_COLS`. The OpenSky model shows a two-layer baseline; QAR illustrates stacking several derived layers.
-4) **Preprocess & filter**: implement `flight_processing` and `segment_filtering` in `flight_process.py` to clean/augment your raw data (see altitude diffs in OpenSky vs. smoothing and engine reduction in QAR).
-5) **Register the name**: add your architecture key to `valid_names` in `node_fdm/architectures/mapping.py` so loaders and training scripts can find it.
-6) **Test a small run**: train or run inference on a tiny slice to validate column ordering and tensor shapes before opening a pull request; sample pipelines live in `scripts/` (e.g., OpenSky scripts).
-
-If you contribute back, include a short note on your data assumptions, any proprietary constraints, and a minimal script/notebook that exercises the new architecture.
+| Focus Area | Objective |
+| :--- | :--- |
+| **Model Scope** | Extend to **lateral dynamics** (turn rates, bank angles) for full 4D trajectory generation. |
+| **Data Quality** | Improve **Mode S feature reconstruction** to reduce errors in training and evaluation. |
+| **Physical Consistency** | Incorporate stronger **physical constraints** through physics-based loss regularization. |
+| **Operationalization** | Train models to **complete ADS-B data** or **generate trajectories** directly from flight plans. |
