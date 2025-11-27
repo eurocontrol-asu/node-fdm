@@ -32,7 +32,8 @@ jobs:
       
       - name: Install Project and Documentation Dependencies
         run: |
-          uvx install -e .[docs]
+          uvx install mkdocs mkdocs-material[imaging] mkdocstrings[python]
+          uvx install -e .
 
       - name: Build the site
         run: |
