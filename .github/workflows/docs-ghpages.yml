@@ -1,0 +1,50 @@
+name: Docs Deployment (GitHub Pages)
+
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
+    paths:
+      - "docs/**"
+      - ".github/workflows/docs-ghpages.yml" # Assurez-vous d'utiliser le nom de ce nouveau fichier ici
+      - "mkdocs.yml"
+
+permissions:
+  contents: write
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # Nécessaire pour gh-deploy qui utilise l'historique et les tags
+          fetch-depth: 0 
+          fetch-tags: true
+
+      # --- Installation des outils modernes (comme dans le Workflow 1) ---
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          enable-cache: true
+
+      - name: Set up Python
+        uses: actions/setup-python@v6
+        with:
+          python-version: "3.12"
+
+      # --- Construction du site (comme dans le Workflow 1) ---
+
+      - name: Build the site
+        run: |
+          # Utilisation de uvx pour installer mkdocs-material[imaging] et construire
+          uvx --with "mkdocs-material[imaging]" mkdocs build -d site
+
+      # --- Déploiement (Méthode standard du Workflow 2) ---
+
+      - name: Deploy documentation to GitHub Pages
+        # Utilisation de mkdocs gh-deploy pour publier sur la branche 'gh-pages'
+        run: mkdocs gh-deploy --force

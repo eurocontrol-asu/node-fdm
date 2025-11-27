@@ -1,9 +1,10 @@
-site_name: node-fdm Documentation
+site_name: node-fdm
+site_description: A physics-guided Neural Ordinary Differential Equation (Neural ODE) framework for aircraft flight dynamics.
+repo_name: eurocontrol-asu/node-fdm
 site_url: https://eurocontrol-asu.github.io/node-fdm/
-site_dir: site
+repo_url: https://github.com/eurocontrol-asu/node-fdm
 
-theme:
-  name: material
+
 
 nav:
   - Home: index.md
@@ -24,11 +25,69 @@ nav:
       - Architectures: reference/architectures.md
       - Model wrappers: reference/models.md
 
+
+theme:
+  name: material
+  logo: images/logo.jpg
+  features:
+    - content.code.annotate
+    - content.code.copy
+    - navigation.expand
+    - navigation.footer
+    - navigation.indexes
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - search.highlight
+    - search.suggest
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/link
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off
+        name: Switch to system preference
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - css/extra.css
+
 plugins:
   - search
-  - mkdocstrings:
-      handlers:
-        python:
-          options:
-            docstring_style: google
-            show_source: true
+  - social
+
+markdown_extensions:
+  - admonition
+  - attr_list
+  - footnotes
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - pymdownx.blocks.tab:
+      alternate_style: true
+      slugify: !!python/object/apply:pymdownx.slugs.slugify
+        kwds:
+          case: lower
+  - pymdownx.highlight:
+      pygments_lang_class: true
+  - pymdownx.superfences
+  - pymdownx.tabbed:
+      alternate_style: true
+  - toc:
+      permalink: true
+      baselevel: 1
