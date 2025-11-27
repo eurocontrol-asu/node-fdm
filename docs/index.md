@@ -35,7 +35,7 @@ graph LR
         E((Context e))
     end
 
-    subgraph Core ["Node-FDM Core (ADS-B Arch)"]
+    subgraph Core ["Core Blocks"]
         direction LR
         B1[Analytical Layer]
         B2[Neural Net Layer]
@@ -117,6 +117,7 @@ Follow the pipelines mirrored in the repository layout.
     * [Create Architecture](howto/create_architecture/)
     * [Train a Model](howto/train_model/)
     * [Run Inference](howto/run_inference/)
+    * [Contribute](howto/contribute/)
 
 
 -   [:material-book-open-page-variant: **API Reference**](reference/node_fdm/)

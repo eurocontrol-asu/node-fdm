@@ -63,7 +63,7 @@ trainer = ODETrainer(
     model_config=train_config,
     model_dir=models_dir,
     num_workers=train_config["num_workers"],
-    load_parallel=True,           # Use multi-GPU DataParallel if available
+    load_parallel=True,           # Use multi-CPU
 )
 
 # 5. Execute Training Loop

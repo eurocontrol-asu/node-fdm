@@ -16,6 +16,7 @@ nav:
       - Create an architecture: howto/create_architecture.md
       - Train a model: howto/train_model.md
       - Run inference: howto/run_inference.md
+      - Contribute: howto/contribute.md
   
   - API Reference:
       - Overview: reference/node_fdm.md

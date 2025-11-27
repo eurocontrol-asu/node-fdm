@@ -106,7 +106,7 @@ pip install simplekml 'xlsxwriter>=3.2.5'
 │   ├── opensky/              #    - OpenSky 2025: End-to-end public data pipeline
 │   └── qar/                  #    - QAR: training/inference scripts
 ├── docs/                     # 📚 DOCUMENTATION (MkDocs)
-│   └── mkdocs.yml            #    - Site configuration
+├── mkdocs.yml            #    - Site configuration
 ├── tests/                    # 🧪 Unit/integration tests
 └── AMENDMENT_TO_EUPL_license.md
 ```
@@ -164,7 +164,7 @@ Includes the **full training pipeline** and **model implementation**.
 
 ### 🤝 Contributing
 
-Community contributions are welcome! See the **[Contribution Guide](https://eurocontrol-asu.github.io/node-fdm/howto/create_architecture/)** for the full details on adding a new architecture.
+Community contributions are welcome! See the **[Contribution Guide](https://eurocontrol-asu.github.io/node-fdm/howto/contribute/)** for the full details.
 
 ---
 
