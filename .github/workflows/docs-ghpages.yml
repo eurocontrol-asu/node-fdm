@@ -32,7 +32,7 @@ jobs:
 
       - name: Build the site
         run: |
-          uvx --with "mkdocs-material[imaging], mkdocstrings[python]" mkdocs build -d site
+          uvx --with "mkdocs-material[imaging], mkdocstrings[python], ." mkdocs build -d site
 
       - name: Deploy pages to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
