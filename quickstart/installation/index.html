@@ -672,6 +672,8 @@
       
         
       
+        
+      
     
     
     
@@ -816,6 +818,34 @@
     
   
     Run inference
+  
+
+    
+  </span>
+  
+  
+
+      </a>
+    </li>
+  
+
+              
+            
+              
+                
+  
+  
+  
+  
+    <li class="md-nav__item">
+      <a href="../../howto/contribute/" class="md-nav__link">
+        
+  
+  
+  <span class="md-ellipsis">
+    
+  
+    Contribute
   
 
     
@@ -1269,16 +1299,13 @@ Install the package in editable mode along with all development dependencies:
 <hr />
 <h2 id="verification">✔️ Verification<a class="headerlink" href="#verification" title="Permanent link">&para;</a></h2>
 <p>Run this quick check to verify that <code>node_fdm</code> and <code>torch</code> are correctly installed and importable.</p>
-<div class="language-bash highlight"><pre><span></span><code><span id="__span-5-1"><a id="__codelineno-5-1" name="__codelineno-5-1" href="#__codelineno-5-1"></a>python<span class="w"> </span>-<span class="w"> </span><span class="s">&lt;&lt;&#39;PY&#39;</span>
-</span><span id="__span-5-2"><a id="__codelineno-5-2" name="__codelineno-5-2" href="#__codelineno-5-2"></a><span class="s">import torch</span>
-</span><span id="__span-5-3"><a id="__codelineno-5-3" name="__codelineno-5-3" href="#__codelineno-5-3"></a><span class="s">import node_fdm</span>
-</span><span id="__span-5-4"><a id="__codelineno-5-4" name="__codelineno-5-4" href="#__codelineno-5-4"></a><span class="s">import sys</span>
-</span><span id="__span-5-5"><a id="__codelineno-5-5" name="__codelineno-5-5" href="#__codelineno-5-5"></a>
-</span><span id="__span-5-6"><a id="__codelineno-5-6" name="__codelineno-5-6" href="#__codelineno-5-6"></a><span class="s">print(f&quot;Python version: {sys.version.split()[0]}&quot;)</span>
-</span><span id="__span-5-7"><a id="__codelineno-5-7" name="__codelineno-5-7" href="#__codelineno-5-7"></a><span class="s">print(f&quot;Torch version:  {torch.__version__}&quot;)</span>
-</span><span id="__span-5-8"><a id="__codelineno-5-8" name="__codelineno-5-8" href="#__codelineno-5-8"></a><span class="s">print(&quot;✅ node_fdm import successful&quot;)</span>
-</span><span id="__span-5-9"><a id="__codelineno-5-9" name="__codelineno-5-9" href="#__codelineno-5-9"></a><span class="s">PY</span>
-</span></code></pre></div>
+<p>```python
+import torch
+import node_fdm
+import sys</p>
+<p>print(f"Python version: {sys.version.split()[0]}")
+print(f"Torch version:  {torch.<strong>version</strong>}")
+print("✅ node_fdm import successful")</p>
 <hr />
 <div class="admonition success">
 <p class="admonition-title">Next Step</p>
