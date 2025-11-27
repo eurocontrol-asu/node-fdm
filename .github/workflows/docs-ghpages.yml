@@ -36,7 +36,7 @@ jobs:
 
       - name: Build the site
         run: |
-          uvx --with "mkdocs-material[imaging]" mkdocs build -d site
+          uvx mkdocs build -d site
 
       - name: Deploy pages to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
