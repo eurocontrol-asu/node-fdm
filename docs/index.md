@@ -142,7 +142,7 @@ You can install the core package directly via pip:
 ```bash
 pip install node-fdm
 # Or for editable research mode:
-pip install -e .[dev]
+pip install -e .[all]
 ```
 
 ---
