@@ -32,7 +32,7 @@ jobs:
       
       - name: Install Project and Documentation Dependencies
         run: |
-          uvx install -e .[all]
+          uvx install -e .[docs]
 
       - name: Build the site
         run: |
