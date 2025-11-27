@@ -1,5 +1,5 @@
 paths:
-  data_dir: "/data/common/dataiku/config/projects/NODEFDM/lib/data"#"/data/common/data/QAR/PARQUET/OPENSKY-NODE/opensky/node-fdm/data"
+  data_dir: "TODO"
 
   download_dir: "downloaded_parquet"
   preprocess_dir: "preprocessed_parquet"
@@ -30,4 +30,4 @@ typecodes:
   - E190
 
 bada:
-  bada_4_2_dir: "/data/common/dataiku/config/projects/FUEL_MODEL/lib/python/BADA/4.2.1"
+  bada_4_2_dir: "TODO"
