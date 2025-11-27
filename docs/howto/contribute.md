@@ -70,6 +70,7 @@ The most common way to extend **node-fdm** is by adding support for a new aircra
 Instead of modifying the core engine, you should create a self-contained module in `node_fdm/architectures/`.
 
 **Steps to contribute an architecture:**
+
 1.  **Duplicate a Template**: Copy `opensky_2025` (for sparse data) or `qar` (for rich data) into a new folder.
 2.  **Define Columns**: Update `columns.py` to map your specific data inputs to SI units.
 3.  **Implement Logic**: Adjust `flight_process.py` (cleaning) and `model.py` (layer stack).
@@ -96,6 +97,7 @@ Then open `http://127.0.0.1:8000/node-fdm/` in your browser.
 ## 🎨 Style Guide
 
 We do not want to be overly strict, but consistency helps review.
+
 * **Python**: Follow PEP 8. We recommend running `ruff` or `black` before committing.
 * **Type Hints**: Please use Python type hints (`def func(df: pd.DataFrame) -> torch.Tensor:`) for all core functions.
 * **Existing Code**: Avoid reformatting unrelated existing code, as this makes diffs harder to read.
