@@ -15,6 +15,7 @@ Before installing, ensure you have:
 ### 📦 Install the Package
 
 **From PyPI (recommended for users)**
+
 - Core library: `pip install node-fdm`
 - With optional deps (traffic, fastmeteo, viz): `pip install 'node-fdm[all]'`
 - BADA baseline support (pyBADA requirements are restrictive):  

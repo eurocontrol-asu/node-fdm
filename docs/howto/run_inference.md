@@ -1,6 +1,7 @@
 # Run inference on flights (generic)
 
 `NodeFDMPredictor` needs:
+
 - The architecture’s `MODEL_COLS` and (optionally) its `flight_processing` function.
 - A trained checkpoint directory containing `meta.json` and layer weights.
 - Processed flights that match the architecture’s preprocessing.

@@ -1,6 +1,7 @@
 # Train a Neural ODE model (generic)
 
 Prerequisites:
+
 - A processed dataset compatible with the target architecture (columns and preprocessing must match).
 - A file list DataFrame with at least `filepath` and `split` (`train` / `val` / `test`).
 
@@ -55,11 +56,13 @@ trainer.train(
 ```
 
 Outputs in `models/<arch>_<group>/`:
+
 - `meta.json` with architecture name, stats, hyperparameters.
 - Layer checkpoints (e.g., `trajectory.pt`, `data_ode.pt`).
 - `training_losses.csv` and `training_curve.png`.
 
 ## Tips
+
 - For multiple architectures, run the loop per `architecture_name` and per data subset that matches its preprocessing/columns.
 - `model_params` is defined by each architecture’s `model.py`; keep it in sync with your custom architecture.
 - To resume training, set `loading_args=(True, True)`.

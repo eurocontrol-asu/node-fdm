@@ -1,6 +1,7 @@
 # Configure project paths and options
 
 All runtime settings are now defined per pipeline:
+
 - `scripts/opensky/config.yaml` — OpenSky 2025 pipeline
 - `scripts/qar/config.yaml` — QAR pipeline
 
@@ -32,6 +33,7 @@ bada:
 ```
 
 Tips:
+
 - Keep `data_dir` absolute; subfolders are resolved relative to it.
 - Adjust `typecodes` once in the relevant `config.yaml` instead of editing scripts.
 - Ensure directories exist before running downloads/preprocessing (`mkdir -p ...`).
