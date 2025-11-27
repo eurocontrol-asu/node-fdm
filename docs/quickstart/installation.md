@@ -89,8 +89,7 @@ Choose the installation method that matches your needs.
 
 Run this quick check to verify that `node_fdm` and `torch` are correctly installed and importable.
 
-```bash
-python - <<'PY'
+```python
 import torch
 import node_fdm
 import sys
@@ -98,8 +97,6 @@ import sys
 print(f"Python version: {sys.version.split()[0]}")
 print(f"Torch version:  {torch.__version__}")
 print("✅ node_fdm import successful")
-PY
-```
 
 ---
 
