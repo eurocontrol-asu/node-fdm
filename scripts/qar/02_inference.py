@@ -38,7 +38,7 @@ print(f"\n🛫 Predicting for aircraft: {acft}")
 if local:
     model_path = models_dir / f"qar_{acft}"
 else:
-    model_path = files("models").joinpath(f"qar_{acft}")
+    model_path = files("node_fdm.models.pretrained_models").joinpath(f"qar_{acft}")
 
 
 if not model_path.exists():

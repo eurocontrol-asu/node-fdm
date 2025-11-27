@@ -36,7 +36,9 @@ for acft in typecodes:
     if local_models:
         model_path = models_dir / f"opensky_{acft}"
     else:
-        model_path = files("models.opensky_2025").joinpath(f"opensky_{acft}")
+        model_path = files("node_fdm.models.pretrained_models.opensky_2025").joinpath(
+            f"opensky_{acft}"
+        )
 
     if not model_path.exists():
         print(f"⚠️  Model not found for {acft}: {model_path}")

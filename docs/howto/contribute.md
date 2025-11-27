@@ -5,6 +5,7 @@ Thank you for your interest in contributing to **node-fdm**!
 We aim to provide a robust, physics-guided framework for flight dynamics research. Whether you are a researcher correcting a physical formula, a data scientist adding a new preprocessing hook, or a developer fixing a bug, your help is welcome.
 
 We welcome contributions in several forms:
+
 1.  **Bug Reports & Issues**
 2.  **Documentation Improvements**
 3.  **New Architectures** (Adapting the model to new aircraft or datasets)
@@ -17,6 +18,7 @@ We welcome contributions in several forms:
 Please file bug reports on the [GitHub Issue Tracker](https://github.com/eurocontrol-asu/node-fdm/issues).
 
 When filing a report, please include:
+
 * **Description**: A clear summary of the issue.
 * **Context**: Which pipeline were you running? (e.g., *OpenSky 2025* or *QAR*).
 * **Configuration**: Relevant parts of your `config.yaml` (especially `model_config`).
@@ -87,7 +89,7 @@ pip install mkdocs-material mkdocstrings[python]
 mkdocs build --clean
 mkdocs serve
 ```
-Then open `http://127.0.0.1:8000` in your browser.
+Then open `http://127.0.0.1:8000/node-fdm/` in your browser.
 
 ---
 
