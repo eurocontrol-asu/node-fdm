@@ -28,7 +28,8 @@ nav:
 
 theme:
   name: material
-  logo: images/logo.jpg
+  logo: icons/favicon.png
+  favicon: icons/favicon.ico
   features:
     - content.code.annotate
     - content.code.copy
