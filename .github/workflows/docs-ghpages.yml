@@ -30,9 +30,17 @@ jobs:
         with:
           python-version: "3.12"
 
+      - name: Create venv & install dependencies
+        run: |
+          uv venv .venv
+          source .venv/bin/activate
+          uv pip install -e .
+          uv pip install 'mkdocs-material[imaging]' 'mkdocstrings[python]'
+
       - name: Build the site
         run: |
-          uvx --with "mkdocs-material[imaging], mkdocstrings[python], ." mkdocs build -d site
+          source .venv/bin/activate
+          mkdocs build -d site
 
       - name: Deploy pages to GitHub Pages
         uses: peaceiris/actions-gh-pages@v4
