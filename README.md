@@ -106,7 +106,7 @@ pip install simplekml 'xlsxwriter>=3.2.5'
 │   ├── opensky/              #    - OpenSky 2025: End-to-end public data pipeline
 │   └── qar/                  #    - QAR: training/inference scripts
 ├── docs/                     # 📚 DOCUMENTATION (MkDocs)
-├── mkdocs.yml            #    - Site configuration
+├── mkdocs.yml                #    - Site configuration
 ├── tests/                    # 🧪 Unit/integration tests
 └── AMENDMENT_TO_EUPL_license.md
 ```
