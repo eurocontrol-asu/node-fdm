@@ -9,9 +9,8 @@ authors = [
   { name = "Gabriel JARRY", email = "gabriel.jarry@eurocontrol.int" },
   { name = "Xavier OLIVE", email = "xavier.olive@onera.fr" },
   { name = "Ramon DALMAU", email = "ramon.dalmau-codina@eurocontrol.int" },
-  { name = "Philippe VERY", email = "philippe.very@eurocontrol.int" }
+  { name = "Philippe VERY", email = "philippe.very@eurocontrol.int" },
 ]
-
 
 
 dependencies = [
@@ -38,18 +37,13 @@ all = [
   "ipykernel>=6.29.5",
 ]
 
-bada = [
-  "pyBADA>=0.1.7",
-]
+# bada = [
+#   "pyBADA>=0.1.7",
+# ]
 
-test = [
-  "pytest>=7.4",
-]
+test = ["pytest>=7.4"]
 
-docs = [
-  "mkdocs-material>=9",
-  "mkdocstrings[python]>=0.27",
-]
+docs = ["mkdocs-material>=9", "mkdocstrings[python]>=0.27"]
 
 [project.urls]
 Documentation = "https://eurocontrol-asu.github.io/node-fdm/"
