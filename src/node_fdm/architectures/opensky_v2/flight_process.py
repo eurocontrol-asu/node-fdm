@@ -1,0 +1,94 @@
+#!/usr/bin/env python3
+# -*- coding: utf-8 -*-
+"""Pre-processing utilities for OpenSky 2025 flight data."""
+
+import pandas as pd
+
+from node_fdm.architectures.opensky_2025.columns import (
+    col_alt_diff,
+    col_alt_sel,
+    col_vz_sel,
+    col_mach_sel,
+    col_cas_sel,
+    col_alt,
+    col_dist,
+)
+
+LOW_THR = 200  # meters
+UPPER_THR = 3000  # meters
+
+
+def flight_processing(df: pd.DataFrame) -> pd.DataFrame:
+    """Prepare OpenSky flight data by computing altitude differences.
+
+    Args:
+        df: Input DataFrame containing flight measurements.
+
+    Returns:
+        DataFrame with altitude difference column added.
+    """
+    df[col_alt_diff] = df[col_alt_sel] - df[col_alt]
+
+    df[col_vz_sel] = df[col_vz_sel].fillna(0.0)
+    df[col_mach_sel] = df[col_mach_sel].fillna(0.0)
+    df[col_cas_sel] = df[col_cas_sel].fillna(0.0)
+
+    return df
+
+
+def segment_filtering(f: pd.DataFrame, start_idx: int, seq_len: int) -> bool:
+    """Check whether a segment meets distance variation thresholds.
+
+    Args:
+        f: DataFrame containing flight measurements.
+        start_idx: Starting index of the segment to evaluate.
+        seq_len: Length of the segment to evaluate.
+
+    Returns:
+        True if the segment stays within distance thresholds, otherwise False.
+    """
+    dist_diff = f[col_dist].diff(1)
+    seg = dist_diff.iloc[start_idx : start_idx + seq_len]
+    condition = len(seg[(seg < LOW_THR) | (seg > UPPER_THR)]) == 0
+    return condition
+
+
+selected_param_config = {
+    "mach": {
+        "tol": 0.0005,
+        "min_len": 120,
+        "alt_threshold": 15000,
+        "smooth_window": 30,
+        "use_alt": True,
+    },
+    "cas": {
+        "tol": 0.75,
+        "min_len": 20,
+        "use_alt": False,
+        "smooth_window": 20,
+        "smooth_method": "savgol",
+    },
+    "vz": {
+        "tol": 25,
+        "min_len": 25,
+        "use_alt": False,
+        "min_abs_value": 75,
+        "smooth_window": 15,
+        "smooth_method": "savgol",
+    },
+    "alt": {
+        "tol": 25,
+        "min_len": 5,
+        "use_alt": False,
+        "min_abs_value": 25,
+        "smooth_window": 5,
+        "smooth_method": "savgol",
+    },
+    "gamma": {
+        "tol": 0.002,
+        "min_len": 15,
+        "use_alt": False,
+        "smooth_window": 5,
+        "smooth_method": "savgol",
+    },
+}

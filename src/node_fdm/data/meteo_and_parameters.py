@@ -171,8 +171,21 @@ def build_spd_and_vert_selected_from_segments(
     vz_segments, _ = detect_constant_segments(f, var_name="vertical_rate", **vz_cfg)
     f = add_segment_column(f, vz_segments, "vz_sel", fill_value=np.nan)
 
-    if config.get("add_alt", False):
-        alt_cfg = config.get("alt", {})
+    gamma_cfg = config.get("gamma", None)
+    if gamma_cfg is not None:
+        f_gamma = f.copy()
+        t = f["time"] if "time" in f.columns else f.index
+        if len(vz_segments) > 0:
+            for seg in vz_segments:
+                mask = (t >= seg["start_time"]) & (t <= seg["end_time"])
+                f_gamma.loc[mask, "gamma"] = np.nan
+        gamma_segments, _ = detect_constant_segments(
+            f_gamma, var_name="gamma", **gamma_cfg
+        )
+        f = add_segment_column(f, gamma_segments, "gamma_sel", fill_value=np.nan)
+
+    alt_cfg = config.get("alt", None)
+    if alt_cfg is not None:
         alt_segments, _ = detect_constant_segments(f, var_name="altitude", **alt_cfg)
         f = add_segment_column(f, alt_segments, "selected_mcp", fill_value=np.nan)
         f.loc[f.index[-1], "selected_mcp"] = f.loc[f.index[-1], "altitude"]
