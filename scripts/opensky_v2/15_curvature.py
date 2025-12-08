@@ -188,7 +188,7 @@ def process_flight_data_augmented(df_flight, turn_threshold):
     ) / (R_EARTH_M / 1000)
 
     phi_C, lambda_C = calculate_intermediate_point(
-        phi_A, lambda_A, df["seg_init_bearing"], current_dist
+        phi_A, lambda_A, df["seg_init_bearing"], df["seg_cur_dist"]
     )
 
     df["orthodromie_track"] = calculate_bearing(phi_A, lambda_A, phi_C, lambda_C)
@@ -330,7 +330,7 @@ for i in range(0, 2):
 
 
 # %%
-plt.plot(f.current_dist, color="g")
+plt.plot(f.seg_cur_dist, color="g")
 
 
 # %%
