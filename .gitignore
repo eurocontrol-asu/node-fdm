@@ -23,6 +23,9 @@ site/
 # Project internal (local only, never commit)
 .projet/
 
+# Legacy code copy (for golden output generation)
+legacy/
+
 # IDE
 .idea/
 .vscode/
