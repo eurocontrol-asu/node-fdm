@@ -11,13 +11,20 @@ authors = [
   { name = "Ramon DALMAU", email = "ramon.dalmau-codina@eurocontrol.int" },
   { name = "Philippe VERY", email = "philippe.very@eurocontrol.int" },
 ]
-
+classifiers = [
+  "Development Status :: 4 - Beta",
+  "Intended Audience :: Science/Research",
+  "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
+  "Programming Language :: Python :: 3.11",
+  "Programming Language :: Python :: 3.12",
+  "Topic :: Scientific/Engineering :: Artificial Intelligence",
+]
 
 dependencies = [
   "torch>=2.6.0",
   "torchdiffeq>=0.2.5",
   "numpy>=1.26",
-  "pandas>=2.2.3",
+  "polars>=1.0.0",
   "scipy>=1.13.1",
   "pyarrow>=21.0",
   "joblib>=1.4.2",
@@ -32,22 +39,17 @@ all = [
   "fastmeteo>=1.1.0",
   "click>=8.1.8",
   "altair>=5.5",
-  "cairosvg>=2.7",
-  "vl-convert-python>=1.8.0",
-  "ipykernel>=6.29.5",
 ]
 
-# bada = [
-#   "pyBADA>=0.1.7",
-# ]
-
-test = ["pytest>=7.4"]
-
-docs = ["mkdocs-material>=9", "mkdocstrings[python]>=0.27"]
+docs = [
+  "mkdocs-material[imaging]>=9.5.0",
+  "mkdocstrings[python]>=1.0.0",
+]
 
 [project.urls]
 Documentation = "https://eurocontrol-asu.github.io/node-fdm/"
-Code = "https://github.com/eurocontrol-asu/node-fdm/"
+Repository = "https://github.com/eurocontrol-asu/node-fdm/"
+Issues = "https://github.com/eurocontrol-asu/node-fdm/issues"
 
 [build-system]
 requires = ["hatchling", "uv-dynamic-versioning"]
@@ -61,7 +63,104 @@ fallback-version = "0.0.0"
 
 [dependency-groups]
 dev = [
-    "mypy>=1.19.0",
-    "pytest>=9.0.1",
-    "ruff>=0.14.7",
+  "mypy>=1.14.1",
+  "pip-audit>=2.7.3",
+  "pre-commit>=4.5.1",
+  "pytest>=8.3.5",
+  "pytest-cov>=5.0.0",
+  "ruff>=0.14.0",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Ruff Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.ruff]
+target-version = "py311"
+line-length = 88
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = [
+  "E",   # pycodestyle errors
+  "F",   # pyflakes
+  "I",   # isort
+  "N",   # pep8-naming
+  "UP",  # pyupgrade
+  "B",   # flake8-bugbear
+  "C4",  # flake8-comprehensions
+  "S",   # flake8-bandit (security)
+  "T20", # flake8-print
+  "RUF", # ruff-specific
+]
+ignore = ["S101"]  # Allow assert in tests
+
+[tool.ruff.lint.per-file-ignores]
+"examples/*" = ["T201", "S603", "S607"]
+"scripts/*" = ["T201", "S603", "S607"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["node_fdm"]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Pytest Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = "test_*.py"
+addopts = [
+  "-v",
+  "--strict-markers",
+  "--strict-config",
+  "--tb=short",
+  "--import-mode=importlib",
+  "--cov=src/node_fdm",
+  "--cov-report=term-missing",
+  "--cov-report=xml",
+]
+markers = [
+  "slow: marks tests as slow",
+  "golden: marks tests as golden output comparison",
+  "integration: marks tests as integration tests",
+]
+
+# ─────────────────────────────────────────────────────────────────────────────
+# MyPy Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.mypy]
+python_version = "3.11"
+strict = true
+warn_return_any = true
+warn_unused_ignores = true
+disallow_untyped_defs = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+show_error_codes = true
+pretty = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["torch.*", "torchdiffeq.*", "traffic.*", "fastmeteo.*", "joblib.*", "scipy.*", "matplotlib.*", "tqdm.*"]
+ignore_missing_imports = true
+
+# ─────────────────────────────────────────────────────────────────────────────
+# Coverage Configuration
+# ─────────────────────────────────────────────────────────────────────────────
+[tool.coverage.run]
+source = ["src/node_fdm"]
+branch = true
+relative_files = true
+omit = ["*/tests/*", "*/examples/*"]
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.report]
+exclude_lines = [
+  "pragma: no cover",
+  "if TYPE_CHECKING:",
+  "raise NotImplementedError",
 ]

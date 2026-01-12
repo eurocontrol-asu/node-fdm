@@ -1,15 +1,46 @@
+# Python-generated files
 __pycache__/
-**/__pycache__/
-*.pyc
-*.pyo
-*.pyd
-data/era5_cache/*
-data/dowloaded_parquet/*
-data/preprocessed_parquet/*
-data/processed_flights/*
-data/predicted_flights/*
-data/bada_flights/*
+*.py[oc]
+build/
+dist/
+wheels/
+*.egg-info
+
+# Virtual environments
+.venv
+
+# Cache directories
 .cache/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+.coverage
+coverage.xml
+htmlcov/
+coverage_html/
 site/
-*.egg-info/
-node_fdm.egg-info
+
+# Project internal (local only, never commit)
+.projet/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Environment
+.env
+!.env.example
+
+# Node-FDM specific data directories
+data/era5_cache/
+data/dowloaded_parquet/
+data/preprocessed_parquet/
+data/processed_flights/
+data/predicted_flights/
+data/bada_flights/
