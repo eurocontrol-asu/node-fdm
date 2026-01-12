@@ -1,25 +1,26 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Helper for building train/validation datasets."""
 
-from typing import Callable, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
-import pandas as pd
+import polars as pl
 
 from node_fdm.data.dataset import SeqDataset
 
 
 def get_train_val_data(
-    data_df: pd.DataFrame,
-    model_cols,
+    data_df: pl.DataFrame,
+    model_cols: Any,
     shift: int = 60,
     seq_len: int = 60,
-    custom_fn: Tuple[
-        Optional[Callable[[pd.DataFrame], pd.DataFrame]], Optional[Callable[..., bool]]
+    custom_fn: tuple[
+        Callable[[pl.DataFrame], pl.DataFrame] | None,
+        Callable[..., bool] | None,
     ] = (None, None),
     load_parallel: bool = True,
-    train_val_num: Tuple[int, int] = (5000, 500),
-) -> Tuple[SeqDataset, SeqDataset]:
+    train_val_num: tuple[int, int] = (5000, 500),
+) -> tuple[SeqDataset, SeqDataset]:
     """Create training and validation datasets from a labeled file list.
 
     Args:
@@ -34,9 +35,12 @@ def get_train_val_data(
     Returns:
         Tuple of training and validation SeqDataset instances.
     """
-
-    train_files = data_df[data_df.split == "train"].filepath.tolist()
-    validation_files = data_df[data_df.split == "val"].filepath.tolist()
+    train_files = (
+        data_df.filter(pl.col("split") == "train").get_column("filepath").to_list()
+    )
+    validation_files = (
+        data_df.filter(pl.col("split") == "val").get_column("filepath").to_list()
+    )
 
     train_dataset = SeqDataset(
         train_files[: train_val_num[0]],

@@ -1,11 +1,16 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
-"""Conversion helpers for data cleaning and unit manipulation."""
+"""Conversion helpers for data cleaning and unit manipulation.
 
-from typing import Any, Dict, Callable
+This module provides numpy-based utilities for:
+- Type correction (float, string)
+- Unit conversions (linear, additive)
+- Category mapping
+"""
+
+from collections.abc import Callable
+from typing import Any
 
 import numpy as np
-import pandas as pd
 
 
 @np.vectorize
@@ -39,7 +44,7 @@ def correct_str(el: Any) -> str:
     return str(el)
 
 
-def map_cat_dict(cat_dict: Dict[Any, Any]) -> Callable[[Any], Any]:
+def map_cat_dict(cat_dict: dict[Any, Any]) -> Callable[[Any], Any]:
     """Create a vectorized mapping function from a category dictionary.
 
     Args:
@@ -50,7 +55,7 @@ def map_cat_dict(cat_dict: Dict[Any, Any]) -> Callable[[Any], Any]:
     """
 
     @np.vectorize
-    def map_dict(el):
+    def map_dict(el: Any) -> Any:
         return cat_dict[el]
 
     return map_dict
@@ -59,14 +64,14 @@ def map_cat_dict(cat_dict: Dict[Any, Any]) -> Callable[[Any], Any]:
 class CategoryMapper:
     """Helper to map categories and their inverse with vectorized functions."""
 
-    def __init__(self, cat_dict: Dict[Any, Any]):
+    def __init__(self, cat_dict: dict[Any, Any]) -> None:
         """Initialize mapper with forward and inverse dictionaries.
 
         Args:
             cat_dict: Mapping from labels to numeric codes (or any target values).
         """
         self.cat_dict = cat_dict
-        self.inv_cat_dict = {v: k for k, v in cat_dict.items()}  # Build inverse dict
+        self.inv_cat_dict = {v: k for k, v in cat_dict.items()}
         self.inv_vectorized = np.vectorize(self._inv_map)
 
     def _map(self, el: Any) -> Any:
@@ -132,6 +137,11 @@ class LinearUnitConverter:
     """Apply a linear scaling factor to values."""
 
     def __init__(self, unit: float) -> None:
+        """Initialize with scaling factor.
+
+        Args:
+            unit: Factor to multiply values by.
+        """
         self.unit = unit
 
     def __call__(self, value: Any) -> Any:
@@ -155,72 +165,13 @@ class AdditionUnitConverter:
     """Apply an additive offset to values."""
 
     def __init__(self, unit: float) -> None:
+        """Initialize with offset value.
+
+        Args:
+            unit: Offset to add to values.
+        """
         self.unit = unit
 
     def __call__(self, value: Any) -> Any:
         """Add the configured offset to the provided value."""
         return value + self.unit
-
-
-def correct_float_col(df_col: pd.Series) -> pd.Series:
-    """Apply correct_float vectorized conversion to a pandas Series or DataFrame column.
-
-    Args:
-        df_col: Input column.
-
-    Returns:
-        Column converted to floats with failures as ``np.nan``.
-    """
-    return df_col.apply(correct_float)
-
-
-def deg_to_rad_correct_float(df_col: pd.Series) -> pd.Series:
-    """Convert degrees to radians on a pandas Series after float correction.
-
-    Args:
-        df_col: Degrees column.
-
-    Returns:
-        Column in radians.
-    """
-    return np.deg2rad(df_col.apply(correct_float))
-
-
-def unwrap_deg_to_rad_correct_float(df_col: pd.Series) -> np.ndarray:
-    """Convert degrees to radians and unwrap angles to prevent discontinuities.
-
-    Args:
-        df_col: Degrees column.
-
-    Returns:
-        Unwrapped radians array.
-    """
-    return np.unwrap(deg_to_rad_correct_float(df_col))
-
-
-def mapping(dict_map: Dict[Any, Any]) -> Callable[[pd.Series], pd.Series]:
-    """Return a function that maps pandas Series values using a dictionary.
-
-    Args:
-        dict_map: Mapping from old to new values.
-
-    Returns:
-        Callable applying the mapping to a Series.
-    """
-    return lambda df_col: df_col.map(dict_map)
-
-
-def one_hot_encoding(df_col: pd.Series, dim: int) -> pd.DataFrame:
-    """One-hot encode a categorical pandas Series with fixed categories.
-
-    Args:
-        df_col: Input categorical column.
-        dim: Number of categories.
-
-    Returns:
-        One-hot encoded DataFrame.
-    """
-    categories = list(range(dim))
-    df_col_cat = pd.Categorical(df_col, categories=categories)
-    one_hot = pd.get_dummies(df_col_cat, prefix=df_col.name + "_one_hot").astype(int)
-    return one_hot
