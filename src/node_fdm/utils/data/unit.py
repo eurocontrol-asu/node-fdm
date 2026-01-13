@@ -1,14 +1,14 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Physical unit definitions with conversion helpers."""
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import Any, Optional
 
 from node_fdm.utils.data.conversions import (
-    identity,
     correct_float,
     correct_str,
+    identity,
 )
 
 

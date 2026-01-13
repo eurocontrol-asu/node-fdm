@@ -1,21 +1,21 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Training utilities for neural ODE-based flight dynamics models."""
 
-from typing import Any, Dict, Optional, Sequence, Tuple
-
-import os
 import json
-import torch
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
+
 import matplotlib.pyplot as plt
 import pandas as pd
+import torch
 from torch.utils.data import DataLoader
 from torchdiffeq import odeint
 
-from node_fdm.data.loader import get_train_val_data
 from node_fdm.architectures.mapping import get_architecture_from_name
-from node_fdm.models.flight_dynamics_model import FlightDynamicsModel
+from node_fdm.data.loader import get_train_val_data
 from node_fdm.models.batch_neural_ode import BatchNeuralODE
+from node_fdm.models.flight_dynamics_model import FlightDynamicsModel
 from node_fdm.utils.learning.loss import get_loss
 
 
@@ -25,17 +25,18 @@ class ODETrainer:
     def __init__(
         self,
         data_df: pd.DataFrame,
-        model_config: Dict[str, Any],
+        model_config: dict[str, Any],
         model_dir: Any,
         num_workers: int = 4,
         load_parallel: bool = True,
-        train_val_num: Tuple[int, int] = (5000, 500),
+        train_val_num: tuple[int, int] = (5000, 500),
     ) -> None:
         """Initialize trainer with data, model configuration, and I/O paths.
 
         Args:
             data_df: DataFrame containing file paths and split labels.
-            model_config: Dictionary describing architecture, hyperparameters, and loader settings.
+            model_config: Dictionary describing architecture,
+                hyperparameters, and loader settings.
             model_dir: Base directory to store checkpoints and metadata.
             num_workers: Number of workers for DataLoaders.
             load_parallel: Whether to load flights in parallel.
@@ -49,8 +50,8 @@ class ODETrainer:
         self.x_cols, self.u_cols, self.e0_cols, self.e_cols, self.dx_cols = (
             self.model_cols
         )
-        self.model_dir = model_dir / model_config["model_name"]
-        os.makedirs(self.model_dir, exist_ok=True)
+        self.model_dir = Path(model_dir) / model_config["model_name"]
+        self.model_dir.mkdir(parents=True, exist_ok=True)
         self.architecture = architecture
         self.model_config = model_config
         self.architecture_name = model_config["architecture_name"]
@@ -93,7 +94,7 @@ class ODETrainer:
             Initialized or restored `FlightDynamicsModel` instance.
         """
         self.best_val_loss = float("inf")
-        if load and os.path.exists(self.model_dir / "meta.json"):
+        if load and (self.model_dir / "meta.json").exists():
             model = self.load_best_checkpoint(load_loss=load_loss)
         else:
             print("Creating new model.")
@@ -141,7 +142,7 @@ class ODETrainer:
 
         return model
 
-    def load_layer_checkpoint(self, layer_name: str) -> Optional[Dict[str, Any]]:
+    def load_layer_checkpoint(self, layer_name: str) -> dict[str, Any] | None:
         """Load checkpoint dictionary for a specific layer if available.
 
         Args:
@@ -150,13 +151,12 @@ class ODETrainer:
         Returns:
             Checkpoint dictionary if found, otherwise None.
         """
-        path = os.path.join(self.model_dir, f"{layer_name}.pt")
-        if not os.path.exists(path):
+        path = self.model_dir / f"{layer_name}.pt"
+        if not path.exists():
             print(f"No checkpoint found for layer {layer_name}, skipping load.")
             return None
-        else:
-            print(f"checkpoint found for layer {layer_name}")
-        checkpoint = torch.load(path, map_location=self.device)
+        print(f"checkpoint found for layer {layer_name}")
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
         return checkpoint
 
     def save_meta(self) -> None:
@@ -223,9 +223,9 @@ class ODETrainer:
         self,
         vect_list: Sequence[torch.Tensor],
         col_list: Sequence[Any],
-        alpha_dict: Dict[Any, float],
+        alpha_dict: dict[Any, float],
         normalize: bool = True,
-    ) -> Dict[Any, torch.Tensor]:
+    ) -> dict[Any, torch.Tensor]:
         """Concatenate vectors and build a dict keyed by column definitions.
 
         Args:
@@ -250,7 +250,7 @@ class ODETrainer:
         vects = torch.cat(vect_list, dim=2)
         vects_dict = {
             col: coeff * modifier(vects[..., i], col).unsqueeze(-1)
-            for i, (col, coeff) in enumerate(zip(col_list, coeff_list))
+            for i, (col, coeff) in enumerate(zip(col_list, coeff_list, strict=False))
         }
         return vects_dict
 
@@ -260,8 +260,8 @@ class ODETrainer:
         u_seq: torch.Tensor,
         e_seq: torch.Tensor,
         method: str,
-        alpha_dict: Dict[Any, float],
-    ) -> Tuple[torch.Tensor, torch.Tensor, Sequence[Any]]:
+        alpha_dict: dict[Any, float],
+    ) -> tuple[torch.Tensor, torch.Tensor, Sequence[Any]]:
         """Integrate one ODE step and return true/predicted trajectories.
 
         Args:
@@ -298,7 +298,7 @@ class ODETrainer:
             )
         }
 
-        vects_dict = dict()
+        vects_dict = {}
 
         monitor_cols = self.x_cols + self.e_cols
 
@@ -322,7 +322,7 @@ class ODETrainer:
     def compute_loss_ode_step(
         self,
         batch: Sequence[torch.Tensor],
-        alpha_dict: Dict[Any, float],
+        alpha_dict: dict[Any, float],
         method: str = "rk4",
     ) -> torch.Tensor:
         """Compute loss for a single ODE rollout batch.
@@ -363,9 +363,9 @@ class ODETrainer:
         epochs: int = 800,
         batch_size: int = 512,
         val_batch_size: int = 10000,
-        scheduler: Optional[Any] = None,
+        scheduler: Any | None = None,
         method: str = "rk4",
-        alpha_dict: Optional[Dict[Any, float]] = None,
+        alpha_dict: dict[Any, float] | None = None,
     ) -> None:
         """Train the ODE model and persist checkpoints/metrics.
 
@@ -391,13 +391,13 @@ class ODETrainer:
         )
 
         if alpha_dict is None:
-            alpha_dict = {col: 1.0 for col in self.x_cols}
+            alpha_dict = dict.fromkeys(self.x_cols, 1.0)
 
         self.stats_dict = self.train_dataset.stats_dict
 
         losses = []
-        loss_csv_path = os.path.join(self.model_dir, "training_losses.csv")
-        fig_path = os.path.join(self.model_dir, "training_curve.png")
+        loss_csv_path = self.model_dir / "training_losses.csv"
+        fig_path = self.model_dir / "training_curve.png"
 
         for epoch in range(epochs):
             # --- TRAIN LOOP ---
@@ -439,7 +439,8 @@ class ODETrainer:
             )
 
             print(
-                f"Epoch {epoch+1}/{epochs} | train loss: {avg_train_loss:.5f} | val loss: {avg_val_loss:.5f}"
+                f"Epoch {epoch + 1}/{epochs} | "
+                f"train: {avg_train_loss:.5f} | val: {avg_val_loss:.5f}"
             )
 
             # --- SAVE BEST MODEL ---

@@ -1,27 +1,26 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Unit definitions specific to physics utilities."""
 
 import numpy as np
+
+from node_fdm.utils.data.conversions import (
+    AdditionUnitConverter,
+    CategoryMapper,
+    LinearUnitConverter,
+)
 from node_fdm.utils.data.unit import Unit
 from node_fdm.utils.physics.constants import (
     NM,
-    ft,
-    kt,
-    ftmn,
     T_k_c,
-    kgh,
-    gear_set_dict,
     flap_dict,
-    spd_brake_dict,
-    on_ground_dict,
     fma_2_dict,
-)
-
-from node_fdm.utils.data.conversions import (
-    LinearUnitConverter,
-    AdditionUnitConverter,
-    CategoryMapper,
+    ft,
+    ftmn,
+    gear_set_dict,
+    kgh,
+    kt,
+    on_ground_dict,
+    spd_brake_dict,
 )
 
 # Dimensionless units

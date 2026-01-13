@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """MLP building blocks for structured models."""
 
-from typing import Any, Callable, Optional
+from collections.abc import Callable
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -17,7 +17,7 @@ class MLPBlock(nn.Module):
         hidden_dim: int,
         output_dim: int,
         num_layers: int = 1,
-        last_activation: Optional[Callable[[], Any]] = None,
+        last_activation: Callable[[], Any] | None = None,
     ):
         """Initialize the MLP block.
 
@@ -32,7 +32,7 @@ class MLPBlock(nn.Module):
         super().__init__()
         layers = []
         prev_dim = input_dim
-        for i in range(num_layers):
+        for _i in range(num_layers):
             layers.append(nn.Linear(prev_dim, hidden_dim))
             layers.append(nn.ReLU())
             prev_dim = hidden_dim
@@ -61,7 +61,7 @@ class Backbone(MLPBlock):
         input_dim: int,
         hidden_dim: int = 48,
         num_layers: int = 2,
-        last_activation: Optional[Callable[[], Any]] = None,
+        last_activation: Callable[[], Any] | None = None,
     ):
         """Initialize backbone with symmetric hidden dimensions."""
         super().__init__(
@@ -82,7 +82,7 @@ class Head(MLPBlock):
         hidden_dim: int = 24,
         output_dim: int = 1,
         num_layers: int = 1,
-        last_activation: Optional[Callable[[], Any]] = None,
+        last_activation: Callable[[], Any] | None = None,
     ):
         """Initialize head with optional activation and custom sizes."""
         super().__init__(

@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Torch implementations of ISA temperature and pressure calculations."""
 
 from typing import Any
 
 import torch
-from node_fdm.utils.physics.constants import R, p0, T0
+
+from node_fdm.utils.physics.constants import T0, R, p0
 
 
 def isa_pressure_torch(h: Any) -> torch.Tensor:

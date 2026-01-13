@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Engine layer for QAR-based flight dynamics models.
 
 This module defines the EngineLayer responsible for handling engine-related
@@ -7,12 +6,14 @@ signals, including N1 and fuel flow predictions within the structured model
 architecture.
 """
 
-from typing import Any, Dict, Mapping
+from collections.abc import Mapping
+from typing import Any
 
 import torch
+
 from node_fdm.architectures.qar.columns import (
-    col_n1,
     col_ff,
+    col_n1,
 )
 from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 
@@ -32,7 +33,7 @@ class EngineLayer(StructuredLayer):
         super().__init__(*args, **kwargs)
         self.n1_max: int = 100
 
-    def forward(self, x_dict: Mapping[Any, torch.Tensor]) -> Dict[Any, torch.Tensor]:
+    def forward(self, x_dict: Mapping[Any, torch.Tensor]) -> dict[Any, torch.Tensor]:
         """Run a forward pass to produce denormalized engine predictions.
 
         Args:
@@ -49,7 +50,7 @@ class EngineLayer(StructuredLayer):
         fuel_flow_norm = out_norm_dict[col_ff].squeeze(-1)
         fuel_flow_pred = self.denormalizer(fuel_flow_norm, col_ff)
 
-        out_pred_dict = dict()
+        out_pred_dict = {}
         out_pred_dict[col_n1] = self.n1_max * out_norm_dict[col_n1].squeeze(-1)
         out_pred_dict[col_ff] = fuel_flow_pred
 

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Neural flight dynamics model assembled from architecture layers."""
 
-from typing import Any, Dict, Sequence, Tuple
+from collections.abc import Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -16,17 +16,21 @@ class FlightDynamicsModel(nn.Module):
     def __init__(
         self,
         architecture: Sequence[Any],
-        stats_dict: Dict[Any, Dict[str, float]],
-        model_cols: Tuple[Any, Any, Any, Any, Any],
+        stats_dict: dict[Any, dict[str, float]],
+        model_cols: tuple[Any, Any, Any, Any, Any],
         model_params: Sequence[int] = (2, 1, 48),
     ) -> None:
         """Initialize the model with architecture definition and statistics.
 
         Args:
-            architecture: Iterable of layer definitions `(name, class, inputs, outputs, structured_flag)`.
-            stats_dict: Mapping from column to normalization/denormalization statistics.
-            model_cols: Tuple of model column groups (state, control, env, env_extra, derivatives).
-            model_params: Sequence defining backbone depth, head depth, and hidden width.
+            architecture: Iterable of layer definitions
+                `(name, class, inputs, outputs, structured_flag)`.
+            stats_dict: Mapping from column to normalization/
+                denormalization statistics.
+            model_cols: Tuple of model column groups
+                (state, control, env, env_extra, derivatives).
+            model_params: Sequence defining backbone depth, head depth,
+                and hidden width.
         """
         super().__init__()
         self.architecture = architecture
@@ -115,7 +119,7 @@ class FlightDynamicsModel(nn.Module):
         """
 
         vects = torch.cat([x, u_t, e_t], dim=1)
-        vect_dict = dict()
+        vect_dict = {}
         for i, col in enumerate(self.x_cols + self.u_cols + self.e0_cols):
             vect_dict[col] = vects[..., i]
 

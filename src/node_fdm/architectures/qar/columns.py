@@ -1,18 +1,18 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Column definitions and unit mappings for the QAR architecture."""
 
 from torch import nn
+
 from node_fdm.utils.data.column import Column
 from node_fdm.utils.physics.units import (
     boolean,
     degree,
     degree_celsius,
     dimensionless,
-    fma_col_2,
-    flap_conf,
     feet,
     feet_per_minute,
+    flap_conf,
+    fma_col_2,
     gear_up,
     kilogram,
     kilogram_per_hour,

@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Column metadata definition with unit and normalization helpers."""
 
+from collections.abc import Callable
 from dataclasses import dataclass
+from typing import ClassVar
+
 from node_fdm.utils.data.unit import Unit
-from typing import Callable, Optional, ClassVar, List, Dict
 
 
 @dataclass
@@ -28,10 +29,10 @@ class Column:
     unit: Unit
     normalize_mode: str = "normal"
     denormalize_mode: str = "normal_clamp"
-    last_activation_fn: Optional[Callable] = None
+    last_activation_fn: Callable | None = None
     loss_name: str = "mse"
 
-    _instances_dict: ClassVar[Dict[str, "Column"]] = {}
+    _instances_dict: ClassVar[dict[str, "Column"]] = {}
 
     def __post_init__(self) -> None:
         """Register instance and generate display properties."""
@@ -79,7 +80,7 @@ class Column:
         )
 
     @classmethod
-    def get_all(cls) -> List["Column"]:
+    def get_all(cls) -> list["Column"]:
         """Retrieve all registered Column instances.
 
         Returns:

@@ -97,6 +97,10 @@ ignore = ["S101"]  # Allow assert in tests
 [tool.ruff.lint.per-file-ignores]
 "examples/*" = ["T201", "S603", "S607"]
 "scripts/*" = ["T201", "S603", "S607"]
+"src/node_fdm/utils/physics/*" = ["N806"]  # Physics variable naming (T_tropo, etc.)
+"src/node_fdm/data/meteo_and_parameters.py" = ["N806", "N803"]  # Physics naming
+"src/node_fdm/ode_trainer.py" = ["T201"]  # Training progress prints
+"src/node_fdm/data/dataset.py" = ["B905"]  # zip strict not needed for known-equal lists
 
 [tool.ruff.lint.isort]
 known-first-party = ["node_fdm"]

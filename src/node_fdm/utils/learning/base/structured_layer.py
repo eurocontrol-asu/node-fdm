@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Structured layer combining normalization, shared trunk, and per-column heads."""
 
-from typing import Any, Dict, Sequence
+from collections.abc import Sequence
+from typing import Any
 
 import torch
 import torch.nn as nn
+
 from node_fdm.utils.learning.base.blocks import Backbone, Head
-from node_fdm.utils.learning.base.normalizers import InputNormalizer, OutputDenormalizer
 from node_fdm.utils.learning.base.multi_layer_dict import MultiLayerDict
+from node_fdm.utils.learning.base.normalizers import InputNormalizer, OutputDenormalizer
 
 
 class StructuredLayer(nn.Module):
@@ -66,7 +67,7 @@ class StructuredLayer(nn.Module):
         )
 
     def normalize_input(
-        self, x_dict: Dict[Any, torch.Tensor]
+        self, x_dict: dict[Any, torch.Tensor]
     ) -> Sequence[torch.Tensor]:
         """Normalize input tensors according to column stats.
 
@@ -85,8 +86,8 @@ class StructuredLayer(nn.Module):
         return out_list
 
     def denormalize_output(
-        self, out_norm_dict: Dict[Any, torch.Tensor]
-    ) -> Dict[Any, torch.Tensor]:
+        self, out_norm_dict: dict[Any, torch.Tensor]
+    ) -> dict[Any, torch.Tensor]:
         """Denormalize outputs from heads back to physical scale.
 
         Args:
@@ -95,15 +96,15 @@ class StructuredLayer(nn.Module):
         Returns:
             Dictionary of denormalized predictions keyed by column identifiers.
         """
-        out_pred_dict = dict()
+        out_pred_dict = {}
         for col in self.output_cols:
             out_norm = out_norm_dict[col]
             out_pred_dict[col] = self.denormalizer(out_norm.squeeze(-1), col)
         return out_pred_dict
 
     def forward_trunk_head(
-        self, x_dict: Dict[Any, torch.Tensor]
-    ) -> Dict[Any, torch.Tensor]:
+        self, x_dict: dict[Any, torch.Tensor]
+    ) -> dict[Any, torch.Tensor]:
         """Run normalization, trunk, and heads to produce normalized outputs.
 
         Args:
@@ -118,7 +119,7 @@ class StructuredLayer(nn.Module):
         out_norm_dict = self.heads(features)
         return out_norm_dict
 
-    def forward(self, x_dict: Dict[Any, torch.Tensor]) -> Dict[Any, torch.Tensor]:
+    def forward(self, x_dict: dict[Any, torch.Tensor]) -> dict[Any, torch.Tensor]:
         """Compute denormalized predictions from input mapping.
 
         Args:

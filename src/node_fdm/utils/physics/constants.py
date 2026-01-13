@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Physical and environmental constants for aviation calculations."""
 
 # Time constants

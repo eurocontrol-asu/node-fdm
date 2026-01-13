@@ -1,37 +1,35 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Layer configuration and column grouping for the QAR architecture."""
 
-from node_fdm.architectures.qar.trajectory_layer import TrajectoryLayer
-from node_fdm.utils.learning.base.structured_layer import StructuredLayer
-from node_fdm.architectures.qar.engine_layer import EngineLayer
-
 from node_fdm.architectures.qar.columns import (
-    col_dist,
     col_alt,
+    col_alt_diff,
+    col_alt_sel,
+    col_aoa,
+    col_cas,
+    col_cross_wind_spd,
+    col_dist,
+    col_ff,
+    col_flap_setting,
     col_gamma,
+    col_gear_up,
+    col_gs,
+    col_head_wind_spd,
+    col_mach,
+    col_mass,
+    col_n1,
+    col_pitch,
+    col_spd_brake_commanded,
+    col_spd_diff,
+    col_spd_sel,
     col_tas,
     col_temp,
     col_vz,
-    col_mach,
-    col_gs,
-    col_cas,
-    col_alt_diff,
-    col_spd_diff,
-    col_alt_sel,
-    col_spd_sel,
     col_vz_sel,
-    col_mass,
-    col_spd_brake_commanded,
-    col_gear_up,
-    col_flap_setting,
-    col_head_wind_spd,
-    col_cross_wind_spd,
-    col_aoa,
-    col_pitch,
-    col_n1,
-    col_ff,
 )
+from node_fdm.architectures.qar.engine_layer import EngineLayer
+from node_fdm.architectures.qar.trajectory_layer import TrajectoryLayer
+from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 
 X_COLS = [
     col_dist,

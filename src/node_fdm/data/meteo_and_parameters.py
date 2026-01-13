@@ -1,17 +1,14 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Meteorological preprocessing utilities and parameter derivations."""
 
-from typing import Any, Dict, List, Tuple
+from typing import Any
 
-import pandas as pd
 import numpy as np
+import pandas as pd
+from joblib import Parallel, delayed
 from scipy.signal import savgol_filter
 
-
-from joblib import Parallel, delayed
-
-from node_fdm.utils.physics.constants import T0, p0, g, R, gamma_ratio, a0, ftmn, kt
+from node_fdm.utils.physics.constants import T0, R, a0, ftmn, g, gamma_ratio, kt, p0
 
 
 def detect_constant_segments(
@@ -24,7 +21,7 @@ def detect_constant_segments(
     min_abs_value: Any = None,
     smooth_window: Any = None,
     smooth_method: str = "rolling",
-) -> Tuple[List[Dict[str, Any]], np.ndarray]:
+) -> tuple[list[dict[str, Any]], np.ndarray]:
     """Detect segments with quasi-constant values for a given variable.
 
     Args:
@@ -139,9 +136,9 @@ def add_segment_column(f, segments, col_name, fill_value=0.0):
 
 
 def build_spd_and_vert_selected_from_segments(
-    f: pd.DataFrame, config: Dict[str, Any]
+    f: pd.DataFrame, config: dict[str, Any]
 ) -> pd.DataFrame:
-    """Build selected variables (Mach, CAS, vertical_rate, altitude) from detected segments.
+    """Build selected variables (Mach, CAS, vrate, alt) from detected segments.
 
     Args:
         f: Input flight DataFrame.
@@ -194,7 +191,7 @@ def compute_mach_and_cas(
     tas_kt: np.ndarray,
     alt_ft: np.ndarray,
     temp_K: np.ndarray,
-) -> Tuple[np.ndarray, np.ndarray]:
+) -> tuple[np.ndarray, np.ndarray]:
     """Calculate Mach and CAS from TAS [kt], altitude [ft], temperature [K].
 
     Args:
@@ -252,7 +249,7 @@ def crop_on_distance_jump(
     threshold: float = 200,
     min_speed: float = 90,
     upper_threshold: float = 3000,
-) -> Tuple[pd.DataFrame, Any, Any]:
+) -> tuple[pd.DataFrame, Any, Any]:
     """Crop flight data to remove segments with large distance jumps.
 
     Args:
@@ -288,7 +285,7 @@ def process_flight(
     f_id: Any,
     f: pd.DataFrame,
     output_dir_path: Any,
-    selected_param_config: Dict[str, Any],
+    selected_param_config: dict[str, Any],
 ):
     """Process a single flight dataframe and persist if valid.
 
@@ -319,15 +316,14 @@ def process_flight(
             res.to_parquet(path, index=False)
         return f_id, True
 
-    except Exception as e:
-        print(f"❌ Error for flight {f_id}: {e}")
+    except Exception:
         return f_id, False
 
 
 def save_all_flights(
     df: pd.DataFrame,
     output_dir_path: Any,
-    selected_param_config: Dict[str, Any],
+    selected_param_config: dict[str, Any],
     n_jobs: int = 8,
 ):
     """Process all flights in a DataFrame in parallel.
@@ -403,9 +399,9 @@ def process_files(
     arco_grid: Any,
     file_path: Any,
     output_dir_path: Any,
-    selected_param_config: Dict[str, Any],
+    selected_param_config: dict[str, Any],
 ):
-    """Process a parquet file through interpolation, TAS/CAS computation, and per-flight export.
+    """Process parquet file through interpolation and TAS/CAS computation.
 
     Args:
         arco_grid: Interpolator object providing `interpolate` method.
@@ -435,6 +431,4 @@ def process_files(
     df["Mach"], df["CAS"] = compute_mach_and_cas(
         df["TAS"], df["altitude"], df["temperature"]
     )
-    results = save_all_flights(df, output_dir_path, selected_param_config, n_jobs=20)
-    print("✅ Done.")
-    print(pd.DataFrame(results, columns=["flight_id", "success"]))
+    save_all_flights(df, output_dir_path, selected_param_config, n_jobs=20)

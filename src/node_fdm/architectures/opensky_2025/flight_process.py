@@ -1,17 +1,16 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Pre-processing utilities for OpenSky 2025 flight data."""
 
 import pandas as pd
 
 from node_fdm.architectures.opensky_2025.columns import (
+    col_alt,
     col_alt_diff,
     col_alt_sel,
-    col_vz_sel,
-    col_mach_sel,
     col_cas_sel,
-    col_alt,
     col_dist,
+    col_mach_sel,
+    col_vz_sel,
 )
 
 LOW_THR = 200  # meters

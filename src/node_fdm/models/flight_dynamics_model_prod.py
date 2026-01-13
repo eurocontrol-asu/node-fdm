@@ -1,14 +1,15 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Production-ready flight dynamics model loader and evaluator."""
 
-from typing import Any, Sequence
+from collections.abc import Sequence
+from pathlib import Path
+from typing import Any
 
-import os
 import torch
 import torch.nn as nn
-from node_fdm.utils.learning.base.structured_layer import StructuredLayer
+
 from node_fdm.architectures.mapping import get_architecture_params_from_meta
+from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 
 
 class FlightDynamicsModelProd(nn.Module):
@@ -21,7 +22,8 @@ class FlightDynamicsModelProd(nn.Module):
         """Initialize and load pretrained layers from a model directory.
 
         Args:
-            model_path: Path-like pointing to the directory containing checkpoints and meta.json.
+            model_path: Path-like pointing to the directory containing
+                checkpoints and meta.json.
         """
         super().__init__()
         self.model_path = model_path
@@ -60,8 +62,8 @@ class FlightDynamicsModelProd(nn.Module):
         Returns:
             Loaded checkpoint dictionary.
         """
-        path = os.path.join(self.model_path, f"{layer_name}.pt")
-        checkpoint = torch.load(path, map_location=self.device)
+        path = Path(self.model_path) / f"{layer_name}.pt"
+        checkpoint = torch.load(path, map_location=self.device, weights_only=True)
         return checkpoint
 
     def create_structured_layer(

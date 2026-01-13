@@ -1,45 +1,43 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Pre-processing utilities for QAR flight data, including smoothing and filtering."""
 
-from typing import Any, Callable, Sequence, Union
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
-
 from scipy.signal import butter, filtfilt
 
-from node_fdm.utils.data.column import Column
-from node_fdm.utils.physics.constants import (
-    gamma_ratio,
-    R,
-)
-
 from node_fdm.architectures.qar.columns import (
-    col_alt_diff,
-    col_spd_diff,
-    col_alt_sel,
-    col_spd_sel,
-    col_cas,
     col_alt,
-    col_gs,
-    col_mach,
-    col_temp,
-    col_tas,
-    col_gamma,
-    col_on_ground,
-    col_n1_left,
-    col_n1_right,
+    col_alt_diff,
+    col_alt_sel,
+    col_cas,
+    col_dist_to_thr,
+    col_ff,
     col_ff_left,
     col_ff_right,
-    col_reduce_engine,
-    col_ff,
-    col_n1,
-    col_vz_sel,
-    col_runway_elev,
     col_fma_2,
-    col_dist_to_thr,
+    col_gamma,
+    col_gs,
+    col_mach,
     col_mass,
+    col_n1,
+    col_n1_left,
+    col_n1_right,
+    col_on_ground,
+    col_reduce_engine,
+    col_runway_elev,
+    col_spd_diff,
+    col_spd_sel,
+    col_tas,
+    col_temp,
+    col_vz_sel,
+)
+from node_fdm.utils.data.column import Column
+from node_fdm.utils.physics.constants import (
+    R,
+    gamma_ratio,
 )
 
 
@@ -48,7 +46,8 @@ def mode_stabilize(series: pd.Series, min_duration: int = 10) -> pd.Series:
 
     Args:
         series: Input categorical series to smooth.
-        min_duration: Minimum consecutive occurrences required before accepting a new mode.
+        min_duration: Minimum consecutive occurrences required before
+            accepting a new mode.
 
     Returns:
         Series with transient changes suppressed.
@@ -70,7 +69,7 @@ def mode_stabilize(series: pd.Series, min_duration: int = 10) -> pd.Series:
 
 
 def one_reduce_eng_value(col_left: Column, col_right: Column) -> Callable[[Any], Any]:
-    """Return a reducer that averages symmetric engine values unless an engine is flagged.
+    """Return a reducer averaging symmetric engine values unless flagged.
 
     Args:
         col_left: Column identifier for the left engine metric.
@@ -135,7 +134,7 @@ def engine_process(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def smooth_strong(
-    x: Union[pd.Series, Sequence[float], np.ndarray],
+    x: pd.Series | Sequence[float] | np.ndarray,
     window_size: int = 100,
 ) -> np.ndarray:
     """Apply a strong moving-average smoothing window to a sequence.
@@ -160,7 +159,7 @@ def smooth_strong(
 
 
 def filter_noise(
-    df_col: Union[pd.Series, Sequence[float], np.ndarray],
+    df_col: pd.Series | Sequence[float] | np.ndarray,
     fs: float = 1.0,
     cutoff: float = 0.04,
     order: int = 4,

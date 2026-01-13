@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Loss factory helpers for model training."""
 
 from typing import Any

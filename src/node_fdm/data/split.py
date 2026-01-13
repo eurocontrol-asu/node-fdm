@@ -1,11 +1,11 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Dataset splitting utilities based on ICAO file counts."""
 
 import os
 import random
-import pandas as pd
 from pathlib import Path
+
+import pandas as pd
 
 
 def split_by_icao_counts(
@@ -75,10 +75,6 @@ def split_by_icao_counts(
     df["aircraft_type"] = output_dir_path.name
     df["filepath"] = df["file"].apply(lambda f: str(output_dir_path / f))
 
-    print(
-        f"{output_dir_path.name}: test={len(df[df.split=='test'])}, val={len(df[df.split=='val'])}, train={len(df[df.split=='train'])}"
-    )
-
     return df[["filepath", "aircraft_type", "split"]]
 
 
@@ -105,6 +101,4 @@ def make_global_split_csv(output_dir_path: Path) -> pd.DataFrame:
     csv_path = output_dir_path / "dataset_split.csv"
     final_df.to_csv(csv_path, index=False)
 
-    print(f"\n✅ Split summary saved to: {csv_path}")
-    print(final_df["split"].value_counts())
     return final_df

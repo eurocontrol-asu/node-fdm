@@ -1,30 +1,27 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Layer configuration and column grouping for the OpenSky 2025 architecture."""
 
-from node_fdm.architectures.opensky_2025.trajectory_layer import TrajectoryLayer
-from node_fdm.utils.learning.base.structured_layer import StructuredLayer
-
 from node_fdm.architectures.opensky_2025.columns import (
-    col_dist,
-    col_alt,
-    col_gamma,
-    col_tas,
-    col_long_wind_spd,
     col_adep_dist,
     col_ades_dist,
-    col_temp,
-    col_vz,
-    col_mach,
-    col_gs,
-    col_cas,
+    col_alt,
     col_alt_diff,
     col_alt_sel,
-    col_mach_sel,
+    col_cas,
     col_cas_sel,
+    col_dist,
+    col_gamma,
+    col_gs,
+    col_long_wind_spd,
+    col_mach,
+    col_mach_sel,
+    col_tas,
+    col_temp,
+    col_vz,
     col_vz_sel,
 )
-
+from node_fdm.architectures.opensky_2025.trajectory_layer import TrajectoryLayer
+from node_fdm.utils.learning.base.structured_layer import StructuredLayer
 
 X_COLS = [
     col_dist,

@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Dataset utilities for loading and segmenting flight data sequences."""
 
-from typing import Any, Callable, List, Optional, Sequence, Tuple
+from collections.abc import Callable, Sequence
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -20,21 +20,22 @@ class SeqDataset(Dataset):
     def __init__(
         self,
         flights_path_list: Sequence[str],
-        model_cols: Tuple[Any, Any, Any, Any, Any],
+        model_cols: tuple[Any, Any, Any, Any, Any],
         seq_len: int = 60,
         shift: int = 60,
         n_jobs: int = 35,
         load_parallel: bool = True,
-        custom_fn: Tuple[
-            Optional[Callable[[pd.DataFrame], pd.DataFrame]],
-            Optional[Callable[..., bool]],
+        custom_fn: tuple[
+            Callable[[pd.DataFrame], pd.DataFrame] | None,
+            Callable[..., bool] | None,
         ] = (None, None),
     ) -> None:
         """Initialize the dataset with flight paths and model column definitions.
 
         Args:
             flights_path_list: Iterable of flight parquet file paths.
-            model_cols: Tuple containing model column groups (state, control, env, etc.).
+            model_cols: Tuple containing model column groups
+                (state, control, env, etc.).
             seq_len: Sequence length to extract from each flight.
             shift: Step size when sliding the sequence window.
             n_jobs: Number of parallel workers to use when loading flights.
@@ -59,7 +60,8 @@ class SeqDataset(Dataset):
     def init_flight_date(self) -> None:
         """Load all flights, build sequence cache, and compute aggregate statistics.
 
-        Populates internal sequence list and per-column statistics used for normalization.
+        Populates internal sequence list and per-column statistics
+        used for normalization.
         """
         if self.load_parallel:
             results = Parallel(n_jobs=self.n_jobs)(
@@ -90,7 +92,7 @@ class SeqDataset(Dataset):
             self.x_cols + self.u_cols + self.e0_cols + self.e_cols + self.deriv_cols
         )
 
-        self.stats_dict = dict()
+        self.stats_dict = {}
 
         for i, col in enumerate(all_cols):
             vals = all_data[:, i].astype(float)
@@ -102,25 +104,26 @@ class SeqDataset(Dataset):
 
     def process_one_flight(
         self, flight_path: str
-    ) -> List[Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
+    ) -> list[tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]]:
         """Process a single flight file into clean, nan-free sequences.
 
         Args:
             flight_path: Path to a flight parquet file.
 
         Returns:
-            List of tuples containing state, control, environment, and derivative arrays.
+            List of tuples containing state, control, environment,
+            and derivative arrays.
         """
         f = self.read_flight(flight_path)
         seqs = []
-        N = len(f)
-        if N > self.seq_len:
+        n_rows = len(f)
+        if n_rows > self.seq_len:
             x_seq = f[self.x_cols].values.astype(np.float32)
             u_seq = f[self.u_cols].values.astype(np.float32)
             e_seq = f[self.e0_cols + self.e_cols].values.astype(np.float32)
             dx_seq = f[self.deriv_cols].values.astype(np.float32)
 
-            for start in range(0, N - self.seq_len + 1, self.shift):
+            for start in range(0, n_rows - self.seq_len + 1, self.shift):
                 custom_segment_filtering_bool = True
                 if self.custom_segment_filtering_fn is not None:
                     custom_segment_filtering_bool = self.custom_segment_filtering_fn(
@@ -153,7 +156,7 @@ class SeqDataset(Dataset):
 
     def __getitem__(
         self, idx: int
-    ) -> Tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
         """Return tensors for a specific sequence index.
 
         Args:
@@ -184,14 +187,15 @@ class SeqDataset(Dataset):
 
     def get_full_flight(
         self, flight_idx: int
-    ) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
+    ) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, pd.DataFrame]:
         """Return full arrays for a specific flight index.
 
         Args:
             flight_idx: Index of the flight in the provided flight list.
 
         Returns:
-            Tuple of state, control, environment, derivative arrays, and the full DataFrame.
+            Tuple of state, control, environment, derivative arrays,
+            and the full DataFrame.
         """
         flight_path = self.flights_path_list[flight_idx]
         f = self.read_flight(flight_path)

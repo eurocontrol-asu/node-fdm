@@ -1,8 +1,7 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Normalization and denormalization helpers for model inputs/outputs."""
 
-from typing import Any, Dict
+from typing import Any
 
 import torch
 import torch.nn as nn
@@ -11,7 +10,7 @@ import torch.nn as nn
 class InputNormalizer(nn.Module):
     """Normalize inputs based on provided mean/std statistics."""
 
-    def __init__(self, mean_dict: Dict[Any, Any], std_dict: Dict[Any, Any]):
+    def __init__(self, mean_dict: dict[Any, Any], std_dict: dict[Any, Any]):
         """Register mean and std buffers for each column key."""
         super().__init__()
         for k in mean_dict:
@@ -45,9 +44,9 @@ class OutputDenormalizer(nn.Module):
 
     def __init__(
         self,
-        mean_dict: Dict[Any, Any],
-        std_dict: Dict[Any, Any],
-        max_dict: Dict[Any, Any],
+        mean_dict: dict[Any, Any],
+        std_dict: dict[Any, Any],
+        max_dict: dict[Any, Any],
         max_ratio: float = 1.2,
     ):
         """Register normalization statistics and max scaling per column."""

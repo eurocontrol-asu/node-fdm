@@ -1,13 +1,12 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Helpers to dynamically load and assemble architecture components."""
 
-import json
 import importlib
-from typing import Any, Dict, Tuple
+import json
+from typing import Any
 
 
-def get_architecture_module(name: str) -> Dict[str, Any]:
+def get_architecture_module(name: str) -> dict[str, Any]:
     """Dynamically import only the architecture requested.
 
     Args:
@@ -40,7 +39,7 @@ def get_architecture_module(name: str) -> Dict[str, Any]:
     }
 
 
-def get_architecture_from_name(architecture_name: str) -> Tuple[Any, Any, Any]:
+def get_architecture_from_name(architecture_name: str) -> tuple[Any, Any, Any]:
     """Return architecture definition, model columns, and custom functions by name.
 
     Args:
@@ -58,16 +57,17 @@ def get_architecture_from_name(architecture_name: str) -> Tuple[Any, Any, Any]:
 
 def get_architecture_params_from_meta(
     meta_path: str,
-) -> Tuple[Any, Any, Any, Dict[Any, Any]]:
+) -> tuple[Any, Any, Any, dict[Any, Any]]:
     """Load architecture parameters and stats from a meta JSON file.
 
     Args:
         meta_path: Path to the meta JSON file.
 
     Returns:
-        Tuple containing architecture, model columns, model parameters, and stats dictionary.
+        Tuple containing architecture, model columns, model parameters,
+        and stats dictionary.
     """
-    with open(meta_path, "r") as f:
+    with open(meta_path) as f:
         meta = json.load(f)
 
     architecture, model_cols, _ = get_architecture_from_name(meta["architecture_name"])

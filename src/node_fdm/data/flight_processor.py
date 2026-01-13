@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Flight preprocessing pipeline for converting raw data into model-ready columns."""
 
-from typing import Any, Callable, Optional, Tuple
+from collections.abc import Callable
+from typing import Any
 
 from node_fdm.utils.data.column import Column
 from node_fdm.utils.data.dataframe_wrapper import DataFrameWrapper
@@ -13,14 +13,15 @@ class FlightProcessor:
 
     def __init__(
         self,
-        model_cols: Tuple[Any, Any, Any, Any, Any],
-        custom_processing_fn: Optional[Callable[[Any], Any]] = None,
+        model_cols: tuple[Any, Any, Any, Any, Any],
+        custom_processing_fn: Callable[[Any], Any] | None = None,
     ) -> None:
         """Initialize the processor with model column configuration and hooks.
 
         Args:
             model_cols: Tuple of model column groups (state, control, env, etc.).
-            custom_processing_fn: Optional callable applied after base processing; uses Any for flexibility with DataFrame-like inputs.
+            custom_processing_fn: Optional callable applied after base
+                processing; uses Any for flexibility with DataFrame-like inputs.
         """
         (
             self.x_cols,
@@ -37,7 +38,8 @@ class FlightProcessor:
         """Run the main flight preprocessing pipeline.
 
         Args:
-            df: DataFrame-like object containing raw flight data. Uses Any for flexibility across wrappers.
+            df: DataFrame-like object containing raw flight data.
+                Uses Any for flexibility across wrappers.
 
         Returns:
             Processed DataFrameWrapper filtered to model-relevant columns.

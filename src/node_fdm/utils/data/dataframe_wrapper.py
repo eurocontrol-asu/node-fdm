@@ -1,10 +1,10 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Light wrapper around pandas DataFrame adding Column-aware accessors."""
 
-from typing import Any, List, Union
+from typing import Any
 
 import pandas as pd
+
 from node_fdm.utils.data.column import Column
 
 
@@ -51,14 +51,15 @@ class DataFrameWrapper:
         """Store the underlying pandas DataFrame."""
         self._df = df
 
-    def __getitem__(self, key: Union[str, Column, List[Union[str, Column]], pd.Series]):
+    def __getitem__(self, key: str | Column | list[str | Column] | pd.Series):
         """Enhanced getter supporting Column objects and boolean masks.
 
         Args:
             key: Column name, Column instance, list of columns, or boolean mask.
 
         Returns:
-            DataFrameWrapper for multi-column selection, Series for single-column selection, or filtered wrapper for masks.
+            DataFrameWrapper for multi-column selection, Series for
+            single-column selection, or filtered wrapper for masks.
         """
         if isinstance(key, pd.Series) and key.dtype == bool:
             filtered_df = self._df[key]
@@ -91,9 +92,7 @@ class DataFrameWrapper:
 
         raise TypeError(f"Unsupported key type: {type(key)}")
 
-    def __setitem__(
-        self, key: Union[str, Column, List[Union[str, Column]]], value
-    ) -> None:
+    def __setitem__(self, key: str | Column | list[str | Column], value) -> None:
         """Assign values using Column-aware keys."""
         if isinstance(key, list):
             col_names = []
@@ -108,16 +107,15 @@ class DataFrameWrapper:
 
             if hasattr(value, "__getitem__"):
                 for i, col in enumerate(col_names):
-                    if isinstance(value, (list, tuple)):
+                    if isinstance(value, list | tuple):
                         self._df[col] = value[i]
                     elif col in value:
                         self._df[col] = value[col]
                     else:
                         self._df[col] = value
             else:
-                raise TypeError(
-                    "Value must be indexable (list, tuple, dict, DataFrame) when key is a list"
-                )
+                msg = "Value must be indexable (list, tuple, dict, DataFrame)"
+                raise TypeError(msg)
 
         elif isinstance(key, Column):
             self._df[key.col_name] = value

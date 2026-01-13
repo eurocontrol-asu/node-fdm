@@ -1,19 +1,17 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Column definitions and unit mappings for the OpenSky 2025 architecture."""
 
 from node_fdm.utils.data.column import Column
-
 from node_fdm.utils.physics.units import (
-    nautical_miles,
-    knot,
-    feet,
-    meter,
-    dimensionless,
     degree,
-    rad,
+    dimensionless,
+    feet,
     feet_per_minute,
     kelvin,
+    knot,
+    meter,
+    nautical_miles,
+    rad,
 )
 
 col_dist = Column("distance", "dist", "distance_along_track_m", meter)

@@ -1,5 +1,4 @@
 #!/usr/bin/env python3
-# -*- coding: utf-8 -*-
 """Batch-compatible Neural ODE wrapper that interpolates inputs over time."""
 
 from typing import Any
