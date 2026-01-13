@@ -24,7 +24,7 @@ class MultiLayerDict(nn.Module):
         col_dict = {col.col_name: layer_factory(col) for col in self.output_cols}
         self.layer_dict = nn.ModuleDict(col_dict)
 
-    def forward(self, x: Any) -> dict:
+    def forward(self, x: Any) -> dict[Any, Any]:
         """Apply each sub-layer and return outputs keyed by column objects.
 
         Args:

@@ -30,7 +30,7 @@ class MLPBlock(nn.Module):
         """
 
         super().__init__()
-        layers = []
+        layers: list[nn.Module] = []
         prev_dim = input_dim
         for _i in range(num_layers):
             layers.append(nn.Linear(prev_dim, hidden_dim))
@@ -50,7 +50,8 @@ class MLPBlock(nn.Module):
         Returns:
             Tensor output of the MLP.
         """
-        return self.net(x)
+        result: torch.Tensor = self.net(x)
+        return result
 
 
 class Backbone(MLPBlock):

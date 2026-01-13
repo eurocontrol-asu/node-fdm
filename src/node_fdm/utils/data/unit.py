@@ -3,7 +3,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Any, Optional
+from typing import Any
 
 from node_fdm.utils.data.conversions import (
     correct_float,
@@ -26,11 +26,11 @@ class Unit:
     """
 
     name: str
-    abbr: str
+    abbr: str | None
     value_type: str = "float"
-    si_unit: Optional["Unit"] = None
-    derivative: Optional["Unit"] = None
-    modifier: Callable = identity
+    si_unit: "Unit | None" = None
+    derivative: "Unit | None" = None
+    modifier: Callable[..., Any] = identity
 
     def convert(self, value: Any) -> Any:
         """Convert a value in this unit to the corresponding SI unit value.
@@ -41,6 +41,7 @@ class Unit:
         Returns:
             Converted value in SI units.
         """
+        correction: Callable[..., Any]
         if self.value_type == "float":
             correction = correct_float
         elif self.value_type == "str":
@@ -51,7 +52,7 @@ class Unit:
         return self.modifier(corrected_value)
 
     @property
-    def si_abbr(self) -> str:
+    def si_abbr(self) -> str | None:
         """Return the abbreviation of the SI unit if defined, else own abbreviation.
 
         Returns:
@@ -62,7 +63,7 @@ class Unit:
         return self.abbr
 
     @property
-    def deriv_unit(self) -> Optional["Unit"]:
+    def deriv_unit(self) -> "Unit | None":
         """Return the derivative unit if defined.
 
         Returns:

@@ -14,7 +14,7 @@ from tqdm import tqdm
 from node_fdm.data.flight_processor import FlightProcessor
 
 
-class SeqDataset(Dataset):
+class SeqDataset(Dataset[dict[str, torch.Tensor]]):
     """Sequence dataset that loads flight segments for model training."""
 
     def __init__(
@@ -154,9 +154,7 @@ class SeqDataset(Dataset):
         """
         return len(self.sequences)
 
-    def __getitem__(
-        self, idx: int
-    ) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
+    def __getitem__(self, idx: int) -> dict[str, torch.Tensor]:
         """Return tensors for a specific sequence index.
 
         Args:

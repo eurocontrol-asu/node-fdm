@@ -51,12 +51,12 @@ class FlightDynamicsModel(nn.Module):
             else:
                 self.layers_dict[name] = layer_class()
 
-    def reset_history(self):
+    def reset_history(self) -> None:
         """Reset internal history buffers.
 
         Clears stored layer outputs used for debugging or analysis between runs.
         """
-        self.history = {}
+        self.history: dict[str, Any] = {}
 
     def create_structured_layer(
         self,
@@ -102,7 +102,7 @@ class FlightDynamicsModel(nn.Module):
             head_depth=self.head_depth,
         )
 
-        return layer
+        return layer  # type: ignore[no-any-return]
 
     def forward(
         self, x: torch.Tensor, u_t: torch.Tensor, e_t: torch.Tensor

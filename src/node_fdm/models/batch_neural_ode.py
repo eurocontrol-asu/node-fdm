@@ -27,7 +27,8 @@ class BatchNeuralODE(nn.Module):
         """
         super().__init__()
         self.model = model
-        self.model.reset_history()
+        if hasattr(self.model, "reset_history"):
+            self.model.reset_history()  # type: ignore[operator]
         self.u_seq = u_seq
         self.e_seq = e_seq
         self.t_grid = t_grid
@@ -42,15 +43,16 @@ class BatchNeuralODE(nn.Module):
         Returns:
             Model output of the wrapped dynamics at time `t`.
         """
-        t = t.item()
-        idx = torch.searchsorted(
-            self.t_grid, torch.tensor(t, device=self.t_grid.device)
-        ).item()
+        t_val = float(t.item())
+        idx_tensor = torch.searchsorted(
+            self.t_grid, torch.tensor(t_val, device=self.t_grid.device)
+        )
+        idx = int(idx_tensor.item())
         idx0 = max(0, idx - 1)
         idx1 = min(idx, self.t_grid.shape[0] - 1)
 
-        t0, t1 = self.t_grid[idx0].item(), self.t_grid[idx1].item()
-        alpha = 0 if t1 == t0 else (t - t0) / (t1 - t0)
+        t0, t1 = float(self.t_grid[idx0].item()), float(self.t_grid[idx1].item())
+        alpha = 0.0 if t1 == t0 else (t_val - t0) / (t1 - t0)
 
         u0, u1 = self.u_seq[:, idx0, :], self.u_seq[:, idx1, :]
         e0, e1 = self.e_seq[:, idx0, :], self.e_seq[:, idx1, :]

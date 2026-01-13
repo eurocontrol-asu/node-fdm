@@ -3,7 +3,7 @@
 
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import ClassVar
+from typing import Any, ClassVar
 
 from node_fdm.utils.data.unit import Unit
 
@@ -25,11 +25,11 @@ class Column:
 
     gold_name: str
     alias: str
-    raw_name: str
-    unit: Unit
-    normalize_mode: str = "normal"
-    denormalize_mode: str = "normal_clamp"
-    last_activation_fn: Callable | None = None
+    raw_name: str | None
+    unit: Unit | None
+    normalize_mode: str | None = "normal"
+    denormalize_mode: str | None = "normal_clamp"
+    last_activation_fn: Callable[..., Any] | None = None
     loss_name: str = "mse"
 
     _instances_dict: ClassVar[dict[str, "Column"]] = {}
@@ -38,7 +38,7 @@ class Column:
         """Register instance and generate display properties."""
         self._instances_dict[self.alias] = self
 
-        abbr = self.unit.si_abbr
+        abbr = self.unit.si_abbr if self.unit else None
         display_list = [word.capitalize() for word in self.gold_name.split(" ")]
         col_list = [self.alias]
 
@@ -61,7 +61,7 @@ class Column:
         return self.gold_name
 
     @property
-    def raw(self) -> str:
+    def raw(self) -> str | None:
         """Return the raw/original name of the column."""
         return self.raw_name
 
@@ -76,7 +76,7 @@ class Column:
             gold_name=f"derivative_{self.gold_name}",
             alias=f"deriv_{self.alias}",
             raw_name=None,
-            unit=self.unit.deriv_unit,
+            unit=self.unit.deriv_unit if self.unit else None,
         )
 
     @classmethod
@@ -88,11 +88,11 @@ class Column:
         """
         return list(cls._instances_dict.values())
 
-    def __hash__(self):
+    def __hash__(self) -> int:
         """Hash by column name for dict/set usage."""
         return hash(self.col_name)
 
-    def __eq__(self, other):
+    def __eq__(self, other: object) -> bool:
         """Compare columns by canonical column name."""
         if not isinstance(other, Column):
             return False

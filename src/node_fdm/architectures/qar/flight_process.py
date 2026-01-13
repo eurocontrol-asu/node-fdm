@@ -177,7 +177,7 @@ def filter_noise(
     """
 
     b, a = butter(order, cutoff / (fs / 2), btype="low")
-    signal_filtre = filtfilt(b, a, df_col)
+    signal_filtre: np.ndarray[Any, np.dtype[Any]] = filtfilt(b, a, df_col)
     return signal_filtre
 
 

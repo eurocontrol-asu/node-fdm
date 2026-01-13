@@ -112,7 +112,7 @@ class FlightDynamicsModelProd(nn.Module):
 
         return layer
 
-    def forward(self, vect_dict: dict) -> dict:
+    def forward(self, vect_dict: dict[Any, Any]) -> dict[Any, Any]:
         """Run a forward pass through all layers.
 
         Args:

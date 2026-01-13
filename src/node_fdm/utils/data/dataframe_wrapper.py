@@ -11,27 +11,27 @@ from node_fdm.utils.data.column import Column
 class IlocIndexer:
     """Custom iloc indexer returning wrapped DataFrames."""
 
-    def __init__(self, parent):
+    def __init__(self, parent: "DataFrameWrapper") -> None:
         """Store reference to parent wrapper."""
-        self.parent = parent  # instance de DataFrameWrapper
+        self.parent = parent
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: Any) -> "DataFrameWrapper | pd.Series[Any] | Any":
         """Retrieve by integer-location indexing; wrap DataFrame results."""
         result = self.parent._df.iloc[key]
         if isinstance(result, pd.DataFrame):
             return DataFrameWrapper(result)
         else:
-            return result  # Série ou autre, on retourne brut
+            return result
 
 
 class LocIndexer:
     """Custom loc indexer returning wrapped DataFrames."""
 
-    def __init__(self, parent):
+    def __init__(self, parent: "DataFrameWrapper") -> None:
         """Store reference to parent wrapper."""
-        self.parent = parent  # instance de DataFrameWrapper
+        self.parent = parent
 
-    def __getitem__(self, key):
+    def __getitem__(self, key: Any) -> "DataFrameWrapper | pd.Series[Any] | Any":
         """Retrieve by label-based indexing; wrap DataFrame results."""
         result = self.parent._df.loc[key]
         if isinstance(result, pd.DataFrame):
@@ -39,7 +39,7 @@ class LocIndexer:
         else:
             return result
 
-    def __setitem__(self, key, value):
+    def __setitem__(self, key: Any, value: Any) -> None:
         """Assign by label-based indexing."""
         self.parent._df.loc[key] = value
 
@@ -51,7 +51,9 @@ class DataFrameWrapper:
         """Store the underlying pandas DataFrame."""
         self._df = df
 
-    def __getitem__(self, key: str | Column | list[str | Column] | pd.Series):
+    def __getitem__(
+        self, key: str | Column | list[str | Column] | pd.Series[Any]
+    ) -> "DataFrameWrapper | pd.Series[Any]":
         """Enhanced getter supporting Column objects and boolean masks.
 
         Args:
@@ -92,7 +94,7 @@ class DataFrameWrapper:
 
         raise TypeError(f"Unsupported key type: {type(key)}")
 
-    def __setitem__(self, key: str | Column | list[str | Column], value) -> None:
+    def __setitem__(self, key: str | Column | list[str | Column], value: Any) -> None:
         """Assign values using Column-aware keys."""
         if isinstance(key, list):
             col_names = []
@@ -126,7 +128,7 @@ class DataFrameWrapper:
         else:
             raise TypeError(f"Unsupported key type: {type(key)}")
 
-    def __getattr__(self, attr) -> Any:
+    def __getattr__(self, attr: str) -> Any:
         """Delegate missing attributes to the underlying pandas DataFrame."""
         return getattr(self._df, attr)
 
@@ -134,22 +136,22 @@ class DataFrameWrapper:
         """Return number of rows."""
         return len(self._df)
 
-    def bfill(self, *args, **kwargs) -> "DataFrameWrapper":
+    def bfill(self, *args: Any, **kwargs: Any) -> "DataFrameWrapper":
         """Return a backfilled DataFrameWrapper."""
         df_bfilled = self._df.bfill(*args, **kwargs)
         return DataFrameWrapper(df_bfilled)
 
-    def ffill(self, *args, **kwargs) -> "DataFrameWrapper":
+    def ffill(self, *args: Any, **kwargs: Any) -> "DataFrameWrapper":
         """Return a forward-filled DataFrameWrapper."""
         df_ffilled = self._df.ffill(*args, **kwargs)
         return DataFrameWrapper(df_ffilled)
 
     @property
-    def iloc(self):
+    def iloc(self) -> IlocIndexer:
         """Expose integer-location based indexer."""
         return IlocIndexer(self)
 
     @property
-    def loc(self):
+    def loc(self) -> LocIndexer:
         """Expose label-based indexer."""
         return LocIndexer(self)

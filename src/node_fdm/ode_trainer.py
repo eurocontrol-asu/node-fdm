@@ -247,7 +247,7 @@ class ODETrainer:
             alpha_dict[col] if col in alpha_dict.keys() else 0.0 for col in col_list
         ]
 
-        vects = torch.cat(vect_list, dim=2)
+        vects = torch.cat(list(vect_list), dim=2)
         vects_dict = {
             col: coeff * modifier(vects[..., i], col).unsqueeze(-1)
             for i, (col, coeff) in enumerate(zip(col_list, coeff_list, strict=False))
@@ -353,10 +353,10 @@ class ODETrainer:
                 res = loss_fn(pred_vect[..., i], true_vect[..., i])
                 loss += res
 
-        if torch.isnan(loss) or torch.isinf(loss):
+        if torch.is_tensor(loss) and (torch.isnan(loss) or torch.isinf(loss)):
             print("NaN or Inf in loss!")
 
-        return loss
+        return loss if torch.is_tensor(loss) else torch.tensor(loss)
 
     def train(
         self,
@@ -402,13 +402,14 @@ class ODETrainer:
         for epoch in range(epochs):
             # --- TRAIN LOOP ---
             self.model.train()
-            total_loss, total_batches = 0, 0
+            total_loss: float = 0.0
+            total_batches = 0
             for batch in self.train_loader:
                 loss = self.compute_loss_ode_step(
                     batch, alpha_dict=alpha_dict, method=method
                 )
                 self.optimizer.zero_grad()
-                loss.backward()
+                loss.backward()  # type: ignore[no-untyped-call]
                 torch.nn.utils.clip_grad_norm_(self.model.parameters(), max_norm=1.0)
                 self.optimizer.step()
                 total_loss += loss.item()
@@ -417,7 +418,8 @@ class ODETrainer:
 
             # --- VALIDATION LOOP ---
             self.model.eval()
-            val_loss, val_batches = 0, 0
+            val_loss: float = 0.0
+            val_batches = 0
             with torch.no_grad():
                 for batch in self.val_loader:
                     loss = self.compute_loss_ode_step(

@@ -95,7 +95,8 @@ class CategoryMapper:
             NumPy array of mapped codes (``np.nan`` for unknown labels).
         """
         vectorized = np.vectorize(self._map, otypes=[float])
-        return vectorized(array_like)
+        result: np.ndarray[Any, np.dtype[Any]] = vectorized(array_like)
+        return result
 
     def inverse(self, array_like: Any) -> np.ndarray:
         """Map category codes back to original labels.
@@ -106,7 +107,8 @@ class CategoryMapper:
         Returns:
             NumPy array of original labels.
         """
-        return self.inv_vectorized(array_like)
+        result: np.ndarray[Any, np.dtype[Any]] = self.inv_vectorized(array_like)
+        return result
 
 
 def identity(value: Any) -> Any:

@@ -42,15 +42,16 @@ class TrajectoryLayer(nn.Module):
         Returns:
             Dictionary of derived tensors keyed by their column identifiers.
         """
-        output_dict = {}
-        for col in x.keys():
-            x[col] = torch.nan_to_num(x[col], nan=0.0, posinf=1e8, neginf=-1e8)
-            x[col] = torch.clamp(x[col], min=-1e8, max=1e8)
+        output_dict: dict[Any, torch.Tensor] = {}
+        _x = {k: v.clone() for k, v in x.items()}
+        for col in _x.keys():
+            _x[col] = torch.nan_to_num(_x[col], nan=0.0, posinf=1e8, neginf=-1e8)
+            _x[col] = torch.clamp(_x[col], min=-1e8, max=1e8)
 
-        tas = x[col_tas]
-        gamma = x[col_gamma]
-        head_wind = x[col_head_wind_spd]
-        alt = x[col_alt]
+        tas = _x[col_tas]
+        gamma = _x[col_gamma]
+        head_wind = _x[col_head_wind_spd]
+        alt = _x[col_alt]
 
         output_dict[col_vz] = tas * torch.sin(gamma)
 

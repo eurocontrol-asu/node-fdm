@@ -2,6 +2,7 @@
 """Prediction helper to roll out flight trajectories with trained models."""
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import pandas as pd
@@ -15,7 +16,7 @@ class NodeFDMPredictor:
 
     def __init__(
         self,
-        model_cols: list,
+        model_cols: list[Any],
         model_path: Path,
         dt: float = 4.0,
         device: str = "cuda:0",
@@ -37,7 +38,7 @@ class NodeFDMPredictor:
         self.model.eval()
 
     @staticmethod
-    def _get_dict(f: pd.DataFrame, cols: list, i: int) -> dict:
+    def _get_dict(f: pd.DataFrame, cols: list[Any], i: int) -> dict[Any, Any]:
         """Slice a DataFrame row into a dict of tensors keyed by column definitions.
 
         Args:
@@ -53,7 +54,7 @@ class NodeFDMPredictor:
             for col in cols
         }
 
-    def _get_state(self, f: pd.DataFrame, i: int) -> dict:
+    def _get_state(self, f: pd.DataFrame, i: int) -> dict[Any, Any]:
         """Extract state columns at a specific timestep.
 
         Returns:
@@ -61,7 +62,7 @@ class NodeFDMPredictor:
         """
         return self._get_dict(f, self.x_cols, i)
 
-    def _get_ctrl(self, f: pd.DataFrame, i: int) -> dict:
+    def _get_ctrl(self, f: pd.DataFrame, i: int) -> dict[Any, Any]:
         """Extract control columns at a specific timestep.
 
         Returns:
@@ -69,7 +70,7 @@ class NodeFDMPredictor:
         """
         return self._get_dict(f, self.u_cols, i)
 
-    def _get_env(self, f: pd.DataFrame, i: int) -> dict:
+    def _get_env(self, f: pd.DataFrame, i: int) -> dict[Any, Any]:
         """Extract environment columns at a specific timestep.
 
         Returns:
@@ -77,7 +78,9 @@ class NodeFDMPredictor:
         """
         return self._get_dict(f, self.e0_cols, i)
 
-    def _next_state(self, current_state: dict, res_dict: dict) -> dict:
+    def _next_state(
+        self, current_state: dict[Any, Any], res_dict: dict[Any, Any]
+    ) -> dict[Any, Any]:
         """Advance state using predicted derivatives and configured timestep.
 
         Args:
@@ -93,7 +96,7 @@ class NodeFDMPredictor:
         return new_state
 
     def predict_flight(
-        self, flight_df: pd.DataFrame, add_cols: list | None = None
+        self, flight_df: pd.DataFrame, add_cols: list[Any] | None = None
     ) -> pd.DataFrame:
         """Generate model predictions for an entire flight.
 
@@ -106,7 +109,7 @@ class NodeFDMPredictor:
         """
         if add_cols is None:
             add_cols = []
-        display_dict = {col: [] for col in self.x_cols + add_cols}
+        display_dict: dict[Any, list[Any]] = {col: [] for col in self.x_cols + add_cols}
 
         current_state = self._get_state(flight_df, 0)
         current_state = {k: v.to(self.device) for k, v in current_state.items()}

@@ -33,8 +33,8 @@ class InputNormalizer(nn.Module):
             Normalized tensor or original tensor if no normalization is applied.
         """
         if col.normalize_mode == "normal":
-            mean = getattr(self, f"mean_{col}")
-            std = getattr(self, f"std_{col}")
+            mean: torch.Tensor = getattr(self, f"mean_{col}")
+            std: torch.Tensor = getattr(self, f"std_{col}")
             return (x - mean) / std
         return x
 
@@ -75,16 +75,16 @@ class OutputDenormalizer(nn.Module):
             Tensor in physical scale.
         """
         if col.denormalize_mode == "normal_clamp":
-            mean = getattr(self, f"mean_{col}")
-            std = getattr(self, f"std_{col}")
-            maxv = getattr(self, f"max_{col}")
+            mean: torch.Tensor = getattr(self, f"mean_{col}")
+            std: torch.Tensor = getattr(self, f"std_{col}")
+            maxv: torch.Tensor = getattr(self, f"max_{col}")
             value = mean + x * std
             value_clamped = torch.clamp(
                 value, min=-self.max_ratio * maxv, max=self.max_ratio * maxv
             )
             return value_clamped
         elif col.denormalize_mode == "max":
-            maxv = getattr(self, f"max_{col}")
-            value = x * maxv
-            return value
+            maxv_val: torch.Tensor = getattr(self, f"max_{col}")
+            scaled_value: torch.Tensor = x * maxv_val
+            return scaled_value
         return x

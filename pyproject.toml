@@ -64,6 +64,7 @@ fallback-version = "0.0.0"
 [dependency-groups]
 dev = [
   "mypy>=1.14.1",
+  "pandas-stubs>=2.2",
   "pip-audit>=2.7.3",
   "pre-commit>=4.5.1",
   "pytest>=8.3.5",
@@ -145,6 +146,27 @@ pretty = true
 [[tool.mypy.overrides]]
 module = ["tests.*"]
 disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+# Data processing modules with complex pandas operations - stubs incomplete
+module = [
+  "node_fdm.architectures.qar.flight_process",
+  "node_fdm.architectures.opensky_2025.flight_process",
+]
+disable_error_code = ["arg-type", "call-overload"]
+
+[[tool.mypy.overrides]]
+# Modules with torch inference and pandas complex types - stubs incomplete
+module = [
+  "node_fdm.ode_trainer",
+  "node_fdm.data.meteo_and_parameters",
+  "node_fdm.data.flight_processor",
+  "node_fdm.data.dataset",
+  "node_fdm.data.loader",
+  "node_fdm.models.flight_dynamics_model_prod",
+  "node_fdm.architectures.qar.engine_layer",
+]
+disable_error_code = ["no-any-return", "arg-type", "misc", "union-attr", "return-value"]
 
 [[tool.mypy.overrides]]
 module = ["torch.*", "torchdiffeq.*", "traffic.*", "fastmeteo.*", "joblib.*", "scipy.*", "matplotlib.*", "tqdm.*"]

@@ -51,7 +51,7 @@ class StructuredLayer(nn.Module):
             input_dim, hidden_dim=backbone_dim, num_layers=backbone_depth
         )
 
-        def head_factory(col):
+        def head_factory(col: Any) -> Head:
             return Head(
                 backbone_dim,
                 hidden_dim=head_dim,
@@ -114,9 +114,9 @@ class StructuredLayer(nn.Module):
             Dictionary of normalized outputs keyed by column identifiers.
         """
         out_list = self.normalize_input(x_dict)
-        x_norm = torch.cat(out_list, dim=1)
+        x_norm = torch.cat(list(out_list), dim=1)
         features = self.backbone(x_norm)
-        out_norm_dict = self.heads(features)
+        out_norm_dict: dict[Any, torch.Tensor] = self.heads(features)
         return out_norm_dict
 
     def forward(self, x_dict: dict[Any, torch.Tensor]) -> dict[Any, torch.Tensor]:

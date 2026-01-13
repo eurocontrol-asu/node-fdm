@@ -46,11 +46,11 @@ def detect_constant_segments(
     else:
         time = f.index.values
 
-    y = f[var_name].astype(float).values
+    y = np.asarray(f[var_name].astype(float).values)
 
     if smooth_window is not None and smooth_window > 1:
         if smooth_method == "rolling":
-            y = (
+            y = np.asarray(
                 pd.Series(y)
                 .rolling(window=smooth_window, center=True, min_periods=1)
                 .mean()
@@ -60,12 +60,12 @@ def detect_constant_segments(
             win = min(smooth_window, len(y) - (len(y) % 2 == 0))
             y = savgol_filter(y, window_length=win, polyorder=2, mode="interp")
 
-    alt = None
+    alt_arr: np.ndarray[Any, np.dtype[Any]] | None = None
     if use_alt:
         if "altitude" in f.columns:
-            alt = f["altitude"].values
+            alt_arr = np.asarray(f["altitude"].values)
         elif "Alt" in f.columns:
-            alt = f["Alt"].values
+            alt_arr = np.asarray(f["Alt"].values)
         else:
             raise ValueError(
                 "No altitude column found ('altitude' or 'Alt') while use_alt=True"
@@ -74,10 +74,10 @@ def detect_constant_segments(
     dy = np.abs(np.diff(y))
     stable = np.concatenate([[False], dy < tol])
 
-    segments = []
-    start = None
+    segments: list[dict[str, Any]] = []
+    start: int | None = None
     for i, s in enumerate(stable):
-        cond_alt = (not use_alt) or (alt[i] > alt_threshold)
+        cond_alt = (not use_alt) or (alt_arr is not None and alt_arr[i] > alt_threshold)
         cond_abs = (min_abs_value is None) or (np.abs(y[i]) > min_abs_value)
         cond = s and cond_alt and cond_abs
 
@@ -85,15 +85,15 @@ def detect_constant_segments(
             start = i
         elif (not cond) and start is not None:
             if i - start >= min_len:
-                seg = {
+                seg: dict[str, Any] = {
                     "start_idx": start,
                     "end_idx": i - 1,
                     "start_time": time[start],
                     "end_time": time[i - 1],
-                    "var_mean": np.mean(y[start:i]),
+                    "var_mean": float(np.mean(y[start:i])),
                 }
-                if use_alt:
-                    seg["alt_mean"] = np.mean(alt[start:i])
+                if use_alt and alt_arr is not None:
+                    seg["alt_mean"] = float(np.mean(alt_arr[start:i]))
                 segments.append(seg)
             start = None
 
@@ -103,16 +103,21 @@ def detect_constant_segments(
             "end_idx": len(time) - 1,
             "start_time": time[start],
             "end_time": time[-1],
-            "var_mean": np.mean(y[start:]),
+            "var_mean": float(np.mean(y[start:])),
         }
-        if use_alt:
-            seg["alt_mean"] = np.mean(alt[start:])
+        if use_alt and alt_arr is not None:
+            seg["alt_mean"] = float(np.mean(alt_arr[start:]))
         segments.append(seg)
 
     return segments, y
 
 
-def add_segment_column(f, segments, col_name, fill_value=0.0):
+def add_segment_column(
+    f: pd.DataFrame,
+    segments: list[dict[str, Any]],
+    col_name: str,
+    fill_value: float = 0.0,
+) -> pd.DataFrame:
     """Add a column populated with segment mean values elsewhere filled with a default.
 
     Args:
@@ -241,7 +246,7 @@ def compute_tas(df: pd.DataFrame) -> pd.Series:
     track_rad = np.deg2rad(df["track"])
     u_ground = df["groundspeed"] * np.sin(track_rad)
     v_ground = df["groundspeed"] * np.cos(track_rad)
-    return np.sqrt((u_ground - u_wind_kt) ** 2 + (v_ground - v_wind_kt) ** 2)
+    return pd.Series(np.sqrt((u_ground - u_wind_kt) ** 2 + (v_ground - v_wind_kt) ** 2))
 
 
 def crop_on_distance_jump(
@@ -286,7 +291,7 @@ def process_flight(
     f: pd.DataFrame,
     output_dir_path: Any,
     selected_param_config: dict[str, Any],
-):
+) -> tuple[Any, bool]:
     """Process a single flight dataframe and persist if valid.
 
     Args:
@@ -325,7 +330,7 @@ def save_all_flights(
     output_dir_path: Any,
     selected_param_config: dict[str, Any],
     n_jobs: int = 8,
-):
+) -> list[tuple[Any, bool]]:
     """Process all flights in a DataFrame in parallel.
 
     Args:
@@ -346,8 +351,11 @@ def save_all_flights(
 
 
 def haversine(
-    lat1: np.ndarray, lon1: np.ndarray, lat2: np.ndarray, lon2: np.ndarray
-) -> np.ndarray:
+    lat1: np.ndarray[Any, np.dtype[Any]],
+    lon1: np.ndarray[Any, np.dtype[Any]],
+    lat2: np.ndarray[Any, np.dtype[Any]],
+    lon2: np.ndarray[Any, np.dtype[Any]],
+) -> np.ndarray[Any, np.dtype[np.floating[Any]]]:
     """Compute great-circle distance between coordinate pairs (meters).
 
     Args:
@@ -359,12 +367,15 @@ def haversine(
     Returns:
         Array of distances in meters.
     """
-    R = 6371000  # Earth radius in meters
+    earth_radius = 6371000  # Earth radius in meters
     phi1, phi2 = np.radians(lat1), np.radians(lat2)
     dphi = phi2 - phi1
     dlambda = np.radians(lon2 - lon1)
     a = np.sin(dphi / 2) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(dlambda / 2) ** 2
-    return 2 * R * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    result: np.ndarray[Any, np.dtype[np.floating[Any]]] = (
+        2 * earth_radius * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
+    )
+    return result
 
 
 def add_cumulative_distance(
@@ -382,10 +393,10 @@ def add_cumulative_distance(
     """
 
     d = haversine(
-        df[lat_col].iloc[:-1].values,
-        df[lon_col].iloc[:-1].values,
-        df[lat_col].iloc[1:].values,
-        df[lon_col].iloc[1:].values,
+        np.asarray(df[lat_col].iloc[:-1].values),
+        np.asarray(df[lon_col].iloc[:-1].values),
+        np.asarray(df[lat_col].iloc[1:].values),
+        np.asarray(df[lon_col].iloc[1:].values),
     )
 
     cumulative_d = np.concatenate(([0], np.cumsum(d)))
@@ -400,7 +411,7 @@ def process_files(
     file_path: Any,
     output_dir_path: Any,
     selected_param_config: dict[str, Any],
-):
+) -> None:
     """Process parquet file through interpolation and TAS/CAS computation.
 
     Args:

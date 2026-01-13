@@ -4,6 +4,7 @@
 import os
 import random
 from pathlib import Path
+from typing import Any
 
 import pandas as pd
 
@@ -38,7 +39,8 @@ def split_by_icao_counts(
 
     counts = df["icao"].value_counts().sample(frac=1, random_state=seed)
 
-    test_icaos, total = [], 0
+    test_icaos: list[Any] = []
+    total = 0
     for icao, count in counts.items():
         if (
             total < test_sum_target
