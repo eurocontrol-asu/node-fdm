@@ -2,7 +2,7 @@
 name = "node-fdm"
 description = "Neural ODE model for aircraft flight dynamics"
 readme = "README.md"
-requires-python = ">=3.11"
+requires-python = ">=3.12"
 dynamic = ["version"]
 license = { file = "LICENCE.md" }
 authors = [
@@ -15,7 +15,6 @@ classifiers = [
   "Development Status :: 4 - Beta",
   "Intended Audience :: Science/Research",
   "License :: OSI Approved :: European Union Public Licence 1.2 (EUPL 1.2)",
-  "Programming Language :: Python :: 3.11",
   "Programming Language :: Python :: 3.12",
   "Topic :: Scientific/Engineering :: Artificial Intelligence",
 ]
@@ -76,7 +75,7 @@ dev = [
 # Ruff Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 [tool.ruff]
-target-version = "py311"
+target-version = "py312"
 line-length = 88
 src = ["src", "tests"]
 
@@ -133,7 +132,7 @@ markers = [
 # MyPy Configuration
 # ─────────────────────────────────────────────────────────────────────────────
 [tool.mypy]
-python_version = "3.11"
+python_version = "3.12"
 strict = true
 warn_return_any = true
 warn_unused_ignores = true
