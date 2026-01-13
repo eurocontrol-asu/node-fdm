@@ -1,6 +1,6 @@
 <div align="center">
   <img src="docs/images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="450">
-  
+
   <br />
   <br />
 
@@ -9,21 +9,14 @@
   <br />
   <br />
 
-  <a href="https://eurocontrol-asu.github.io/node-fdm/">
-    <img src="https://img.shields.io/badge/📖_Docs-Read_The_Docs-1E88E5?style=flat-square" alt="Documentation">
-  </a>
-  <a href="https://pypi.org/project/node-fdm/">
-    <img src="https://img.shields.io/pypi/v/node-fdm?style=flat-square&color=blue" alt="PyPI version">
-  </a>
-  <a href="LICENSE.md">
-    <img src="https://img.shields.io/badge/License-EUPL_1.2-43A047?style=flat-square" alt="License">
-  </a>
-  <a href="https://www.python.org/downloads/release/python-3110/">
-    <img src="https://img.shields.io/badge/Python-3.11+-F2CF5B?style=flat-square&logo=python&logoColor=black" alt="Python Version">
-  </a>
-  <a href="https://github.com/eurocontrol-asu/node-fdm/actions">
-    <img src="https://img.shields.io/github/actions/workflow/status/eurocontrol-asu/node-fdm/test.yml?branch=main&label=tests&style=flat-square" alt="Tests">
-  </a>
+  <a href="https://github.com/eurocontrol-asu/node-fdm/actions/workflows/ci.yml"><img src="https://github.com/eurocontrol-asu/node-fdm/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://coveralls.io/github/eurocontrol-asu/node-fdm?branch=main"><img src="https://coveralls.io/repos/github/eurocontrol-asu/node-fdm/badge.svg?branch=main" alt="Coverage"></a>
+  <a href="https://pypi.org/project/node-fdm/"><img src="https://img.shields.io/pypi/v/node-fdm" alt="PyPI"></a>
+  <img src="https://img.shields.io/badge/python-3.11%2B-blue" alt="Python 3.11+">
+  <img src="https://img.shields.io/badge/typed-strict-blue" alt="Typed">
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Ruff"></a>
+  <a href="https://github.com/astral-sh/uv"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json" alt="uv"></a>
+  <a href="https://eurocontrol-asu.github.io/node-fdm/"><img src="https://img.shields.io/badge/docs-live-brightgreen" alt="Docs"></a>
 
   <br />
   <br />
@@ -145,7 +138,7 @@ This repository enables **full reproducibility** of this study (data download, p
 
 ```bibtex
 @misc{jarry2025neural,
-  title={A Neural ODE Approach to Aircraft Flight Dynamics Modelling}, 
+  title={A Neural ODE Approach to Aircraft Flight Dynamics Modelling},
   author={Gabriel Jarry and Ramon Dalmau and Xavier Olive and Philippe Very},
   year={2025},
   eprint={2509.23307},
