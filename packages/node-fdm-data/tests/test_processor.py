@@ -12,7 +12,7 @@ from node_fdm_data.processor import FlightProcessor
 class TestFlightProcessor:
     """FlightProcessor pipeline tests."""
 
-    @pytest.fixture()  # type: ignore[misc]
+    @pytest.fixture()
     def sample_df(self) -> pl.LazyFrame:
         """Small LazyFrame fixture for testing."""
         return pl.LazyFrame(

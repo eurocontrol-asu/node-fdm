@@ -13,7 +13,7 @@ from node_fdm_data.split import split_by_icao
 class TestSplitByIcao:
     """ICAO-based dataset split tests."""
 
-    @pytest.fixture()  # type: ignore[misc]
+    @pytest.fixture()
     def flight_dir(self, tmp_path: Path) -> Path:
         """Create a directory with 100 fake flight files (5 ICAO types x 20 each)."""
         icaos = ["A320", "B738", "A321", "B77W", "A388"]

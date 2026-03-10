@@ -16,7 +16,7 @@ from node_fdm_data.preprocessing.opensky import (
 class TestOpenSkyPreprocessing:
     """OpenSky 2025 preprocessing pipeline tests."""
 
-    @pytest.fixture()  # type: ignore[misc]
+    @pytest.fixture()
     def opensky_df(self) -> pl.LazyFrame:
         """Minimal OpenSky flight dataframe."""
         return pl.LazyFrame(
