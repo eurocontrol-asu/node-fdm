@@ -1,16 +1,59 @@
-# node-fdm-v2
+<div align="center">
+  <img src="docs/images/logo.jpg" alt="Neural Ordinary Differential Equation Flight Dynamics Model" width="450">
 
-Physics-guided Neural ODE framework for aircraft flight dynamics
+  <br /><br />
 
-<p align="center">
+  <em>A physics-guided Neural Ordinary Differential Equation (Neural ODE) framework for aircraft flight dynamics simulation and learning.</em>
+
+  <br /><br />
+
   <a href="https://github.com/eurocontrol-asu/node-fdm-v2/actions/workflows/ci.yml"><img src="https://github.com/eurocontrol-asu/node-fdm-v2/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
   <img src="https://img.shields.io/badge/python-3.12%2B-blue" alt="Python 3.12+">
+  <img src="https://img.shields.io/badge/typed-strict-blue" alt="Typed">
+  <a href="https://github.com/astral-sh/ruff"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/ruff/main/assets/badge/v2.json" alt="Ruff"></a>
+  <a href="https://github.com/astral-sh/uv"><img src="https://img.shields.io/endpoint?url=https://raw.githubusercontent.com/astral-sh/uv/main/assets/badge/v0.json" alt="uv"></a>
   <img src="https://img.shields.io/badge/license-EUPL--1.2-blue" alt="License">
-</p>
+
+  <br /><br />
+
+  <p>
+    <a href="#-overview">Overview</a> •
+    <a href="#-quick-start">Quick Start</a> •
+    <a href="#-packages">Packages</a> •
+    <a href="#-use-cases--publications">Publications</a> •
+    <a href="#-contributing">Contributing</a>
+  </p>
+</div>
 
 ---
 
-Clean room rebuild of [eurocontrol-asu/node-fdm](https://github.com/eurocontrol-asu/node-fdm) with modern standards (Polars, Pydantic v2, structlog, typed architecture registry).
+### 📚 Documentation
+
+**Full documentation, tutorials, and API reference available at:** 👉 **[eurocontrol-asu.github.io/node-fdm-v2](https://eurocontrol-asu.github.io/node-fdm-v2/)**
+
+---
+
+### ✈️ Overview
+
+**node-fdm-v2** is a clean-room rebuild of [eurocontrol-asu/node-fdm](https://github.com/eurocontrol-asu/node-fdm) using modern standards: **Polars** (replaces pandas), **Pydantic v2** (replaces raw dicts), **structlog** (replaces print), and a **typed architecture registry**.
+
+It allows researchers to:
+* 📉 **Reconstruct** coherent trajectories from sparse ADS-B or QAR data
+* 🎮 **Simulate** aircraft behavior using learned latent dynamics
+* 📊 **Benchmark** against physical models like BADA
+
+---
+
+### ⚖️ Legal & Usage
+
+> [!IMPORTANT]
+> **Research Use Only**
+>
+> * This repository is provided **for research purposes only** and does not constitute a regulatory or operational tool.
+> * EUROCONTROL disclaims any responsibility for misuse or operational application.
+> * Distributed under the **EUPL-1.2** license.
+
+---
 
 ## Packages
 
@@ -148,6 +191,66 @@ make check
 # Serve docs
 make docs-serve
 ```
+
+---
+
+### 🎨 Use Cases & Publications
+
+#### OpenSky Symposium 2025 (ADS-B)
+*Jarry, G. & Olive, X. (2025). "Generation of Vertical Profiles with Neural Ordinary Differential Equations Trained on Open Trajectory Data," Journal of Open Aviation Science, Proceedings of the 13th OpenSky Symposium.*
+
+<details>
+<summary><strong>👇 Click to copy BibTeX</strong></summary>
+
+```bibtex
+@inproceedings{jarry2025profiles,
+  author = {Jarry, Gabriel and Olive, Xavier},
+  title = {Generation of Vertical Profiles with Neural Ordinary Differential Equations Trained on Open Trajectory Data},
+  booktitle = {Proceedings of the 13th OpenSky Symposium},
+  journal = {Journal of Open Aviation Science},
+  year = {2025},
+  note = {Under review}
+}
+```
+</details>
+
+#### SESAR Innovation Days 2025 (QAR)
+*Jarry, G., Dalmau, R., Olive, X., & Very, P. (2025). "A Neural ODE Approach to Aircraft Flight Dynamics Modelling," arXiv:2509.23307.*
+
+<details>
+<summary><strong>👇 Click to copy BibTeX</strong></summary>
+
+```bibtex
+@misc{jarry2025neural,
+  title={A Neural ODE Approach to Aircraft Flight Dynamics Modelling},
+  author={Gabriel Jarry and Ramon Dalmau and Xavier Olive and Philippe Very},
+  year={2025},
+  eprint={2509.23307},
+  archivePrefix={arXiv},
+  primaryClass={cs.LG},
+  note = {Proceedings of the SESAR Innovation Days 2025}
+}
+```
+</details>
+
+---
+
+### 🤝 Contributing
+
+Community contributions are welcome! See the **[Contribution Guide](https://eurocontrol-asu.github.io/node-fdm-v2/howto/contribute/)** for details.
+
+---
+
+### 🚧 Roadmap
+
+| Focus Area | Objective |
+| :--- | :--- |
+| **Model Scope** | Extend to **lateral dynamics** (turn rates, bank angles) for full 4D trajectory generation |
+| **Data Quality** | Improve **Mode S feature reconstruction** to reduce errors in training and evaluation |
+| **Physical Consistency** | Incorporate stronger **physical constraints** through physics-based loss regularization |
+| **Operationalization** | Train models to **complete ADS-B data** or **generate trajectories** from flight plans |
+
+---
 
 ## License
 

@@ -1,27 +1,121 @@
-site_name: "axm-fdm-workspace"
-site_url: "https://eurocontrol-asu.github.io/axm-fdm-workspace"
-repo_url: "https://github.com/eurocontrol-asu/axm-fdm-workspace"
-
-theme:
-  name: material
-  palette:
-    - scheme: default
-      primary: indigo
-
-plugins:
-  - search
-  - monorepo
-  - gen-files:
-      scripts:
-        - docs/gen_ref_pages.py
-  - literate-nav:
-      nav_file: SUMMARY.md
-  - mkdocstrings:
-      handlers:
-        python:
-          paths: ["packages/*/src"]
-          options:
-            show_source: true
+site_name: node-fdm-v2
+site_description: A physics-guided Neural Ordinary Differential Equation (Neural ODE) framework for aircraft flight dynamics.
+repo_name: eurocontrol-asu/node-fdm-v2
+site_url: https://eurocontrol-asu.github.io/node-fdm-v2/
+repo_url: https://github.com/eurocontrol-asu/node-fdm-v2
 
 nav:
   - Home: index.md
+  - Quickstart:
+      - Installation: quickstart/installation.md
+      - Core concepts: quickstart/concepts.md
+      - Pipelines overview: quickstart/pipelines.md
+  - How to:
+      - Configure project: howto/configure_params.md
+      - Create an architecture: howto/create_architecture.md
+      - Train a model: howto/train_model.md
+      - Run inference: howto/run_inference.md
+      - Contribute: howto/contribute.md
+  - API Reference:
+      - Overview: reference/node_fdm.md
+      - Data pipeline: reference/data.md
+      - Architectures: reference/architectures.md
+      - Models: reference/models.md
+      - Trainer: reference/trainer.md
+      - Predictor: reference/predictor.md
+
+theme:
+  name: material
+  logo: icons/favicon.png
+  favicon: icons/favicon.ico
+  features:
+    - content.code.annotate
+    - content.code.copy
+    - content.tooltips
+    - navigation.expand
+    - navigation.footer
+    - navigation.indexes
+    - navigation.tabs
+    - navigation.tabs.sticky
+    - navigation.top
+    - navigation.tracking
+    - search.highlight
+    - search.share
+    - search.suggest
+    - toc.follow
+  palette:
+    - media: "(prefers-color-scheme)"
+      toggle:
+        icon: material/link
+        name: Switch to light mode
+    - media: "(prefers-color-scheme: light)"
+      scheme: default
+      primary: indigo
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch
+        name: Switch to dark mode
+    - media: "(prefers-color-scheme: dark)"
+      scheme: slate
+      primary: black
+      accent: indigo
+      toggle:
+        icon: material/toggle-switch-off
+        name: Switch to system preference
+  font:
+    text: Roboto
+    code: Roboto Mono
+  icon:
+    repo: fontawesome/brands/github
+
+extra_css:
+  - css/extra.css
+
+plugins:
+  - search
+  - mkdocstrings:
+      handlers:
+        python:
+          paths:
+            - packages/node-fdm-data/src
+            - packages/node-fdm/src
+            - packages/node-fdm-bada/src
+          options:
+            show_source: true
+            show_root_heading: true
+            show_root_full_path: false
+
+markdown_extensions:
+  - meta
+  - abbr
+  - attr_list
+  - footnotes
+  - def_list
+  - md_in_html
+  - admonition
+  - pymdownx.details
+  - pymdownx.keys
+  - pymdownx.highlight:
+      anchor_linenums: true
+      line_spans: __span
+      pygments_lang_class: true
+  - pymdownx.inlinehilite
+  - pymdownx.snippets
+  - pymdownx.superfences:
+      custom_fences:
+        - name: mermaid
+          class: mermaid
+          format: !!python/name:pymdownx.superfences.fence_code_format
+  - pymdownx.arithmatex:
+      generic: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - pymdownx.emoji:
+      emoji_index: !!python/name:material.extensions.emoji.twemoji
+      emoji_generator: !!python/name:material.extensions.emoji.to_svg
+  - toc:
+      permalink: true
+      baselevel: 1
+
+extra_javascript:
+  - https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js
