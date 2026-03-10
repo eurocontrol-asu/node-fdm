@@ -40,7 +40,7 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
     """Resolve an architecture name to its schema and preprocessing components.
 
     Args:
-        arch: Architecture identifier — ``"opensky"`` or ``"qar"``.
+        arch: Architecture identifier — ``"opensky"``, ``"opensky_v2"``, or ``"qar"``.
 
     Returns:
         Fully resolved ``ArchitectureInfo``.
@@ -66,6 +66,23 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 segment_filter_fn=segment_filtering,
                 architecture_import="node_fdm.architectures.opensky",
             )
+        case "opensky_v2":
+            from node_fdm_data.preprocessing.opensky import (
+                flight_processing,
+                segment_filtering,
+            )
+            from node_fdm_data.schemas.opensky_v2 import DX_COLS, E0_COLS, U_COLS, X_COLS
+
+            return ArchitectureInfo(
+                name="opensky_v2",
+                x_cols=X_COLS,
+                u_cols=U_COLS,
+                e0_cols=E0_COLS,
+                dx_cols=DX_COLS,
+                preprocessing_fn=flight_processing,
+                segment_filter_fn=segment_filtering,
+                architecture_import="node_fdm.architectures.opensky_v2",
+            )
         case "qar":
             from node_fdm_data.preprocessing.qar import flight_processing as qar_processing
             from node_fdm_data.schemas.qar import DX_COLS, E0_COLS, U_COLS, X_COLS
@@ -81,5 +98,5 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 architecture_import="node_fdm.architectures.qar",
             )
         case _:
-            msg = f"Unknown architecture: {arch!r}. Supported: 'opensky', 'qar'."
+            msg = f"Unknown architecture: {arch!r}. Supported: 'opensky', 'opensky_v2', 'qar'."
             raise ValueError(msg)

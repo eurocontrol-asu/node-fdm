@@ -4,6 +4,7 @@ from __future__ import annotations
 
 __all__ = [
     "opensky",
+    "opensky_v2",
     "qar",
     "registry",
 ]

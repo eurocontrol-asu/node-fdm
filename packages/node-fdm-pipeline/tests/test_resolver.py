@@ -34,8 +34,28 @@ class TestResolveArchitecture:
 
     def test_resolve_unknown_raises(self) -> None:
         """Unknown architecture name raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown architecture: 'unknown'"):
+        with pytest.raises(ValueError, match="Unknown architecture"):
             resolve_architecture("unknown")
+
+    def test_resolve_opensky_v2(self) -> None:
+        """Resolving 'opensky_v2' returns ArchitectureInfo with lateral columns."""
+        info = resolve_architecture("opensky_v2")
+        assert isinstance(info, ArchitectureInfo)
+        assert info.name == "opensky_v2"
+        assert "latitude" in info.x_cols
+        assert "longitude" in info.x_cols
+        assert "track_sel" in info.x_cols
+        assert len(info.x_cols) > len(resolve_architecture("opensky").x_cols)
+        assert info.architecture_import == "node_fdm.architectures.opensky_v2"
+        assert callable(info.preprocessing_fn)
+
+    def test_opensky_v1_unchanged(self) -> None:
+        """opensky v1 resolver still returns same schema (backward compat)."""
+        info = resolve_architecture("opensky")
+        assert info.name == "opensky_2025"
+        assert "latitude" not in info.x_cols
+        assert "longitude" not in info.x_cols
+        assert len(info.x_cols) == 4  # Original 4 state vars
 
     def test_architecture_info_frozen(self) -> None:
         """ArchitectureInfo is immutable (frozen dataclass)."""
