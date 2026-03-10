@@ -56,7 +56,6 @@ known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
 [tool.pytest.ini_options]
 testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests"]
 addopts = "-q --import-mode=importlib"
-import_mode = "importlib"
 
 [tool.coverage.run]
 source_pkgs = ["node_fdm_data", "node_fdm", "node_fdm_bada"]

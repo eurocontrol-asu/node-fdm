@@ -1,4 +1,4 @@
-.PHONY: install test test-all lint lint-all format type-check check audit clean docs-serve docs-build
+.PHONY: install test test-all lint lint-all fmt format typecheck type-check check audit clean docs-serve docs-build
 
 ## Install all packages in the workspace
 install:
@@ -19,14 +19,20 @@ lint:
 ## Alias for lint
 lint-all: lint
 
-## Format all packages
-format:
+## Format all packages (fix + format)
+fmt:
 	uv run ruff check --fix packages/
 	uv run ruff format packages/
 
+## Alias for fmt
+format: fmt
+
 ## Run type checks
-type-check:
+typecheck:
 	uv run mypy packages/*/src/
+
+## Alias for typecheck
+type-check: typecheck
 
 ## Run audit (quality gate)
 audit:
@@ -35,7 +41,7 @@ audit:
 ## Full quality check
 check:
 	$(MAKE) lint
-	$(MAKE) type-check
+	$(MAKE) typecheck
 	$(MAKE) test
 
 ## Serve documentation locally
