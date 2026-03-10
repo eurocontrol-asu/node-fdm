@@ -6,6 +6,7 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "EUPL-1.2" }
 authors = [{ name = "Gabriel Jarry", email = "gabriel.jarry@eurocontrol.int" }]
+keywords = ["flight-dynamics", "physics", "isa", "polars", "aviation"]
 classifiers = [
     "Development Status :: 3 - Alpha",
     "Programming Language :: Python :: 3.12",
@@ -17,8 +18,13 @@ dependencies = [
     "polars>=1.0",
     "numpy>=1.26",
     "scipy>=1.13",
-    "pyyaml>=6.0",
 ]
+
+[project.urls]
+Homepage = "https://github.com/eurocontrol-asu/axm-fdm-workspace"
+Documentation = "https://eurocontrol-asu.github.io/axm-fdm-workspace/"
+Repository = "https://github.com/eurocontrol-asu/axm-fdm-workspace.git"
+Issues = "https://github.com/eurocontrol-asu/axm-fdm-workspace/issues"
 
 [build-system]
 requires = ["hatchling", "hatch-vcs"]
@@ -36,6 +42,15 @@ dev = [
     "pytest>=8.0",
     "pytest-cov>=4.0",
     "pytest-mock>=3.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+docs = [
+    "mkdocs-material>=9.0",
+    "mkdocstrings[python]>=0.25",
+    "mkdocs-gen-files>=0.5",
+    "mkdocs-literate-nav>=0.6",
 ]
 
 [tool.pytest.ini_options]
@@ -53,3 +68,50 @@ addopts = [
     "--cov-fail-under=0",
 ]
 filterwarnings = ["error"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+src = ["src", "tests"]
+exclude = ["*/_version.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "BLE", "C4", "S", "T20", "PLR", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "PLR2004"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["node_fdm_data"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+pretty = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_configs = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["scipy.*", "polars.*"]
+ignore_missing_imports = true
+
+[tool.coverage.run]
+source_pkgs = ["node_fdm_data"]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.coverage.xml]
+output = "coverage.xml"
