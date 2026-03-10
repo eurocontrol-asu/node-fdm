@@ -12,6 +12,9 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 - **Unit conversions** — 14 pure Polars expression functions (ft→m, kt→m/s, °C→K, deg→rad, etc.)
 - **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components
 - **Column schemas** — OpenSky 2025 and QAR architectures with typed column lists (X, U, E0, E1, DX) and conversion registries
+- **Flight processor** — `FlightProcessor` configurable pipeline with method-chaining API for `pl.LazyFrame` transformations
+- **Preprocessing** — Architecture-specific pipelines: OpenSky (altitude diff, segment filtering) and QAR (Butterworth filter, smoothing, engine reduction)
+- **Dataset splitting** — `split_by_icao` for deterministic train/val/test splitting by ICAO group (prevents data leakage)
 
 ## Installation
 

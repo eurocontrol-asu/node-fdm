@@ -6,5 +6,8 @@ __all__ = [
     "conversions",
     "meteo",
     "physics",
+    "preprocessing",
+    "processor",
     "schemas",
+    "split",
 ]
