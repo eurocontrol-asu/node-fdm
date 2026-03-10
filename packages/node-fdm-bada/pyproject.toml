@@ -15,6 +15,9 @@ classifiers = [
 
 dependencies = [
     "node-fdm-data",
+    "numpy>=1.26",
+    "polars>=1.0",
+    "structlog>=24.0",
 ]
 
 [build-system]

@@ -739,6 +739,9 @@ name = "node-fdm-bada"
 source = { editable = "packages/node-fdm-bada" }
 dependencies = [
     { name = "node-fdm-data" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "structlog" },
 ]
 
 [package.dev-dependencies]
@@ -749,7 +752,12 @@ dev = [
 ]
 
 [package.metadata]
-requires-dist = [{ name = "node-fdm-data", editable = "packages/node-fdm-data" }]
+requires-dist = [
+    { name = "node-fdm-data", editable = "packages/node-fdm-data" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "polars", specifier = ">=1.0" },
+    { name = "structlog", specifier = ">=24.0" },
+]
 
 [package.metadata.requires-dev]
 dev = [
