@@ -1,5 +1,11 @@
 # %%
-"""11 — Explore preprocessed dataset interactively."""
+"""11 — Explore preprocessed dataset interactively.
+
+This is a notebook-style exploration script.  There is no CLI equivalent.
+For dataset statistics, use::
+
+    fdm dataset-stats --arch opensky --config config.yaml
+"""
 
 from __future__ import annotations
 
