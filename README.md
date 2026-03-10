@@ -18,8 +18,9 @@
 
   <p>
     <a href="#-overview">Overview</a> •
-    <a href="#-quick-start">Quick Start</a> •
-    <a href="#-packages">Packages</a> •
+    <a href="#-experiment-pipeline">Pipeline</a> •
+    <a href="#packages">Packages</a> •
+    <a href="#-reproducing-paper-v1">Reproduce</a> •
     <a href="#-use-cases--publications">Publications</a> •
     <a href="#-contributing">Contributing</a>
   </p>
@@ -44,6 +45,82 @@ It allows researchers to:
 
 ---
 
+### 🔀 Branch Strategy
+
+| Branch | Purpose |
+|---|---|
+| **`main`** | Active development — v2 with longitudinal + lateral dynamics |
+| **`legacy`** | Frozen snapshot of the v1 code used in the OpenSky 2025 paper (longitudinal only) |
+
+The original codebase lives at [eurocontrol-asu/node-fdm](https://github.com/eurocontrol-asu/node-fdm). This repository (`node-fdm-v2`) is a clean-room rebuild.
+
+---
+
+### 📄 Reproducing Paper v1
+
+To reproduce the experiments from the **OpenSky Symposium 2025** paper:
+
+```bash
+# Clone the original repository
+git clone https://github.com/eurocontrol-asu/node-fdm.git
+cd node-fdm
+
+# Switch to the frozen v1 branch
+git checkout legacy
+
+# Follow the instructions in that branch's README
+```
+
+> [!NOTE]
+> The `legacy` branch uses **pandas**, raw `dict` configs, and the original script-based pipeline.
+> The `main` branch of `node-fdm-v2` uses **Polars**, **Pydantic**, and the `fdm` CLI.
+
+---
+
+### 🔬 Experiment Pipeline
+
+The v2 experiment pipeline is driven entirely through the `fdm` CLI.
+All commands take a `config.yaml` as first argument (see **[Configure Project](https://eurocontrol-asu.github.io/node-fdm-v2/howto/configure_params/)**).
+
+```bash
+# 1. Data acquisition
+fdm aircraft-list config.yaml    # List aircraft types in scope
+fdm download config.yaml         # Download ADS-B parquet from OpenSky
+
+# 2. Preprocessing
+fdm preprocess config.yaml       # Clean, filter, unit-convert raw data
+fdm enrich config.yaml           # Add ERA5 meteorological features
+
+# 3. Processing
+fdm process config.yaml          # Segment + filter steady-state phases
+
+# 4. Training
+fdm train config.yaml            # Train Neural ODE model
+
+# 5. Evaluation
+fdm predict config.yaml          # Run model predictions
+fdm predict-bada config.yaml     # BADA 4.2 physical baseline
+fdm evaluate config.yaml         # Compute MAE/MAPE per flight phase
+
+# 6. Visualization
+fdm visualize config.yaml        # Overlay plots (GT vs Model vs BADA)
+fdm dataset-stats config.yaml    # Coverage statistics
+fdm plot-performance config.yaml # Performance comparison plots
+```
+
+---
+
+### 🏗️ Architecture: v1 vs v2
+
+| | **v1** (OpenSky 2025) | **v2** (this repo) |
+|---|---|---|
+| **Dynamics** | Longitudinal only (altitude, speed, gamma) | Longitudinal **+ lateral** (latitude, longitude, track) |
+| **State variables** | 4 (distance, altitude, γ, TAS) | 7 (+ latitude, longitude, track_sel) |
+| **Schema** | `opensky` | `opensky` + `opensky_v2` |
+| **Stack** | pandas, raw dicts, scripts | Polars, Pydantic, `fdm` CLI |
+
+---
+
 ### ⚖️ Legal & Usage
 
 > [!IMPORTANT]
@@ -62,8 +139,9 @@ It allows researchers to:
 | **[node-fdm-data](packages/node-fdm-data/)** | Flight data processing, physics, unit conversions, column schemas — Polars-first |
 | **[node-fdm](packages/node-fdm/)** | Neural ODE models, layers, training, prediction — PyTorch + Pydantic |
 | **[node-fdm-bada](packages/node-fdm-bada/)** | BADA 4.2 aircraft performance baseline |
+| **[node-fdm-pipeline](packages/node-fdm-pipeline/)** | CLI commands, pipeline config, architecture resolver |
 
-## Architecture
+## Package Layout
 
 ```
 node-fdm-v2/
@@ -72,25 +150,28 @@ node-fdm-v2/
 │   │   ├── conversions         # 14 unit conversion functions (pl.Expr)
 │   │   ├── physics/            # ISA atmosphere + constants
 │   │   ├── meteo               # Haversine, Mach/CAS, TAS
-│   │   ├── schemas/            # OpenSky 2025 + QAR column definitions
+│   │   ├── lateral             # Lateral computations (bearing, turning points)
+│   │   ├── schemas/            # OpenSky, OpenSky V2, QAR column definitions
 │   │   ├── preprocessing/      # Architecture-specific pipelines
 │   │   ├── processor           # FlightProcessor (configurable pipeline)
 │   │   └── split               # Train/val/test by ICAO group
 │   ├── node-fdm/               # Neural ODE models (PyTorch)
-│   │   ├── architectures/      # Typed registry + specs (OpenSky, QAR)
+│   │   ├── architectures/      # Typed registry + specs (OpenSky, V2, QAR)
 │   │   ├── layers/             # MLP blocks, normalizers, trajectory, engine
 │   │   ├── models/             # FDM, BatchNeuralODE, FDM Prod
 │   │   ├── trainer             # ODETrainer + TrainingConfig (Pydantic)
 │   │   ├── predictor           # NodeFDMPredictor + ModelMeta
 │   │   ├── dataset             # FlightDataset → FlightSample (typed)
 │   │   └── callbacks           # TrainingCallback protocol
-│   └── node-fdm-bada/          # BADA 4.2 baseline (no PyTorch)
-│       ├── utils               # CAS↔Mach, TAS→CAS, phase inference
-│       ├── aircraft_mapping    # ICAO → BADA 4.2 identifier (68 types)
-│       └── predictor           # pyBADA TCL wrapper
-├── scripts/
-│   ├── opensky/                # 13-step data pipeline
-│   └── qar/                    # 2-step data pipeline
+│   ├── node-fdm-bada/          # BADA 4.2 baseline (no PyTorch)
+│   │   ├── utils               # CAS↔Mach, TAS→CAS, phase inference
+│   │   ├── aircraft_mapping    # ICAO → BADA 4.2 identifier (68 types)
+│   │   └── predictor           # pyBADA TCL wrapper
+│   └── node-fdm-pipeline/      # CLI + config + resolver
+│       ├── commands/           # fdm CLI commands (data, train, predict, ...)
+│       ├── config              # PipelineConfig (Pydantic, YAML)
+│       └── resolver            # Architecture dispatcher
+├── scripts/                    # Development utilities
 ├── fixtures/                   # Golden test data
 └── docs/                       # MkDocs documentation
 ```
