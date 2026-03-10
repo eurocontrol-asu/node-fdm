@@ -1,6 +1,6 @@
 [project]
 name = "axm-fdm-workspace"
-version = "0.1.0"
+version = "0.0.0"
 description = "Physics-guided Neural ODE framework for aircraft flight dynamics"
 readme = "README.md"
 requires-python = ">=3.12"
@@ -11,10 +11,6 @@ dependencies = [
     "node-fdm",
     "node-fdm-bada",
 ]
-
-[build-system]
-requires = ["hatchling"]
-build-backend = "hatchling.build"
 
 [tool.uv.workspace]
 members = ["packages/*"]
