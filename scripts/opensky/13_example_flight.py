@@ -1,0 +1,115 @@
+# %%
+"""13 — Generate example flight trajectory chart (altair)."""
+
+from __future__ import annotations
+
+from pathlib import Path
+
+import altair as alt
+import polars as pl
+import yaml
+
+
+def main() -> None:
+    cfg = yaml.safe_load(Path("config.yaml").read_text())
+
+    data_dir = Path(cfg["paths"]["data_dir"])
+    figure_dir = data_dir / cfg["paths"]["figure_dir"]
+    figure_dir.mkdir(parents=True, exist_ok=True)
+
+    dfi = pl.read_parquet(data_dir / "example.parquet")
+
+    # Altair accepts Polars DataFrames natively
+    base = (
+        alt.Chart(dfi)
+        .mark_line()
+        .encode(
+            x=alt.X("timestamp").title(None).axis(titleAnchor="end", grid=False),
+            color=alt.Color("renamed_source:N", title=None)
+            .scale(
+                domain=["selected", "predicted", "observed", "BADA"],
+                range=["#79706e", "#4c78a8", "#f58518", "#54a24b"],
+            )
+            .legend(
+                symbolStrokeWidth=8,
+                orient="bottom",
+                labelFont="Roboto Condensed",
+                labelFontSize=16,
+            ),
+            strokeDash=alt.StrokeDash(
+                "renamed_source:N",
+                scale=alt.Scale(
+                    domain=["selected", "predicted", "observed", "BADA"],
+                    range=[[6, 3], [1, 0], [1, 0], [1, 0]],
+                ),
+                legend=None,
+            ),
+        )
+        .properties(width=400, height=200)
+    )
+
+    chart = alt.vconcat(
+        base.transform_fold(
+            ["alt_std_m", "bada_alt_std_m", "pred_alt_std_m", "alt_sel_m"],
+            as_=["source", "altitude"],
+        )
+        .transform_calculate(
+            renamed_source=(
+                'datum.source == "alt_std_m" ? "observed" : '
+                'datum.source == "bada_alt_std_m" ? "BADA" : '
+                'datum.source == "alt_sel_m" ? "selected" : "predicted"'
+            )
+        )
+        .transform_calculate(altitude="datum.altitude / 0.3048")
+        .encode(
+            y=alt.Y("altitude:Q")
+            .title("altitude (in ft)")
+            .axis(titleAnchor="end", titleAngle=0, titleAlign="left", titleY=-10),
+        ),
+        base.transform_fold(
+            ["cas_ms", "bada_cas_ms", "pred_cas_ms", "cas_sel_ms"],
+            as_=["source", "cas"],
+        )
+        .transform_calculate(
+            renamed_source=(
+                'datum.source == "cas_ms" ? "observed" : '
+                'datum.source == "bada_cas_ms" ? "BADA" : '
+                'datum.source == "cas_sel_ms" ? "selected" : "predicted"'
+            )
+        )
+        .transform_calculate(cas="datum.cas / 0.514444")
+        .encode(
+            y=alt.Y("cas:Q")
+            .title("CAS (in kts)")
+            .axis(titleAnchor="end", titleAngle=0, titleAlign="left", titleY=-10),
+        ),
+        base.transform_fold(
+            ["vz_ms", "bada_vz_ms", "pred_vz_ms", "vz_sel_ms"],
+            as_=["source", "gamma"],
+        )
+        .transform_calculate(
+            renamed_source=(
+                'datum.source == "vz_ms" ? "observed" : '
+                'datum.source == "bada_vz_ms" ? "BADA" : '
+                'datum.source == "vz_sel_ms" ? "selected" : "predicted"'
+            )
+        )
+        .transform_calculate(gamma="datum.gamma * 196.850394")
+        .encode(
+            y=alt.Y("gamma:Q")
+            .title("vertical speed (in ft/min)")
+            .axis(titleAnchor="end", titleAngle=0, titleAlign="left", titleY=-10),
+        ),
+    ).configure_axis(
+        labelFont="Roboto Condensed",
+        labelFontSize=14,
+        titleFont="Roboto Condensed",
+        titleFontSize=18,
+    )
+    chart.save(figure_dir / "traj_example.pdf")
+    print("✅ Saved traj_example.pdf")
+
+
+if __name__ == "__main__":
+    main()
+# %%

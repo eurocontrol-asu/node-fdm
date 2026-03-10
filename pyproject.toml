@@ -49,12 +49,13 @@ ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S108"]
+"scripts/**" = ["T201", "N999", "N806", "S110"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests"]
+testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests", "tests"]
 addopts = "-q --import-mode=importlib"
 
 [tool.coverage.run]
@@ -79,5 +80,11 @@ disallow_untyped_defs = false
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["torch.*", "torchdiffeq.*", "scipy.*", "polars.*"]
+module = ["torch.*", "torchdiffeq.*", "scipy.*", "polars.*", "yaml.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["scripts.*"]
+ignore_missing_imports = true
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
