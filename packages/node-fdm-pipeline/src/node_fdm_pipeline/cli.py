@@ -178,6 +178,104 @@ def evaluate(
     log.info("evaluate_placeholder", msg="Evaluate commands will be implemented in AXM-363")
 
 
+@app.command(name="aircraft-list")
+def aircraft_list_cmd(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    sample_size: Annotated[
+        int,
+        cyclopts.Parameter(name="--sample-size", help="Max flights per typecode"),
+    ] = 100,
+    query_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--query-date", help="Date to query (YYYY-MM-DD)"),
+    ] = "2025-10-01",
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Query OpenSky for aircraft database and save CSV."""
+    from node_fdm_pipeline.commands.data import aircraft_list
+
+    aircraft_list(
+        config=config,
+        sample_size=sample_size,
+        query_date=query_date,
+        dry_run=dry_run,
+    )
+
+
+@app.command
+def download(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    start_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--start-date", help="Start date (YYYY-MM-DD)"),
+    ],
+    end_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--end-date", help="End date (YYYY-MM-DD)"),
+    ],
+    step_hours: Annotated[
+        int,
+        cyclopts.Parameter(name="--step-hours", help="Hours between windows"),
+    ] = 24,
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Download ADS-B history data from OpenSky by date range."""
+    from node_fdm_pipeline.commands.data import download as download_fn
+
+    download_fn(
+        config=config,
+        start_date=start_date,
+        end_date=end_date,
+        step_hours=step_hours,
+        dry_run=dry_run,
+    )
+
+
+@app.command
+def preprocess(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    history_file: Annotated[
+        Path,
+        cyclopts.Parameter(name="--history-file", help="Path to history_*.parquet"),
+    ],
+    workers: Annotated[
+        int,
+        cyclopts.Parameter(help="Number of parallel workers"),
+    ] = 1,
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Preprocess a raw ADS-B history file (EHS decode, filter, resample)."""
+    from node_fdm_pipeline.commands.data import preprocess as preprocess_fn
+
+    preprocess_fn(
+        config=config,
+        history_file=history_file,
+        workers=workers,
+        dry_run=dry_run,
+    )
+
+
 @app.command
 def process(
     *,
@@ -189,16 +287,15 @@ def process(
         Path,
         cyclopts.Parameter(help="Path to YAML config file"),
     ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
 ) -> None:
     """Process preprocessed flight data and create train/val/test split."""
-    import structlog
+    from node_fdm_pipeline.commands.data import process as process_fn
 
-    from node_fdm_pipeline.config import PipelineConfig
-
-    log = structlog.get_logger()
-    _cfg = PipelineConfig.from_yaml(config)
-    log.info("process_start", arch=arch)
-    log.info("process_placeholder", msg="Data commands will be implemented in AXM-362")
+    process_fn(arch=arch, config=config, dry_run=dry_run)
 
 
 @app.command(name="dataset-stats")
