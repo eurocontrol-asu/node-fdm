@@ -1,0 +1,107 @@
+"""Flight dataset with typed samples for Neural ODE training.
+
+Replaces the legacy ``SeqDataset(Dataset[dict[str, Tensor]])`` with a
+properly typed ``FlightDataset(Dataset[FlightSample])`` that returns
+frozen dataclass instances.
+"""
+
+from __future__ import annotations
+
+from dataclasses import dataclass
+
+import torch
+from torch.utils.data import Dataset
+
+__all__ = [
+    "FlightDataset",
+    "FlightSample",
+    "compute_stats",
+]
+
+
+@dataclass(frozen=True)
+class FlightSample:
+    """Single training sample containing windowed flight data tensors.
+
+    Attributes:
+        x: State tensor of shape ``(seq_len, n_x)``.
+        u: Control tensor of shape ``(seq_len, n_u)``.
+        e: Environment tensor of shape ``(seq_len, n_e)``.
+        dx: Derivative tensor of shape ``(seq_len, n_dx)``.
+    """
+
+    x: torch.Tensor
+    u: torch.Tensor
+    e: torch.Tensor
+    dx: torch.Tensor
+
+
+class FlightDataset(Dataset[FlightSample]):  # type: ignore[misc]
+    """Dataset of pre-built flight samples.
+
+    Accepts an already-constructed list of :class:`FlightSample` instances.
+    File I/O and windowing are handled upstream (e.g. in ``loader.py``).
+
+    Args:
+        samples: Non-empty list of flight samples.
+
+    Raises:
+        ValueError: If *samples* is empty.
+    """
+
+    def __init__(self, samples: list[FlightSample]) -> None:
+        if not samples:
+            msg = "FlightDataset requires at least one sample, got 0."
+            raise ValueError(msg)
+        self._samples = samples
+
+    def __len__(self) -> int:
+        """Return the number of samples."""
+        return len(self._samples)
+
+    def __getitem__(self, idx: int) -> FlightSample:
+        """Return the sample at *idx*."""
+        return self._samples[idx]
+
+
+def compute_stats(
+    samples: list[FlightSample],
+    x_cols: list[str],
+    u_cols: list[str],
+    e_cols: list[str],
+    dx_cols: list[str],
+) -> dict[str, dict[str, float]]:
+    """Compute per-column statistics from a list of samples.
+
+    Returns a mapping ``column_name → {"mean": ..., "std": ..., "max": ...}``
+    that can be passed directly to ``FlightDynamicsModel`` / ``ModelMeta``.
+
+    Args:
+        samples: List of flight samples to aggregate.
+        x_cols: State column names.
+        u_cols: Control column names.
+        e_cols: Environment column names.
+        dx_cols: Derivative column names.
+
+    Returns:
+        Per-column statistics dictionary.
+    """
+    all_cols = x_cols + u_cols + e_cols + dx_cols
+
+    # Concatenate all samples into one big tensor per category
+    x_all = torch.cat([s.x for s in samples], dim=0)
+    u_all = torch.cat([s.u for s in samples], dim=0)
+    e_all = torch.cat([s.e for s in samples], dim=0)
+    dx_all = torch.cat([s.dx for s in samples], dim=0)
+    data = torch.cat([x_all, u_all, e_all, dx_all], dim=1)
+
+    stats: dict[str, dict[str, float]] = {}
+    for i, col in enumerate(all_cols):
+        vals = data[:, i]
+        std = vals.std().item()
+        stats[col] = {
+            "mean": vals.mean().item(),
+            "std": std + 1e-6,
+            "max": torch.quantile(vals.abs(), 0.995).item(),
+        }
+    return stats
