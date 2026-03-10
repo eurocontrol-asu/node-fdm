@@ -68,21 +68,17 @@ def train(
     ] = "cpu",
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
-    import structlog
+    from node_fdm_pipeline.commands.train import run_training
 
-    from node_fdm_pipeline.config import PipelineConfig
-
-    log = structlog.get_logger()
-    cfg = PipelineConfig.from_yaml(config)
-    typecodes = [typecode] if typecode else cfg.typecodes
-    log.info(
-        "train_start",
+    run_training(
         arch=arch,
-        typecodes=typecodes,
+        config=config,
+        typecode=typecode,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
         device=device,
-        config=str(config),
     )
-    log.info("train_placeholder", msg="Training commands will be implemented in AXM-363")
 
 
 @app.command
@@ -110,21 +106,15 @@ def predict(
     ] = False,
 ) -> None:
     """Predict flight trajectories using trained Neural ODE models."""
-    import structlog
+    from node_fdm_pipeline.commands.predict import run_predict
 
-    from node_fdm_pipeline.config import PipelineConfig
-
-    log = structlog.get_logger()
-    cfg = PipelineConfig.from_yaml(config)
-    typecodes = [typecode] if typecode else cfg.typecodes
-    log.info(
-        "predict_start",
+    run_predict(
         arch=arch,
-        typecodes=typecodes,
+        config=config,
+        typecode=typecode,
         device=device,
         local_model=local_model,
     )
-    log.info("predict_placeholder", msg="Predict commands will be implemented in AXM-363")
 
 
 @app.command(name="predict-bada")
@@ -144,15 +134,13 @@ def predict_bada(
     ] = None,
 ) -> None:
     """Run BADA 4.2 baseline predictions."""
-    import structlog
+    from node_fdm_pipeline.commands.predict import run_predict_bada
 
-    from node_fdm_pipeline.config import PipelineConfig
-
-    log = structlog.get_logger()
-    cfg = PipelineConfig.from_yaml(config)
-    typecodes = [typecode] if typecode else cfg.typecodes
-    log.info("predict_bada_start", typecodes=typecodes, jobs=jobs)
-    log.info("predict_bada_placeholder", msg="BADA commands will be implemented in AXM-363")
+    run_predict_bada(
+        config=config,
+        typecode=typecode,
+        jobs=jobs,
+    )
 
 
 @app.command
@@ -168,14 +156,9 @@ def evaluate(
     ],
 ) -> None:
     """Compute prediction error metrics per flight phase."""
-    import structlog
+    from node_fdm_pipeline.commands.evaluate import run_evaluate
 
-    from node_fdm_pipeline.config import PipelineConfig
-
-    log = structlog.get_logger()
-    _cfg = PipelineConfig.from_yaml(config)
-    log.info("evaluate_start", arch=arch)
-    log.info("evaluate_placeholder", msg="Evaluate commands will be implemented in AXM-363")
+    run_evaluate(arch=arch, config=config)
 
 
 @app.command(name="aircraft-list")
