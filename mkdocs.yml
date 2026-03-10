@@ -11,6 +11,17 @@ theme:
 plugins:
   - search
   - monorepo
+  - gen-files:
+      scripts:
+        - docs/gen_ref_pages.py
+  - literate-nav:
+      nav_file: SUMMARY.md
+  - mkdocstrings:
+      handlers:
+        python:
+          paths: ["packages/*/src"]
+          options:
+            show_source: true
 
 nav:
   - Home: index.md

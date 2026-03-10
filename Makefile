@@ -1,13 +1,23 @@
-.PHONY: test-all lint-all format type-check check clean docs-serve docs-build
+.PHONY: install test test-all lint lint-all format type-check check audit clean docs-serve docs-build
+
+## Install all packages in the workspace
+install:
+	uv sync
 
 ## Run tests for all packages
-test-all:
+test:
 	uv run pytest packages/ -q
 
+## Alias for test
+test-all: test
+
 ## Lint all packages
-lint-all:
+lint:
 	uv run ruff check packages/
 	uv run ruff format --check packages/
+
+## Alias for lint
+lint-all: lint
 
 ## Format all packages
 format:
@@ -18,11 +28,15 @@ format:
 type-check:
 	uv run mypy packages/*/src/
 
+## Run audit (quality gate)
+audit:
+	uv run axm-audit audit . --agent
+
 ## Full quality check
 check:
-	$(MAKE) lint-all
+	$(MAKE) lint
 	$(MAKE) type-check
-	$(MAKE) test-all
+	$(MAKE) test
 
 ## Serve documentation locally
 docs-serve:

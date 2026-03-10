@@ -13,12 +13,44 @@ Physics-guided Neural ODE framework for aircraft flight dynamics
 
 ---
 
+## Features
+
+Clean room rebuild of [eurocontrol-asu/node-fdm](https://github.com/eurocontrol-asu/node-fdm) with modern standards:
+
+| Package | Description |
+|---|---|
+| **node-fdm-data** | Flight data processing, physics, conversions, schemas — Polars-first |
+| **node-fdm** | Neural ODE models, layers, training, prediction — PyTorch + Pydantic |
+| **node-fdm-bada** | BADA 4.2 aircraft performance baseline |
+
+- **Polars-first** data layer (replaces pandas)
+- **Pydantic v2** configs and validation (replaces `dict[str, Any]`)
+- **Typed architecture registry** with auto-registered specs
+- **structlog** structured logging (replaces `print()`)
+- **UV workspace** with proper package separation
+
+## Installation
+
+```bash
+# Clone and install
+git clone https://github.com/eurocontrol-asu/axm-fdm-workspace.git
+cd axm-fdm-workspace
+uv sync
+```
+
+## Architecture
+
 ```
 axm-fdm-workspace/
-├── packages/          # Workspace members
-├── docs/              # Shared documentation
-├── mkdocs.yml         # MkDocs with monorepo plugin
-└── pyproject.toml     # UV workspace root
+├── packages/
+│   ├── node-fdm-data/     # Flight data processing, physics
+│   ├── node-fdm/          # Neural ODE models + training
+│   └── node-fdm-bada/     # BADA performance baseline
+├── fixtures/              # Golden test data
+├── scripts/               # OpenSky + QAR pipelines
+├── docs/                  # Shared documentation
+├── mkdocs.yml             # MkDocs Material
+└── pyproject.toml         # UV workspace root
 ```
 
 ## Development
@@ -28,23 +60,21 @@ axm-fdm-workspace/
 uv sync
 
 # Run all tests
-make test-all
+make test
 
 # Lint all packages
-make lint-all
+make lint
+
+# Type check
+make type-check
+
+# Full quality check
+make check
 
 # Serve docs
 make docs-serve
 ```
 
-## Adding a new package
-
-```bash
-mkdir -p packages/my-package/src/my_package packages/my-package/tests
-# Add pyproject.toml to the new package
-# It will be auto-discovered by UV workspace
-```
-
 ## License
 
-[Apache-2.0](LICENSE) — © 2026 eurocontrol-asu
+[EUPL-1.2](LICENSE) — © 2026 Eurocontrol

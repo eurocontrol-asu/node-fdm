@@ -6,11 +6,23 @@ readme = "README.md"
 requires-python = ">=3.12"
 license = { text = "EUPL-1.2" }
 authors = [{ name = "Gabriel Jarry", email = "gabriel.jarry@eurocontrol.int" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
 dependencies = [
     "node-fdm-data",
     "node-fdm",
     "node-fdm-bada",
 ]
+
+[project.urls]
+Homepage = "https://github.com/eurocontrol-asu/axm-fdm-workspace"
+Documentation = "https://eurocontrol-asu.github.io/axm-fdm-workspace/"
+Repository = "https://github.com/eurocontrol-asu/axm-fdm-workspace.git"
+Issues = "https://github.com/eurocontrol-asu/axm-fdm-workspace/issues"
 
 [tool.uv.workspace]
 members = ["packages/*"]
@@ -42,8 +54,9 @@ ignore = ["S101"]
 known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages"]
+testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests"]
 addopts = "-q --import-mode=importlib"
+import_mode = "importlib"
 
 [tool.coverage.run]
 source_pkgs = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
