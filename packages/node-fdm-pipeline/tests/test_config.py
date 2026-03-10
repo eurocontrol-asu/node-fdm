@@ -12,6 +12,7 @@ from node_fdm_pipeline.config import (
     ComputingConfig,
     PathsConfig,
     PipelineConfig,
+    SelectedParamConfig,
 )
 
 
@@ -56,6 +57,8 @@ class TestPipelineConfig:
         assert cfg.paths.data_dir == Path("TODO")
         assert cfg.computing.default_cpu_count == 35
         assert len(cfg.era5_features) == 3
+        # SelectedParamConfig defaults are populated
+        assert cfg.selected_params.mach.tol == 0.0005
 
     def test_from_qar_yaml(self, qar_config_path: Path) -> None:
         """PipelineConfig loads the real QAR config YAML with defaults."""
@@ -107,3 +110,78 @@ unknown_section:
         # Should not raise — extra keys are ignored by default
         cfg = PipelineConfig.from_yaml(config)
         assert cfg.typecodes == ["A320"]
+
+
+class TestSelectedParamConfig:
+    """Tests for SelectedParamConfig — externalized filter thresholds."""
+
+    def test_default_values(self) -> None:
+        """All v2 defaults populated correctly."""
+        cfg = SelectedParamConfig()
+        assert cfg.mach.tol == 0.0005
+        assert cfg.mach.min_len == 120
+        assert cfg.mach.alt_threshold == 15000
+        assert cfg.mach.use_alt is True
+        assert cfg.cas.tol == 0.75
+        assert cfg.cas.smooth_method == "savgol"
+        assert cfg.vz.min_abs_value == 75
+        assert cfg.alt.tol == 25
+        assert cfg.alt.min_len == 5
+        assert cfg.gamma.tol == 0.002
+        assert cfg.gamma.smooth_window == 5
+
+    def test_from_yaml(self, tmp_path: Path) -> None:
+        """YAML with custom mach.tol=0.01 overrides default."""
+        config = tmp_path / "config.yaml"
+        config.write_text("""\
+paths:
+  data_dir: "/tmp/data"
+typecodes:
+  - A320
+selected_params:
+  mach:
+    tol: 0.01
+""")
+        cfg = PipelineConfig.from_yaml(config)
+        assert cfg.selected_params.mach.tol == 0.01
+        # Other mach fields keep defaults
+        assert cfg.selected_params.mach.min_len == 120
+
+    def test_partial_override(self, tmp_path: Path) -> None:
+        """YAML with only mach.tol set — other params keep defaults."""
+        config = tmp_path / "config.yaml"
+        config.write_text("""\
+paths:
+  data_dir: "/tmp/data"
+typecodes:
+  - A320
+selected_params:
+  mach:
+    tol: 0.01
+""")
+        cfg = PipelineConfig.from_yaml(config)
+        # mach.tol overridden
+        assert cfg.selected_params.mach.tol == 0.01
+        # cas, vz, alt, gamma keep all defaults
+        assert cfg.selected_params.cas.tol == 0.75
+        assert cfg.selected_params.vz.min_abs_value == 75
+        assert cfg.selected_params.alt.min_abs_value == 25
+        assert cfg.selected_params.gamma.tol == 0.002
+
+    def test_missing_section(self, tmp_config: Path) -> None:
+        """YAML with no selected_params → all defaults used, no error."""
+        cfg = PipelineConfig.from_yaml(tmp_config)
+        assert cfg.selected_params == SelectedParamConfig()
+
+    def test_empty_section(self, tmp_path: Path) -> None:
+        """selected_params: {} → all defaults used."""
+        config = tmp_path / "config.yaml"
+        config.write_text("""\
+paths:
+  data_dir: "/tmp/data"
+typecodes:
+  - A320
+selected_params: {}
+""")
+        cfg = PipelineConfig.from_yaml(config)
+        assert cfg.selected_params == SelectedParamConfig()

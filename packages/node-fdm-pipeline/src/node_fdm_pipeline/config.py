@@ -8,10 +8,16 @@ from typing import Self
 from pydantic import BaseModel, field_validator
 
 __all__ = [
+    "AltFilterConfig",
     "BadaConfig",
+    "CasFilterConfig",
     "ComputingConfig",
+    "GammaFilterConfig",
+    "MachFilterConfig",
     "PathsConfig",
     "PipelineConfig",
+    "SelectedParamConfig",
+    "VzFilterConfig",
 ]
 
 
@@ -56,6 +62,80 @@ class ComputingConfig(BaseModel, frozen=True):
     default_cpu_count: int = 35
 
 
+# ---------------------------------------------------------------------------
+# Selected-parameter filter configs (externalized from opensky_v2)
+# ---------------------------------------------------------------------------
+
+
+class MachFilterConfig(BaseModel, frozen=True):
+    """Mach-number selected-parameter filter."""
+
+    tol: float = 0.0005
+    min_len: int = 120
+    alt_threshold: float = 15000
+    smooth_window: int = 30
+    use_alt: bool = True
+
+
+class CasFilterConfig(BaseModel, frozen=True):
+    """CAS selected-parameter filter."""
+
+    tol: float = 0.75
+    min_len: int = 20
+    use_alt: bool = False
+    smooth_window: int = 20
+    smooth_method: str = "savgol"
+
+
+class VzFilterConfig(BaseModel, frozen=True):
+    """Vertical-speed selected-parameter filter."""
+
+    tol: float = 25
+    min_len: int = 25
+    use_alt: bool = False
+    min_abs_value: float = 75
+    smooth_window: int = 15
+    smooth_method: str = "savgol"
+
+
+class AltFilterConfig(BaseModel, frozen=True):
+    """Altitude selected-parameter filter."""
+
+    tol: float = 25
+    min_len: int = 5
+    use_alt: bool = False
+    min_abs_value: float = 25
+    smooth_window: int = 5
+    smooth_method: str = "savgol"
+
+
+class GammaFilterConfig(BaseModel, frozen=True):
+    """Flight-path angle selected-parameter filter."""
+
+    tol: float = 0.002
+    min_len: int = 15
+    use_alt: bool = False
+    smooth_window: int = 5
+    smooth_method: str = "savgol"
+
+
+class SelectedParamConfig(BaseModel, frozen=True):
+    """Selected-parameter filter configuration.
+
+    Groups all per-parameter filter thresholds.  Defaults match the
+    ``opensky_v2`` branch values.
+
+    .. note:: Legacy v1 values for reference:
+       mach.tol=0.002, cas.tol=1.0, vz.min_abs_value=50.
+    """
+
+    mach: MachFilterConfig = MachFilterConfig()
+    cas: CasFilterConfig = CasFilterConfig()
+    vz: VzFilterConfig = VzFilterConfig()
+    alt: AltFilterConfig = AltFilterConfig()
+    gamma: GammaFilterConfig = GammaFilterConfig()
+
+
 class PipelineConfig(BaseModel, frozen=True):
     """Root configuration model — replaces raw YAML dict access.
 
@@ -70,6 +150,7 @@ class PipelineConfig(BaseModel, frozen=True):
     era5_features: list[str] = []
     computing: ComputingConfig = ComputingConfig()
     bada: BadaConfig = BadaConfig()
+    selected_params: SelectedParamConfig = SelectedParamConfig()
 
     @field_validator("typecodes", mode="before")
     @classmethod
