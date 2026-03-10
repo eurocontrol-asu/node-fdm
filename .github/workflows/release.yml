@@ -2,7 +2,10 @@ name: Release
 
 on:
   push:
-    tags: ["v*"]
+    tags:
+      - "data/v*"
+      - "fdm/v*"
+      - "bada/v*"
 
 permissions:
   contents: write
@@ -12,7 +15,7 @@ jobs:
     name: Generate Changelog & Release
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
 
@@ -21,9 +24,20 @@ jobs:
         run: |
           TAG="${GITHUB_REF#refs/tags/}"
           PREFIX="${TAG%%/*}"
+          if [[ "$TAG" == data/* ]]; then
+            echo "package=node-fdm-data" >> "$GITHUB_OUTPUT"
+            echo "package-dir=packages/node-fdm-data" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == fdm/* ]]; then
+            echo "package=node-fdm" >> "$GITHUB_OUTPUT"
+            echo "package-dir=packages/node-fdm" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == bada/* ]]; then
+            echo "package=node-fdm-bada" >> "$GITHUB_OUTPUT"
+            echo "package-dir=packages/node-fdm-bada" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unknown tag prefix: $TAG"
+            exit 1
+          fi
           echo "tag-prefix=${PREFIX}" >> "$GITHUB_OUTPUT"
-          # Default: single-package workspace
-          echo "package-dir=." >> "$GITHUB_OUTPUT"
 
       - name: Generate changelog
         uses: orhun/git-cliff-action@v4

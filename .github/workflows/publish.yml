@@ -1,17 +1,65 @@
-name: Publish
+name: Publish to PyPI
 
 on:
-  release:
-    types: [published]
-
-permissions:
-  id-token: write
+  push:
+    tags:
+      - "data/v*"
+      - "fdm/v*"
+      - "bada/v*"
 
 jobs:
-  publish:
+  detect-package:
+    name: Detect Package
+    runs-on: ubuntu-latest
+    outputs:
+      package: ${{ steps.detect.outputs.package }}
+      package-dir: ${{ steps.detect.outputs.package-dir }}
+    steps:
+      - id: detect
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          if [[ "$TAG" == data/* ]]; then
+            echo "package=node-fdm-data" >> "$GITHUB_OUTPUT"
+            echo "package-dir=packages/node-fdm-data" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == fdm/* ]]; then
+            echo "package=node-fdm" >> "$GITHUB_OUTPUT"
+            echo "package-dir=packages/node-fdm" >> "$GITHUB_OUTPUT"
+          elif [[ "$TAG" == bada/* ]]; then
+            echo "package=node-fdm-bada" >> "$GITHUB_OUTPUT"
+            echo "package-dir=packages/node-fdm-bada" >> "$GITHUB_OUTPUT"
+          else
+            echo "::error::Unknown tag prefix: $TAG"
+            exit 1
+          fi
+
+  test:
+    name: Run Tests (${{ needs.detect-package.outputs.package }})
+    needs: detect-package
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: astral-sh/setup-uv@v4
-      - run: uv build
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install 3.12
+      - run: uv sync --all-groups
+      - run: uv run --package ${{ needs.detect-package.outputs.package }} --directory ${{ needs.detect-package.outputs.package-dir }} pytest --no-cov
+
+  publish:
+    name: Build and Publish (${{ needs.detect-package.outputs.package }})
+    runs-on: ubuntu-latest
+    needs: [detect-package, test]
+    environment:
+      name: pypi
+      url: https://pypi.org/project/${{ needs.detect-package.outputs.package }}/
+    permissions:
+      id-token: write
+      contents: read
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install 3.12
+      - run: uv build --package ${{ needs.detect-package.outputs.package }}
       - uses: pypa/gh-action-pypi-publish@release/v1
