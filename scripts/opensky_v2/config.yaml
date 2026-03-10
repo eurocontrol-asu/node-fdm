@@ -8,7 +8,7 @@ paths:
   bada_dir: "bada_flights"
   models_dir: "models"
   figure_dir: "figures"
-
+  bada_4_2_dir: "/data/common/dataiku/config/projects/FUEL_MODEL/lib/python/BADA/4.2.1"
   era5_cache_dir: "era5_cache"
 
 era5_features:
@@ -29,5 +29,3 @@ typecodes:
   - B738
   - E190
 
-bada:
-  bada_4_2_dir: "/data/common/dataiku/config/projects/FUEL_MODEL/lib/python/BADA/4.2.1"
