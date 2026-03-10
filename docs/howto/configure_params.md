@@ -6,16 +6,13 @@ Runtime settings are centralized in YAML files, defining project paths, data sco
 
 ## 📂 Configuration Files
 
-All configuration settings are defined per pipeline:
-
-* 📡 **OpenSky 2025**: `scripts/opensky/config.yaml`
-* ✈️ **QAR (Private)**: `scripts/qar/config.yaml`
+Create a `config.yaml` at your project root. All `fdm` CLI commands accept this file as their first argument.
 
 ---
 
 ## 📝 Configuration Structure Example
 
-```yaml title="scripts/opensky/config.yaml"
+```yaml title="config.yaml"
 paths:
   data_dir: "/path/to/data"
   download_dir: "downloaded_parquet"

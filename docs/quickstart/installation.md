@@ -54,10 +54,7 @@ This page explains how to install **node-fdm-v2**, configure optional dependenci
 
 ## 📁 Configuration & Directories
 
-**node-fdm-v2** relies on configuration files to locate data and artifacts:
-
-* 📡 **OpenSky:** `scripts/opensky/config.yaml`
-* ✈️ **QAR:** `scripts/qar/config.yaml`
+**node-fdm-v2** relies on a YAML configuration file to locate data and artifacts. Create a `config.yaml` at your project root (see **[Configure Project](../../howto/configure_params/)**).
 
 | Parameter | Description | Requirement |
 | :--- | :--- | :--- |

@@ -3,10 +3,7 @@
 This guide provides a complete overview of how to run **node-fdm** end-to-end. It covers the abstract workflow used by all architectures and provides a step-by-step walkthrough of the **OpenSky 2025** reference implementation.
 
 !!! info "Configuration"
-    All paths assume you are at the repository root. Each pipeline ships its own configuration file:
-
-    * `scripts/opensky/config.yaml`
-    * `scripts/qar/config.yaml`
+    All commands assume you are at the repository root and have a `config.yaml` defining paths and parameters. See **[Configure Project](../../howto/configure_params/)** for details.
 
 ---
 
@@ -51,32 +48,32 @@ graph LR
 
 ## 📡 OpenSky 2025 (ADS-B) Pipeline
 
-This reference pipeline processes public ADS-B data. The scripts are located in `scripts/opensky/`.
+This reference pipeline processes public ADS-B data using the `fdm` CLI.
 
 === "Phase 1: Data Preparation"
 
     **1. Aircraft Sampling**
     ```bash
-    python scripts/opensky/01_aircraft_list.py
+    fdm aircraft-list config.yaml
     ```
     * *Input*: Trino SQL connection
     * *Output*: `data/aircraft_db.csv`
 
     **2. Download Raw Data**
     ```bash
-    python scripts/opensky/02_download_data.py
+    fdm download config.yaml
     ```
     * *Output*: `data/downloaded_parquet/`
 
     **3. Decode & Resample**
     ```bash
-    python scripts/opensky/03_preprocess_data.py
+    fdm preprocess config.yaml
     ```
     * *Note*: Handles ADEP/ADES distance computation
 
     **4. Enrichment**
     ```bash
-    python scripts/opensky/04_weather_spd_process_data.py
+    fdm enrich config.yaml
     ```
     * *Output*: Enriched files in `data/processed_flights/<TYPECODE>/`
 
@@ -84,7 +81,7 @@ This reference pipeline processes public ADS-B data. The scripts are located in 
 
     **5. Train Model**
     ```bash
-    python scripts/opensky/05_training.py
+    fdm train config.yaml
     ```
     * *Uses*: `ODETrainer` with `TrainingConfig` (Pydantic)
     * *Output*: Checkpoints in `models/opensky_<TYPECODE>/`
@@ -93,23 +90,23 @@ This reference pipeline processes public ADS-B data. The scripts are located in 
 
     **6. Inference (Rollouts)**
     ```bash
-    python scripts/opensky/06_flight_prediction.py
+    fdm predict config.yaml
     ```
     * *Output*: `data/predicted_flights/<TYPECODE>/`
 
     **7. Baselines & Metrics**
 
-    * `07_bada_prediction.py`: BADA 4.2 physical baseline (requires BADA files)
-    * `08_visualize_predictions.py`: Overlay plots (Ground Truth vs Model vs BADA)
-    * `09_performance_aggregation.py`: MAE/MAPE metrics per flight phase
-    * `10_dataset_stats.py`: Coverage statistics
+    * `fdm predict-bada config.yaml`: BADA 4.2 physical baseline (requires BADA files)
+    * `fdm visualize config.yaml`: Overlay plots (Ground Truth vs Model vs BADA)
+    * `fdm evaluate config.yaml`: MAE/MAPE metrics per flight phase
+    * `fdm dataset-stats config.yaml`: Coverage statistics
 
 ---
 
 ## 💡 General Tips
 
 !!! tip "Single Source of Truth"
-    Always use the pipeline's `config.yaml` to define paths, typecodes, and shared parameters.
+    Always use `config.yaml` to define paths, typecodes, and shared parameters.
 
 !!! warning "Caching"
     Ensure `data/era5_cache` exists. Meteorological data download is slow; caching prevents repeated downloads.

@@ -1,1 +1,0 @@
-# QAR pipeline scripts.
