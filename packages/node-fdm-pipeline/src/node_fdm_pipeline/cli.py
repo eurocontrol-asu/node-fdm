@@ -294,14 +294,9 @@ def dataset_stats(
     ],
 ) -> None:
     """Compute dataset statistics (flight counts, hours per split)."""
-    import structlog
+    from node_fdm_pipeline.commands.stats import run_dataset_stats
 
-    from node_fdm_pipeline.config import PipelineConfig
-
-    log = structlog.get_logger()
-    _cfg = PipelineConfig.from_yaml(config)
-    log.info("dataset_stats_start", arch=arch)
-    log.info("dataset_stats_placeholder", msg="Stats commands will be implemented in AXM-364")
+    run_dataset_stats(arch=arch, config=config)
 
 
 @app.command
@@ -325,14 +320,37 @@ def visualize(
     ] = None,
 ) -> None:
     """Visualize prediction comparisons (Node-FDM vs BADA vs ground truth)."""
-    import structlog
+    from node_fdm_pipeline.commands.visualize import run_visualize
 
-    from node_fdm_pipeline.config import PipelineConfig
+    run_visualize(arch=arch, config=config, typecode=typecode, flight=flight)
 
-    log = structlog.get_logger()
-    _cfg = PipelineConfig.from_yaml(config)
-    log.info("visualize_start", arch=arch, typecode=typecode, flight=flight)
-    log.info("visualize_placeholder", msg="Visualization commands will be implemented in AXM-364")
+
+@app.command(name="plot-performance")
+def plot_performance(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+) -> None:
+    """Generate Altair performance comparison charts per aircraft."""
+    from node_fdm_pipeline.commands.visualize import run_plot_performance
+
+    run_plot_performance(config=config)
+
+
+@app.command(name="plot-example")
+def plot_example(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+) -> None:
+    """Generate Altair example trajectory chart."""
+    from node_fdm_pipeline.commands.visualize import run_plot_example
+
+    run_plot_example(config=config)
 
 
 def main() -> None:
