@@ -16,6 +16,7 @@ dependencies = [
     "node-fdm-data",
     "node-fdm",
     "node-fdm-bada",
+    "node-fdm-pipeline",
 ]
 
 [project.urls]
@@ -31,6 +32,7 @@ members = ["packages/*"]
 node-fdm-data = { workspace = true }
 node-fdm = { workspace = true }
 node-fdm-bada = { workspace = true }
+node-fdm-pipeline = { workspace = true }
 
 [dependency-groups]
 dev = [
@@ -48,18 +50,18 @@ select = ["E", "F", "I", "N", "UP", "B", "C4", "S", "T20", "RUF"]
 ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
-"tests/**" = ["S101", "S105", "S106", "S108"]
+"tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607"]
 "scripts/**" = ["T201", "N999", "N806", "S110"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
+known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada", "node_fdm_pipeline"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests", "tests"]
+testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests", "packages/node-fdm-pipeline/tests", "tests"]
 addopts = "-q --import-mode=importlib"
 
 [tool.coverage.run]
-source_pkgs = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
+source_pkgs = ["node_fdm_data", "node_fdm", "node_fdm_bada", "node_fdm_pipeline"]
 branch = true
 
 [tool.coverage.report]
@@ -75,13 +77,17 @@ warn_unused_ignores = true
 show_error_codes = true
 
 [[tool.mypy.overrides]]
-module = ["tests.*"]
+module = ["tests.*", "conftest"]
 disallow_untyped_defs = false
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["torch.*", "torchdiffeq.*", "scipy.*", "polars.*", "yaml.*"]
+module = ["torch.*", "torchdiffeq.*", "scipy.*", "polars.*", "yaml.*", "cyclopts.*", "structlog.*"]
 ignore_missing_imports = true
+
+[[tool.mypy.overrides]]
+module = ["node_fdm_pipeline.cli"]
+disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
 module = ["scripts.*"]

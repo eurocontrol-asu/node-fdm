@@ -1,0 +1,153 @@
+[project]
+name = "node-fdm-pipeline"
+dynamic = ["version"]
+description = "CLI pipeline for the node-fdm Neural ODE framework"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "EUPL-1.2" }
+authors = [{ name = "Gabriel Jarry", email = "gabriel.jarry@eurocontrol.int" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "node-fdm-data",
+    "node-fdm",
+    "node-fdm-bada",
+    "cyclopts>=4.5",
+    "pydantic>=2.0",
+    "structlog>=24.0",
+    "pyyaml>=6.0",
+]
+
+[project.optional-dependencies]
+viz = ["matplotlib>=3.8", "altair>=5.0"]
+
+[project.scripts]
+fdm = "node_fdm_pipeline.cli:main"
+
+[project.urls]
+Homepage = "https://github.com/eurocontrol-asu/axm-fdm-workspace"
+Documentation = "https://eurocontrol-asu.github.io/axm-fdm-workspace/"
+Repository = "https://github.com/eurocontrol-asu/axm-fdm-workspace.git"
+Issues = "https://github.com/eurocontrol-asu/axm-fdm-workspace/issues"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/node_fdm_pipeline"]
+
+[tool.uv.sources]
+node-fdm-data = { workspace = true }
+node-fdm = { workspace = true }
+node-fdm-bada = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.0",
+    "ruff>=0.8",
+    "mypy>=1.13",
+    "pre-commit>=4.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "BLE", "C4", "S", "T20", "PLR", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607", "PLR2004"]
+"src/**/cli.py" = ["PLR0913"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["node_fdm_pipeline"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+pretty = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["node_fdm_pipeline.cli"]
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["torch.*", "torchdiffeq.*", "polars.*", "yaml.*", "cyclopts.*", "structlog.*"]
+ignore_missing_imports = true
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = "test_*.py"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--import-mode=importlib",
+    "--cov=src/node_fdm_pipeline",
+    "--cov-report=term-missing",
+    "--cov-fail-under=0",
+]
+filterwarnings = ["error"]
+
+[tool.coverage.run]
+source_pkgs = ["node_fdm_pipeline"]
+branch = true
+relative_files = true
+
+[tool.coverage.xml]
+output = "coverage.xml"
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 0
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.git-cliff.changelog]
+header = ""
+body = """
+{% for group, commits in commits | group_by(attribute="group") %}
+### {{ group | upper_first }}
+{% for commit in commits %}
+- {{ commit.message | upper_first }}
+{%- endfor %}
+{% endfor %}
+"""
+trim = true
+
+[tool.git-cliff.git]
+conventional_commits = true
+filter_unconventional = true
+commit_parsers = [
+    { message = "^feat", group = "Features" },
+    { message = "^fix", group = "Bug Fixes" },
+    { message = "^doc", group = "Documentation" },
+    { message = "^perf", group = "Performance" },
+    { message = "^refactor", group = "Refactor" },
+    { message = "^style", group = "Styling" },
+    { message = "^test", group = "Testing" },
+    { message = "^chore", group = "Miscellaneous" },
+]
