@@ -1,0 +1,45 @@
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+
+permissions:
+  contents: write
+
+jobs:
+  release:
+    name: Generate Changelog & Release
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Detect package from tag
+        id: detect
+        run: |
+          TAG="${GITHUB_REF#refs/tags/}"
+          PREFIX="${TAG%%/*}"
+          echo "tag-prefix=${PREFIX}" >> "$GITHUB_OUTPUT"
+          # Default: single-package workspace
+          echo "package-dir=." >> "$GITHUB_OUTPUT"
+
+      - name: Generate changelog
+        uses: orhun/git-cliff-action@v4
+        id: git-cliff
+        with:
+          config: ${{ steps.detect.outputs.package-dir }}/pyproject.toml
+          args: >-
+            --latest
+            --strip header
+            --tag-pattern '${{ steps.detect.outputs.tag-prefix }}/v*'
+            --include-path '${{ steps.detect.outputs.package-dir }}/**'
+        env:
+          OUTPUT: CHANGELOG.md
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          body: ${{ steps.git-cliff.outputs.content }}
+          token: ${{ secrets.GITHUB_TOKEN }}

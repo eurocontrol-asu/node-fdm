@@ -1,0 +1,25 @@
+name: Pre-commit autoupdate
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"
+
+permissions:
+  contents: write
+  pull-requests: write
+
+jobs:
+  autoupdate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: pip install pre-commit
+      - run: pre-commit autoupdate
+      - uses: peter-evans/create-pull-request@v6
+        with:
+          title: "chore: pre-commit autoupdate"
+          commit-message: "chore: pre-commit autoupdate"
+          branch: pre-commit-autoupdate

@@ -1,0 +1,55 @@
+[project]
+name = "node-fdm-bada"
+dynamic = ["version"]
+description = "BADA 4.2 aircraft performance baseline for node-fdm"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "EUPL-1.2" }
+authors = [{ name = "Gabriel Jarry", email = "gabriel.jarry@eurocontrol.int" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+
+dependencies = [
+    "node-fdm-data",
+]
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/node_fdm_bada"]
+
+[tool.uv.sources]
+node-fdm-data = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = "test_*.py"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--import-mode=importlib",
+    "--cov=src/node_fdm_bada",
+    "--cov-report=term-missing",
+    "--cov-fail-under=0",
+]
+filterwarnings = ["error"]

@@ -1,0 +1,16 @@
+site_name: "axm-fdm-workspace"
+site_url: "https://eurocontrol-asu.github.io/axm-fdm-workspace"
+repo_url: "https://github.com/eurocontrol-asu/axm-fdm-workspace"
+
+theme:
+  name: material
+  palette:
+    - scheme: default
+      primary: indigo
+
+plugins:
+  - search
+  - monorepo
+
+nav:
+  - Home: index.md

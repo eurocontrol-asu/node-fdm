@@ -1,0 +1,74 @@
+[project]
+name = "axm-fdm-workspace"
+version = "0.1.0"
+description = "Physics-guided Neural ODE framework for aircraft flight dynamics"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "EUPL-1.2" }
+authors = [{ name = "Gabriel Jarry", email = "gabriel.jarry@eurocontrol.int" }]
+dependencies = [
+    "node-fdm-data",
+    "node-fdm",
+    "node-fdm-bada",
+]
+
+[build-system]
+requires = ["hatchling"]
+build-backend = "hatchling.build"
+
+[tool.uv.workspace]
+members = ["packages/*"]
+
+[tool.uv.sources]
+node-fdm-data = { workspace = true }
+node-fdm = { workspace = true }
+node-fdm-bada = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pre-commit>=4.0",
+]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+src = ["packages/*/src", "packages/*/tests"]
+exclude = ["*/_version.py"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "S", "T20", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101", "S105", "S106", "S108"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
+
+[tool.pytest.ini_options]
+testpaths = ["packages"]
+addopts = "-q --import-mode=importlib"
+
+[tool.coverage.run]
+source_pkgs = ["node_fdm_data", "node_fdm", "node_fdm_bada"]
+branch = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+warn_unused_configs = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+
+[[tool.mypy.overrides]]
+module = ["torch.*", "torchdiffeq.*", "scipy.*", "polars.*"]
+ignore_missing_imports = true

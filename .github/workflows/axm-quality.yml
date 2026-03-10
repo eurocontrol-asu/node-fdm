@@ -1,0 +1,171 @@
+name: axm-quality
+
+on:
+  push:
+    branches: [main]
+
+permissions:
+  contents: write
+
+jobs:
+  quality:
+    name: Audit + Init + Badges
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install 3.12
+      - run: uv sync --all-groups
+      - run: echo "$PWD/.venv/bin" >> "$GITHUB_PATH"
+
+      # ── Helper functions ────────────────────────────────────────────
+      - name: Define badge helpers
+        id: helpers
+        run: |
+          cat > /tmp/badge-helpers.sh << 'HELPERS'
+          score_color() {
+            local SCORE=$1
+            if [ "$SCORE" -ge 95 ]; then echo "brightgreen"
+            elif [ "$SCORE" -ge 80 ]; then echo "green"
+            elif [ "$SCORE" -ge 60 ]; then echo "yellow"
+            else echo "red"; fi
+          }
+
+          write_badge() {
+            local DIR=$1 NAME=$2 LABEL=$3 VALUE=$4 LOGO_FILE=${5:-}
+            mkdir -p "$DIR"
+            local SCORE_INT=$(python3 -c "print(int(float('${VALUE}')))")
+            local COLOR=$(score_color "$SCORE_INT")
+            if [ -n "$LOGO_FILE" ] && [ -f "$LOGO_FILE" ]; then
+              local LOGO=$(cat "$LOGO_FILE")
+              jq -n --arg l "$LABEL" --arg v "$VALUE" --arg c "$COLOR" --arg logo "$LOGO" \
+                '{schemaVersion:1, label:$l, message:"\($v)%", color:$c, logoSvg:$logo, style:"flat"}' \
+                > "$DIR/$NAME.json"
+            else
+              jq -n --arg l "$LABEL" --arg v "$VALUE" --arg c "$COLOR" \
+                '{schemaVersion:1, label:$l, message:"\($v)%", color:$c, style:"flat"}' \
+                > "$DIR/$NAME.json"
+            fi
+          }
+          HELPERS
+
+          # Pre-fetch logos once
+          curl -fsSL https://raw.githubusercontent.com/axm-protocols/axm-audit/main/assets/logo.svg \
+            > /tmp/audit-logo.svg || true
+          curl -fsSL https://raw.githubusercontent.com/axm-protocols/axm-init/main/assets/logo.svg \
+            > /tmp/init-logo.svg || true
+
+      # ── Per-package tests (coverage) ────────────────────────────────
+      - name: Run tests with coverage
+        run: |
+          mkdir -p _publish/badges _publish/reports/coverage
+
+          for PKG_DIR in packages/*/; do
+            PKG=$(basename "$PKG_DIR")
+            echo "📦 Testing $PKG..."
+            uv run --package "$PKG" --directory "$PKG_DIR" \
+              pytest --cov --cov-report=json:"../../_publish/reports/coverage/$PKG.json" \
+              --no-cov-on-fail -q 2>&1 || true
+          done
+
+      # ── axm-audit ──────────────────────────────────────────────────
+      - name: Audit all members
+        id: audit
+        run: |
+          source /tmp/badge-helpers.sh
+          mkdir -p _publish/reports/axm-audit
+
+          TOTAL_SCORE=0
+          TOTAL_COV=0
+          COUNT=0
+
+          for PKG_DIR in packages/*/; do
+            PKG=$(basename "$PKG_DIR")
+            RESULT=$(uvx axm-audit audit "$PKG_DIR" --json) || true
+            echo "$RESULT" > "_publish/reports/axm-audit/$PKG.json"
+
+            SCORE=$(echo "$RESULT" | jq '.score')
+            GRADE=$(echo "$RESULT" | jq -r '.grade')
+
+            COV_FILE="_publish/reports/coverage/$PKG.json"
+            if [ -f "$COV_FILE" ]; then
+              COV=$(jq '.totals.percent_covered_display' "$COV_FILE" | tr -d '"')
+            else
+              COV=0
+            fi
+
+            echo "📋 $PKG: Score $SCORE/100 — Grade $GRADE — Coverage ${COV}%"
+
+            write_badge "_publish/badges/$PKG" "axm-audit" "axm-audit" "$SCORE" /tmp/audit-logo.svg
+            write_badge "_publish/badges/$PKG" "coverage" "coverage" "$COV"
+
+            TOTAL_SCORE=$(python3 -c "print(int($TOTAL_SCORE + $SCORE))")
+            TOTAL_COV=$(python3 -c "print(round($TOTAL_COV + float('${COV}'), 1))")
+            COUNT=$((COUNT + 1))
+          done
+
+          AVG_SCORE=$(python3 -c "print(round($TOTAL_SCORE / $COUNT))")
+          AVG_COV=$(python3 -c "print(round($TOTAL_COV / $COUNT))")
+
+          jq -n --argjson score "$AVG_SCORE" --argjson coverage "$AVG_COV" --argjson count "$COUNT" \
+            '{score: $score, coverage: $coverage, members: $count}' \
+            > _publish/reports/axm-audit/summary.json
+
+          write_badge "_publish/badges" "axm-audit" "axm-audit" "$AVG_SCORE" /tmp/audit-logo.svg
+          write_badge "_publish/badges" "coverage" "coverage" "$AVG_COV"
+
+          echo "score=$AVG_SCORE" >> "$GITHUB_OUTPUT"
+          echo "coverage=$AVG_COV" >> "$GITHUB_OUTPUT"
+          echo "📊 Audit average: Score $AVG_SCORE/100 — Coverage ${AVG_COV}%"
+
+      # ── axm-init ───────────────────────────────────────────────────
+      - name: Check workspace root + members
+        id: check
+        run: |
+          source /tmp/badge-helpers.sh
+          mkdir -p _publish/reports/axm-init
+          TOTAL=0
+          COUNT=0
+
+          for TARGET in . packages/*/; do
+            RESULT=$(uvx axm-init check "$TARGET" --json) || true
+
+            if [ "$TARGET" = "." ]; then FNAME="root"; else FNAME=$(basename "$TARGET"); fi
+            echo "$RESULT" > "_publish/reports/axm-init/$FNAME.json"
+
+            SCORE=$(echo "$RESULT" | jq '.score')
+            GRADE=$(echo "$RESULT" | jq -r '.grade')
+            CONTEXT=$(echo "$RESULT" | jq -r '.context')
+            echo "📋 $TARGET: Score $SCORE/100 — Grade $GRADE ($CONTEXT)"
+
+            if [ "$TARGET" != "." ]; then
+              PKG=$(basename "$TARGET")
+              write_badge "_publish/badges/$PKG" "axm-init" "axm-init" "$SCORE" /tmp/init-logo.svg
+            fi
+
+            TOTAL=$((TOTAL + SCORE))
+            COUNT=$((COUNT + 1))
+          done
+
+          AVG=$((TOTAL / COUNT))
+
+          jq -n --argjson score "$AVG" --argjson count "$COUNT" \
+            '{score: $score, members: $count}' \
+            > _publish/reports/axm-init/summary.json
+
+          write_badge "_publish/badges" "axm-init" "axm-init" "$AVG" /tmp/init-logo.svg
+
+          echo "score=$AVG" >> "$GITHUB_OUTPUT"
+          echo "📊 Init average: $AVG/100"
+
+      # ── Single push ────────────────────────────────────────────────
+      - name: Push badges and reports to gh-pages
+        uses: peaceiris/actions-gh-pages@v4
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          publish_branch: gh-pages
+          publish_dir: ./_publish
+          keep_files: true
+          commit_message: "ci: audit=${{ steps.audit.outputs.score }} cov=${{ steps.audit.outputs.coverage }}% init=${{ steps.check.outputs.score }}"
