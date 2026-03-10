@@ -8,113 +8,43 @@ on:
 
 jobs:
   lint:
-    name: Lint & Format
+    name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync --all-groups
-
-      - name: Ruff check
-        run: uv run ruff check packages/
-
-      - name: Ruff format check
-        run: uv run ruff format --check packages/
-
-  typecheck:
-    name: Type Check
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync --all-groups
-
-      - name: mypy
-        run: uv run mypy packages/*/src/
-
-  test:
-    name: Test (Python ${{ matrix.python-version }})
-    runs-on: ubuntu-latest
-    strategy:
-      fail-fast: false
-      matrix:
-        python-version: ["3.12", "3.13"]
-
-    steps:
-      - uses: actions/checkout@v4
-        with:
-          fetch-depth: 0
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
-        with:
-          enable-cache: true
-
-      - name: Set up Python ${{ matrix.python-version }}
-        run: uv python install ${{ matrix.python-version }}
-
-      - name: Install dependencies
-        run: uv sync --all-groups
-
-      - name: Run tests with coverage
-        run: >
-          uv run pytest packages/
-          --cov=packages/node-fdm-data/src/node_fdm_data
-          --cov=packages/node-fdm/src/node_fdm
-          --cov=packages/node-fdm-bada/src/node_fdm_bada
-          --cov-report=xml
-          --cov-report=term-missing
-          -q
-
-      - name: Upload coverage to Codecov
-        if: matrix.python-version == '3.12'
-        uses: codecov/codecov-action@v5
-        with:
-          file: coverage.xml
-          flags: unittests
-          fail_ci_if_error: false
-          token: ${{ secrets.CODECOV_TOKEN }}
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install 3.12
+      - run: uv sync --all-groups
+      - run: make lint
+      - run: make typecheck
 
   security:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v6
         with:
           fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install 3.12
+      - run: uv sync --all-groups
+      - run: uv run pip-audit
 
-      - name: Install uv
-        uses: astral-sh/setup-uv@v5
+  test:
+    name: Test ${{ matrix.package }} (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        package: [node-fdm-data, node-fdm, node-fdm-bada]
+        python-version: ["3.12", "3.13"]
+    steps:
+      - uses: actions/checkout@v6
         with:
-          enable-cache: true
-
-      - name: Set up Python
-        run: uv python install 3.12
-
-      - name: Install dependencies
-        run: uv sync --all-groups
-
-      - name: pip-audit
-        run: uv run pip-audit
+          fetch-depth: 0
+      - uses: astral-sh/setup-uv@v7
+      - run: uv python install ${{ matrix.python-version }}
+      - run: uv sync --all-groups
+      - run: uv run --package ${{ matrix.package }} --directory packages/${{ matrix.package }} pytest --cov
