@@ -16,7 +16,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 if TYPE_CHECKING:
-    pass
+    from traffic.core import Flight, Traffic
 
 __all__ = [
     "aircraft_list",
@@ -199,7 +199,39 @@ def download(
 # ---------------------------------------------------------------------------
 
 
-def preprocess(
+def _split_at_gaps(
+    traffic: Traffic,
+    *,
+    threshold: str = "30s",
+    min_points: int = 40,
+) -> Traffic | None:
+    """Split flights at data gaps and discard short segments.
+
+    Returns a new :class:`Traffic` of clean segments, each tagged with
+    an ``original_flight_id`` column linking back to the source flight.
+    Returns ``None`` if no segment survives the filter.
+    """
+    segments: list[Flight] = []
+    for flight in traffic:
+        flight_id = f"{flight.icao24}_{flight.callsign or 'NOCALL'}"
+        for seg in flight.split(threshold):
+            if len(seg.data) >= min_points:
+                seg = seg.assign(original_flight_id=flight_id)
+                segments.append(seg)
+
+    log.info(
+        "gap_split_done",
+        flights=len(traffic),
+        segments=len(segments),
+        threshold=threshold,
+    )
+
+    if not segments:
+        return None
+    return Traffic.from_flights(segments)
+
+
+def preprocess(  # noqa: PLR0911, PLR0915
     *,
     config: Path,
     history_file: Path,
@@ -325,11 +357,7 @@ def preprocess(
                 "frame",
                 "onground",
             ]
-            return Flight(
-                result.drop(columns=drop_cols, errors="ignore").convert_dtypes(
-                    dtype_backend="pyarrow"
-                )
-            )
+            return Flight(result.drop(columns=drop_cols, errors="ignore"))
 
     class _DistanceADEPADES:
         def __init__(self, flights: pl.DataFrame) -> None:
@@ -360,11 +388,28 @@ def preprocess(
             """Generate flight ID: ``{date}_{typecode}_{idx:05}``."""
             return f"{s.date}_{self.typecode}_{idx:05}"
 
-    # --- Run pipeline ---
-    t_filtered = (
+    # --- Phase 1: Decode + Kalman filter (lazy, parallel) ---
+    t_decoded = (
         t_ext.iterate_lazy(iterate_kw={"by": "1h"})
         .pipe(_ExtendedDecoder(ext_pd))
         .filter()
+        .eval(desc="Phase 1 — decode + filter", max_workers=workers)
+    )
+
+    if t_decoded is None or len(t_decoded) == 0:
+        log.warning("preprocess_no_flights_after_decode", date=date)
+        return
+
+    # --- Split at data gaps to avoid artificial interpolation ---
+    t_segments = _split_at_gaps(t_decoded, threshold="30s", min_points=40)
+
+    if t_segments is None:
+        log.warning("preprocess_no_segments", date=date)
+        return
+
+    # --- Phase 2: Resample + aggressive filter (lazy, parallel) ---
+    t_filtered = (
+        t_segments.iterate_lazy()
         .resample("1s", how=None)
         .pipe(_DistanceADEPADES(fl_pl))
         .filter("aggressive")
@@ -375,8 +420,12 @@ def preprocess(
         )
         .merge(aircraft_pd)
         .assign_id(_FlightIdNamer(date))
-        .eval(desc="Processing", max_workers=workers)
+        .eval(desc="Phase 2 — resample + clean", max_workers=workers)
     )
+
+    if t_filtered is None or len(t_filtered) == 0:
+        log.warning("preprocess_no_flights_after_filter", date=date)
+        return
 
     try:
         t_filtered = t_filtered.drop_duplicates()
@@ -384,7 +433,7 @@ def preprocess(
         log.debug("drop_duplicates_skipped")
 
     t_filtered.to_parquet(processed)
-    log.info("preprocess_done", output=str(processed))
+    log.info("preprocess_done", output=str(processed), flights=len(t_filtered))
 
 
 # ---------------------------------------------------------------------------

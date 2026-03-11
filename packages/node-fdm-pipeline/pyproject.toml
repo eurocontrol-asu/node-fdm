@@ -24,6 +24,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
+traffic = ["traffic>=2.10", "pandas<3.0"]
 viz = ["matplotlib>=3.8", "altair>=5.0"]
 
 [project.scripts]
