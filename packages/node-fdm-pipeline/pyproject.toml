@@ -120,7 +120,13 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-fail-under=0",
 ]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    "ignore::DeprecationWarning:astor",
+    "ignore::DeprecationWarning:impunity",
+    "ignore:ast\\.Num is deprecated:DeprecationWarning",
+    "ignore:co_lnotab is deprecated:DeprecationWarning",
+]
 
 [tool.coverage.run]
 source_pkgs = ["node_fdm_pipeline"]

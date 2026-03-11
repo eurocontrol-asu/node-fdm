@@ -11,13 +11,14 @@ import pytest
 
 from node_fdm_pipeline.commands.data import (
     _require_traffic,
+    _split_at_gaps,
     aircraft_list,
     download,
     process,
 )
 
 if TYPE_CHECKING:
-    pass
+    from traffic.core import Flight
 
 
 class TestRequireTraffic:
@@ -297,3 +298,114 @@ class TestCLINewCommands:
         output = result.stdout + result.stderr
         assert result.returncode == 0
         assert "--dry-run" in output
+
+
+# ---------------------------------------------------------------------------
+# _split_at_gaps tests (requires traffic)
+# ---------------------------------------------------------------------------
+
+traffic = pytest.importorskip("traffic")
+
+
+def _make_flight(n_points: int, *, gap_at: int | None = None, gap_seconds: int = 60) -> Flight:
+    """Create a synthetic Flight with optional data gap.
+
+    Args:
+        n_points: Total number of data points.
+        gap_at: Index at which to insert a gap.  Points before ``gap_at``
+            are 1 s apart; after the gap the first timestamp jumps by
+            ``gap_seconds``.
+        gap_seconds: Duration of the gap in seconds.
+    """
+    import numpy as np
+    import pandas as pd
+    from traffic.core import Flight
+
+    # Build timestamps: 1s apart, with optional gap
+    times = []
+    t0 = pd.Timestamp("2025-01-01 12:00:00", tz="UTC")
+    for i in range(n_points):
+        if gap_at is not None and i == gap_at:
+            t0 += pd.Timedelta(seconds=gap_seconds)
+        times.append(t0)
+        t0 += pd.Timedelta(seconds=1)
+
+    return Flight(
+        pd.DataFrame(
+            {
+                "timestamp": times,
+                "icao24": ["abc123"] * n_points,
+                "callsign": ["TEST01"] * n_points,
+                "latitude": np.linspace(48.0, 49.0, n_points),
+                "longitude": np.linspace(2.0, 3.0, n_points),
+                "altitude": np.full(n_points, 35000.0),
+            }
+        )
+    )
+
+
+class TestSplitAtGaps:
+    """Tests for the ``_split_at_gaps`` helper function."""
+
+    def test_split_no_gap(self) -> None:
+        """Continuous flight → 1 segment with original_flight_id set."""
+        from traffic.core import Traffic
+
+        f = _make_flight(60)
+        t = Traffic.from_flights([f])
+        result = _split_at_gaps(t, threshold="30s", min_points=10)
+
+        assert result is not None
+        assert len(result) == 1
+        seg = next(iter(result))
+        assert "original_flight_id" in seg.data.columns
+        assert seg.data["original_flight_id"].iloc[0] == "abc123_TEST01"
+
+    def test_split_with_gap(self) -> None:
+        """Flight with 60s gap → 2 segments, both with same original_flight_id."""
+        from traffic.core import Traffic
+
+        f = _make_flight(80, gap_at=40, gap_seconds=60)
+        t = Traffic.from_flights([f])
+        result = _split_at_gaps(t, threshold="30s", min_points=10)
+
+        assert result is not None
+        assert len(result) == 2
+        segments = list(result)
+        # Both segments share the same original flight identity
+        ids = {seg.data["original_flight_id"].iloc[0] for seg in segments}
+        assert ids == {"abc123_TEST01"}
+
+    def test_split_short_segments_filtered(self) -> None:
+        """Segments shorter than min_points are discarded."""
+        from traffic.core import Traffic
+
+        # 50 pts total, gap at 5 → seg[0]=5 pts (too short), seg[1]=45 pts (ok)
+        f = _make_flight(50, gap_at=5, gap_seconds=60)
+        t = Traffic.from_flights([f])
+        result = _split_at_gaps(t, threshold="30s", min_points=10)
+
+        assert result is not None
+        assert len(result) == 1  # only the 45-pt segment survives
+
+    def test_split_all_filtered_returns_none(self) -> None:
+        """All segments too short → returns None."""
+        from traffic.core import Traffic
+
+        # 10 pts, gap at 5 → two segments of 5 pts each, both below min_points=20
+        f = _make_flight(10, gap_at=5, gap_seconds=60)
+        t = Traffic.from_flights([f])
+        result = _split_at_gaps(t, threshold="30s", min_points=20)
+
+        assert result is None
+
+    def test_split_empty_traffic(self) -> None:
+        """Traffic with only a tiny flight → returns None (all segments too short)."""
+        from traffic.core import Traffic
+
+        # 3 points — always below any reasonable min_points
+        f = _make_flight(3)
+        t = Traffic.from_flights([f])
+        result = _split_at_gaps(t, threshold="30s", min_points=10)
+
+        assert result is None

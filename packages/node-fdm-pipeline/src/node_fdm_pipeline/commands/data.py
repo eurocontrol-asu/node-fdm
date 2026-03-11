@@ -211,12 +211,19 @@ def _split_at_gaps(
     an ``original_flight_id`` column linking back to the source flight.
     Returns ``None`` if no segment survives the filter.
     """
+    from traffic.core import Traffic  # lazy — optional dep
+
     segments: list[Flight] = []
+    seg_idx = 0
     for flight in traffic:
         flight_id = f"{flight.icao24}_{flight.callsign or 'NOCALL'}"
         for seg in flight.split(threshold):
             if len(seg.data) >= min_points:
-                seg = seg.assign(original_flight_id=flight_id)
+                seg = seg.assign(
+                    original_flight_id=flight_id,
+                    flight_id=f"{flight_id}_s{seg_idx}",
+                )
+                seg_idx += 1
                 segments.append(seg)
 
     log.info(
