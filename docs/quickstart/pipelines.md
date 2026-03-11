@@ -54,26 +54,26 @@ This reference pipeline processes public ADS-B data using the `fdm` CLI.
 
     **1. Aircraft Sampling**
     ```bash
-    fdm aircraft-list config.yaml
+    fdm aircraft-list --config config.yaml
     ```
     * *Input*: Trino SQL connection
     * *Output*: `data/aircraft_db.csv`
 
     **2. Download Raw Data**
     ```bash
-    fdm download config.yaml
+    fdm download --config config.yaml
     ```
     * *Output*: `data/downloaded_parquet/`
 
     **3. Decode & Resample**
     ```bash
-    fdm preprocess config.yaml
+    fdm preprocess --config config.yaml
     ```
     * *Note*: Handles ADEP/ADES distance computation
 
     **4. Enrichment**
     ```bash
-    fdm enrich config.yaml
+    fdm enrich --config config.yaml
     ```
     * *Output*: Enriched files in `data/processed_flights/<TYPECODE>/`
 
@@ -81,7 +81,7 @@ This reference pipeline processes public ADS-B data using the `fdm` CLI.
 
     **5. Train Model**
     ```bash
-    fdm train config.yaml
+    fdm train --config config.yaml
     ```
     * *Uses*: `ODETrainer` with `TrainingConfig` (Pydantic)
     * *Output*: Checkpoints in `models/opensky_<TYPECODE>/`
@@ -90,16 +90,16 @@ This reference pipeline processes public ADS-B data using the `fdm` CLI.
 
     **6. Inference (Rollouts)**
     ```bash
-    fdm predict config.yaml
+    fdm predict --config config.yaml
     ```
     * *Output*: `data/predicted_flights/<TYPECODE>/`
 
     **7. Baselines & Metrics**
 
-    * `fdm predict-bada config.yaml`: BADA 4.2 physical baseline (requires BADA files)
-    * `fdm visualize config.yaml`: Overlay plots (Ground Truth vs Model vs BADA)
-    * `fdm evaluate config.yaml`: MAE/MAPE metrics per flight phase
-    * `fdm dataset-stats config.yaml`: Coverage statistics
+    * `fdm predict-bada --config config.yaml`: BADA 4.2 physical baseline (requires BADA files)
+    * `fdm visualize --config config.yaml`: Overlay plots (Ground Truth vs Model vs BADA)
+    * `fdm evaluate --config config.yaml`: MAE/MAPE metrics per flight phase
+    * `fdm dataset-stats --config config.yaml`: Coverage statistics
 
 ---
 

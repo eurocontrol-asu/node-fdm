@@ -1,0 +1,45 @@
+# node-fdm-v2 pipeline configuration
+# Copy to config.yaml and adjust paths for your machine:
+#   cp config.example.yaml config.yaml
+
+paths:
+  data_dir: "/path/to/your/data"       # ← CHANGE THIS (absolute path)
+  download_dir: "downloaded_parquet"
+  preprocess_dir: "preprocessed_parquet"
+  era5_cache_dir: "era5_cache"
+
+era5_features:
+  - u_component_of_wind
+  - v_component_of_wind
+  - temperature
+
+typecodes:
+  - A320
+  - A20N
+  - A321
+  - A21N
+  - B738
+  - B38M
+  - E190
+  - E195
+  - A319
+  - A332
+  - A333
+
+computing:
+  default_cpu_count: 35
+
+bada:
+  bada_4_2_dir: "/path/to/BADA/4.2.1"  # ← CHANGE THIS (if using BADA)
+
+# Selected-parameter filter thresholds (v2 defaults below).
+# Uncomment and modify to override.
+# selected_params:
+#   mach:
+#     tol: 0.0005
+#     min_len: 120
+#     alt_threshold: 15000
+#   cas:
+#     tol: 0.75
+#   vz:
+#     min_abs_value: 75

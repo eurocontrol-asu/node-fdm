@@ -14,3 +14,9 @@ build/
 .coverage
 htmlcov/
 site/
+
+# Flight data (parquet, models, figures — too large for git)
+data/
+
+# Machine-specific config (use config.example.yaml as template)
+config.yaml

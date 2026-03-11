@@ -84,28 +84,28 @@ All commands take a `config.yaml` as first argument (see **[Configure Project](h
 
 ```bash
 # 1. Data acquisition
-fdm aircraft-list config.yaml    # List aircraft types in scope
-fdm download config.yaml         # Download ADS-B parquet from OpenSky
+fdm aircraft-list --config config.yaml    # List aircraft types in scope
+fdm download --config config.yaml         # Download ADS-B parquet from OpenSky
 
 # 2. Preprocessing
-fdm preprocess config.yaml       # Clean, filter, unit-convert raw data
-fdm enrich config.yaml           # Add ERA5 meteorological features
+fdm preprocess --config config.yaml       # Clean, filter, unit-convert raw data
+fdm enrich --config config.yaml           # Add ERA5 meteorological features
 
 # 3. Processing
-fdm process config.yaml          # Segment + filter steady-state phases
+fdm process --config config.yaml          # Segment + filter steady-state phases
 
 # 4. Training
-fdm train config.yaml            # Train Neural ODE model
+fdm train --config config.yaml            # Train Neural ODE model
 
 # 5. Evaluation
-fdm predict config.yaml          # Run model predictions
-fdm predict-bada config.yaml     # BADA 4.2 physical baseline
-fdm evaluate config.yaml         # Compute MAE/MAPE per flight phase
+fdm predict --config config.yaml          # Run model predictions
+fdm predict-bada --config config.yaml     # BADA 4.2 physical baseline
+fdm evaluate --config config.yaml         # Compute MAE/MAPE per flight phase
 
 # 6. Visualization
-fdm visualize config.yaml        # Overlay plots (GT vs Model vs BADA)
-fdm dataset-stats config.yaml    # Coverage statistics
-fdm plot-performance config.yaml # Performance comparison plots
+fdm visualize --config config.yaml        # Overlay plots (GT vs Model vs BADA)
+fdm dataset-stats --config config.yaml    # Coverage statistics
+fdm plot-performance --config config.yaml # Performance comparison plots
 ```
 
 ---
