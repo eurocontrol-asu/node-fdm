@@ -331,7 +331,7 @@ def _split_at_gaps(
     return Traffic.from_flights(segments)
 
 
-def preprocess(  # noqa: PLR0911
+def preprocess(  # noqa: PLR0911, PLR0915
     *,
     config: Path,
     history_file: Path,
@@ -386,7 +386,11 @@ def preprocess(  # noqa: PLR0911
     aircraft_csv = cfg.paths.data_dir / "aircraft_db.csv"
 
     ext_pl = pl.read_parquet(extended)
-    fl_pl = pl.read_parquet(flightlist)
+    fl_pl_raw = pl.read_parquet(flightlist)
+    fl_pl = fl_pl_raw.filter(pl.col("departure").is_not_null() & pl.col("arrival").is_not_null())
+    n_dropped = len(fl_pl_raw) - len(fl_pl)
+    if n_dropped:
+        log.info("flightlist_filtered", kept=len(fl_pl), dropped=n_dropped)
     aircraft_pl = pl.read_csv(aircraft_csv)
 
     # --- EHS decode filter (traffic interop → pandas) ---
@@ -445,6 +449,30 @@ def preprocess(  # noqa: PLR0911
         t_filtered = t_filtered.drop_duplicates()
     except Exception:  # noqa: BLE001
         log.debug("drop_duplicates_skipped")
+
+    # --- Drop flights without valid ADEP/ADES distances ---
+    n_before = len(t_filtered)
+    data = t_filtered.data
+    valid_ids = (
+        data.groupby("flight_id")
+        .filter(lambda g: g["adep_dist"].notna().any() and g["ades_dist"].notna().any())
+        .flight_id.unique()
+    )
+    data = data[data.flight_id.isin(valid_ids)]
+    n_after = data.flight_id.nunique()
+    if n_after < n_before:
+        log.info(
+            "preprocess_dist_filter",
+            kept=n_after,
+            dropped=n_before - n_after,
+        )
+    if n_after == 0:
+        log.warning("preprocess_no_flights_with_distances", date=date)
+        return
+
+    from traffic.core import Traffic
+
+    t_filtered = Traffic(data)
 
     t_filtered.to_parquet(processed)
     log.info("preprocess_done", output=str(processed), flights=len(t_filtered))
