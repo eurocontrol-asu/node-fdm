@@ -483,17 +483,25 @@ def preprocess(  # noqa: PLR0911, PLR0915
 # ---------------------------------------------------------------------------
 
 
-def process(  # noqa: PLR0915
+def process(  # noqa: PLR0915, PLR0912
     *,
     arch: str,
     config: Path,
     dry_run: bool = False,
 ) -> None:
-    """Process preprocessed flight data and create train/val/test split.
+    """Process preprocessed flight data with full estimation pipeline.
 
-    Applies ``flight_processing()`` from the architecture's preprocessing
-    module to each preprocessed parquet file, then runs ``split_by_icao()``
-    to create a deterministic train/val/test partition.
+    Pipeline stages:
+
+    1. Load preprocessed parquet files
+    2. Drop BDS / unused columns
+    3. ERA5 weather interpolation (``fastmeteo``)
+    4. Recompute TAS from wind + groundspeed
+    5. Recompute Mach / CAS from TAS + altitude + temperature
+    6. Per-flight: segment-based selected param estimation
+    7. Derived columns (``gamma_air``, ``long_wind``, distance)
+    8. Distance-jump cropping + adep/ades distance validation
+    9. Train/val/test split by typecode
 
     Args:
         arch: Architecture name (opensky or qar).
@@ -501,12 +509,17 @@ def process(  # noqa: PLR0915
         dry_run: Validate config without performing I/O.
     """
     import polars as pl
+    from node_fdm_data.meteo import compute_mach_and_cas, compute_tas
+    from node_fdm_data.preprocessing.opensky import (
+        crop_on_distance_jump,
+        cumulative_distance,
+        flight_processing,
+    )
+    from node_fdm_data.segments import build_selected_params
 
     from node_fdm_pipeline.config import PipelineConfig
-    from node_fdm_pipeline.resolver import resolve_architecture
 
     cfg = PipelineConfig.from_yaml(config)
-    info = resolve_architecture(arch)
 
     preprocess_dir = cfg.paths.resolve("preprocess_dir")
     process_dir = cfg.paths.resolve("process_dir")
@@ -524,7 +537,27 @@ def process(  # noqa: PLR0915
         log.warning("process_empty_dir", dir=str(preprocess_dir))
         return
 
-    # Process each file through architecture-specific flight_processing
+    # --- ERA5 weather interpolation ---
+    try:
+        from fastmeteo import Grid as ArcoEra5
+    except ImportError:
+        log.error(
+            "fastmeteo_missing",
+            msg="fastmeteo is required for weather interpolation. "
+            "Install with: pip install fastmeteo",
+        )
+        raise SystemExit(1) from None
+
+    era5_cache = cfg.paths.resolve("era5_cache_dir")
+    era5_cache.mkdir(parents=True, exist_ok=True)
+    arco_grid = ArcoEra5(local_store=str(era5_cache))
+
+    # --- Selected params config ---
+    sel_config = cfg.selected_params.model_dump()
+
+    # Columns to drop (BDS / raw unused)
+    drop_cols = ["bds05", "bds18", "bds19", "bds21", "selected_fms", "target_source"]
+
     for file in parquet_files:
         output = process_dir / file.name
         if output.exists():
@@ -532,18 +565,101 @@ def process(  # noqa: PLR0915
             continue
 
         log.info("process_file", file=file.name)
-        df = pl.read_parquet(file).lazy()
-        processed = info.preprocessing_fn(df).collect()
-        processed.write_parquet(output)
-        log.info("process_file_done", file=file.name, rows=len(processed))
+        df = pl.read_parquet(file)
 
-    # Create train/val/test split from data (by typecode groups)
+        # Stage 1: Drop unused columns
+        existing_drops = [c for c in drop_cols if c in df.columns]
+        if existing_drops:
+            df = df.drop(existing_drops)
+        df = df.unique()
+
+        # Stage 2: ERA5 weather interpolation (pandas interop)
+        pd_df = df.to_pandas()
+        if "timestamp" in pd_df.columns:
+            pd_df = pd_df.rename(columns={"timestamp": "time"})
+        pd_df = arco_grid.interpolate(pd_df)
+        df = pl.from_pandas(pd_df)
+        log.info("process_era5_done", file=file.name, cols=len(df.columns))
+
+        # Stage 3: Recompute TAS from wind + GS
+        gs_col = "groundspeed" if "groundspeed" in df.columns else "gs_kt"
+        if "u_component_of_wind" in df.columns and "track" in df.columns:
+            df = df.with_columns(
+                compute_tas(gs_col, "track", "u_component_of_wind", "v_component_of_wind").alias(
+                    "TAS"
+                ),
+            )
+
+        # Stage 4: Recompute Mach/CAS from TAS + altitude + temperature
+        tas_col = "TAS" if "TAS" in df.columns else "tas_kt"
+        alt_col = "altitude" if "altitude" in df.columns else "altitude_ft"
+        if tas_col in df.columns and "temperature" in df.columns:
+            mach_arr, cas_arr = compute_mach_and_cas(
+                df[tas_col].to_numpy(),
+                df[alt_col].to_numpy(),
+                df["temperature"].to_numpy(),
+            )
+            df = df.with_columns(
+                pl.Series("Mach", mach_arr),
+                pl.Series("CAS", cas_arr),
+            )
+
+        # Stage 5: Per-flight processing (segment estimation + derived columns)
+        processed_flights: list[pl.DataFrame] = []
+        flight_groups = df.partition_by("flight_id", maintain_order=True)
+
+        for flight_df in flight_groups:
+            try:
+                # Segment-based selected parameter estimation
+                flight_df = build_selected_params(flight_df, sel_config)
+
+                # Rename + derived columns (gamma_air, long_wind, alt_diff, fill nulls)
+                flight_df = flight_processing(flight_df.lazy()).collect()
+
+                # Cumulative distance
+                if "latitude" in flight_df.columns and "longitude" in flight_df.columns:
+                    flight_df = cumulative_distance(flight_df)
+
+                    # Crop on distance jumps
+                    flight_df = crop_on_distance_jump(flight_df)
+
+                # Filter: only keep flights with valid adep_dist and ades_dist
+                has_adep = "adep_dist" in flight_df.columns
+                has_ades = "ades_dist" in flight_df.columns
+                if has_adep and has_ades:
+                    null_adep = flight_df["adep_dist"].is_null().sum()
+                    null_ades = flight_df["ades_dist"].is_null().sum()
+                    if null_adep > 0 or null_ades > 0:
+                        continue  # skip flight
+
+                if len(flight_df) > 0:
+                    processed_flights.append(flight_df)
+
+            except Exception as exc:  # noqa: BLE001
+                fid = flight_df["flight_id"][0] if len(flight_df) > 0 else "unknown"
+                log.warning("process_flight_error", flight_id=fid, error=str(exc))
+
+        if not processed_flights:
+            log.warning("process_no_valid_flights", file=file.name)
+            continue
+
+        result = pl.concat(processed_flights, how="diagonal_relaxed")
+        result.write_parquet(output)
+        log.info(
+            "process_file_done",
+            file=file.name,
+            rows=len(result),
+            flights=len(processed_flights),
+            columns=len(result.columns),
+        )
+
+    # --- Create train/val/test split from data ---
     all_frames = [pl.read_parquet(f) for f in sorted(process_dir.glob("*.parquet"))]
     if not all_frames:
         log.warning("process_no_files_for_split")
         return
 
-    combined = pl.concat(all_frames)
+    combined = pl.concat(all_frames, how="diagonal_relaxed")
     flights = combined.select("flight_id", "typecode").unique()
 
     import random

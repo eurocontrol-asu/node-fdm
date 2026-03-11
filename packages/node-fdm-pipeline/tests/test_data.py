@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 from unittest.mock import patch
 
 import polars as pl
@@ -42,7 +42,7 @@ class TestProcessCommand:
         process(arch="opensky", config=tmp_config, dry_run=True)
         # No files should be created beyond the config dir
 
-    def test_process_empty_preprocess_dir(self, tmp_path: Path) -> None:
+    def test_process_empty_preprocess_dir(self, tmp_path: Path, mocker: Any) -> None:
         """Warning log and clean return when no parquet files found."""
         # Create a config pointing at an empty preprocess dir
         data_dir = tmp_path / "data"
@@ -63,18 +63,25 @@ typecodes:
 """
         )
 
+        mocker.patch.dict(
+            "sys.modules",
+            {"fastmeteo": mocker.MagicMock(Grid=mocker.MagicMock())},
+        )
+
         process(arch="opensky", config=config, dry_run=False)
 
         # No output files — clean return on empty dir
         assert not process_dir.exists() or len(list(process_dir.iterdir())) == 0
 
-    def test_process_single_file(self, tmp_path: Path) -> None:
+    def test_process_single_file(self, tmp_path: Path, mocker: Any) -> None:
         """Process a synthetic parquet and verify output exists."""
         data_dir = tmp_path / "data"
         preprocess_dir = data_dir / "preprocess"
         preprocess_dir.mkdir(parents=True)
         process_dir = data_dir / "process"
         process_dir.mkdir(parents=True)
+        era5_cache = data_dir / "era5_cache"
+        era5_cache.mkdir(parents=True)
 
         config = tmp_path / "config.yaml"
         config.write_text(
@@ -83,40 +90,68 @@ paths:
   data_dir: "{data_dir}"
   preprocess_dir: "preprocess"
   process_dir: "process"
+  era5_cache_dir: "era5_cache"
 
 typecodes:
   - A320
 """
         )
 
-        # Create a synthetic parquet with columns flight_processing expects
+        n = 50
+        # Create a synthetic parquet with all required columns
         df = pl.DataFrame(
             {
-                "flight_id": ["F001"] * 10,
-                "timestamp": list(range(10)),
-                "altitude_ft": [35000.0 + i * 100 for i in range(10)],
-                "alt_sel_ft": [35000.0] * 10,
-                "vz_sel_ftmin": [0.0] * 10,
-                "mach_sel": [0.82] * 10,
-                "cas_sel_kt": [280.0] * 10,
-                "groundspeed": [450.0 + i for i in range(10)],
-                "vertical_rate": [0.0] * 10,
-                "latitude": [48.0 + i * 0.01 for i in range(10)],
-                "longitude": [2.0 + i * 0.01 for i in range(10)],
-                "track": [90.0] * 10,
-                "typecode": ["A320"] * 10,
-                "icao24": ["abc123"] * 10,
+                "flight_id": ["F001"] * n,
+                "timestamp": list(range(n)),
+                "altitude": [35000.0 + i * 10 for i in range(n)],
+                "selected_mcp": [35000.0] * n,
+                "vertical_rate": [100.0] * n,
+                "Mach": [0.78] * n,
+                "IAS": [280.0] * n,
+                "TAS": [450.0] * n,
+                "groundspeed": [440.0 + i * 0.1 for i in range(n)],
+                "latitude": [48.0 + i * 0.01 for i in range(n)],
+                "longitude": [2.0 + i * 0.01 for i in range(n)],
+                "track": [90.0] * n,
+                "typecode": ["A320"] * n,
+                "icao24": ["abc123"] * n,
+                "adep_dist": [100.0 - i for i in range(n)],
+                "ades_dist": [float(i * 2) for i in range(n)],
             }
         )
         df.write_parquet(preprocess_dir / "processed_20250101.parquet")
 
-        # Process — flight_processing renames columns and adds alt_diff_ft
+        # Mock fastmeteo — interpolate adds weather columns
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            pdf["temperature"] = 220.0
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        mock_grid_cls = mocker.MagicMock()
+        mock_grid_instance = mocker.MagicMock()
+        mock_grid_instance.interpolate.side_effect = fake_interpolate
+        mock_grid_cls.return_value = mock_grid_instance
+
+        mocker.patch.dict(
+            "sys.modules",
+            {"fastmeteo": mocker.MagicMock(Grid=mock_grid_cls)},
+        )
+
         process(arch="opensky", config=config, dry_run=False)
 
         output = process_dir / "processed_20250101.parquet"
         assert output.exists()
 
-    def test_process_skip_existing(self, tmp_path: Path) -> None:
+        # Verify output has the new derived columns
+        result = pl.read_parquet(output)
+        assert "gamma_air" in result.columns
+        assert "long_wind" in result.columns
+        assert "mach_sel" in result.columns
+        assert "distance_along_track_m" in result.columns
+
+    def test_process_skip_existing(self, tmp_path: Path, mocker: Any) -> None:
         """Already-processed files are skipped."""
         data_dir = tmp_path / "data"
         preprocess_dir = data_dir / "preprocess"
@@ -135,6 +170,11 @@ paths:
 typecodes:
   - A320
 """
+        )
+
+        mocker.patch.dict(
+            "sys.modules",
+            {"fastmeteo": mocker.MagicMock(Grid=mocker.MagicMock())},
         )
 
         # Create input AND output so it should skip

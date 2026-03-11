@@ -18,6 +18,8 @@ dependencies = [
     "node-fdm",
     "node-fdm-bada",
     "cyclopts>=4.5",
+    "fastmeteo>=1.0",
+    "pandas<3.0",
     "pydantic>=2.0",
     "structlog>=24.0",
     "pyyaml>=6.0",
@@ -99,7 +101,7 @@ module = ["node_fdm_pipeline.cli"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["torch.*", "torchdiffeq.*", "polars.*", "yaml.*", "cyclopts.*", "structlog.*", "traffic.*", "pandas.*"]
+module = ["torch.*", "torchdiffeq.*", "polars.*", "yaml.*", "cyclopts.*", "structlog.*", "traffic.*", "pandas.*", "fastmeteo.*", "numpy.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
