@@ -25,16 +25,35 @@ UPPER_THR: int = 3000
 def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
     """Prepare OpenSky flight data for model training.
 
-    * Computes ``alt_diff_ft = alt_sel_ft - altitude_ft``
-    * Fills null values in control columns with ``0.0``
+    Renames raw *traffic* columns to normalised schema names, computes
+    ``alt_diff_ft = alt_sel_ft - altitude_ft``, and fills null control
+    inputs with ``0.0``.
+
+    The rename step is idempotent: columns that already carry the
+    target name are left untouched.
 
     Args:
-        df: LazyFrame containing at least ``altitude_ft``, ``alt_sel_ft``,
-            ``vz_sel_ftmin``, ``mach_sel``, ``cas_sel_kt``.
+        df: LazyFrame from the preprocess step (traffic column names)
+            or already-renamed data.
 
     Returns:
-        LazyFrame with derived columns added and nulls filled.
+        LazyFrame with normalised names, derived columns, and nulls filled.
     """
+    # --- Rename traffic → schema (skip if already renamed) ---
+    col_rename: dict[str, str] = {
+        "altitude": "altitude_ft",
+        "selected_mcp": "alt_sel_ft",
+        "vertical_rate": "vz_sel_ftmin",
+        "Mach": "mach_sel",
+        "IAS": "cas_sel_kt",
+        "TAS": "tas_kt",
+        "groundspeed": "gs_kt",
+    }
+    schema = df.collect_schema()
+    rename = {k: v for k, v in col_rename.items() if k in schema and v not in schema}
+    if rename:
+        df = df.rename(rename)
+
     return df.with_columns(
         (pl.col("alt_sel_ft") - pl.col("altitude_ft")).alias("alt_diff_ft"),
         pl.col("vz_sel_ftmin").fill_null(0.0),

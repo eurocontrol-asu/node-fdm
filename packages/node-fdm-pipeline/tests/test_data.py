@@ -110,14 +110,8 @@ typecodes:
         )
         df.write_parquet(preprocess_dir / "processed_20250101.parquet")
 
-        # Process — flight_processing may filter out short segments,
-        # but should still produce an output file.
-        # Mock split_by_icao since file naming doesn't match expected convention
-        mock_split = pl.DataFrame(
-            {"filepath": ["processed_20250101.parquet"], "icao": ["A320"], "split": ["train"]}
-        )
-        with patch("node_fdm_data.split.split_by_icao", return_value=mock_split):
-            process(arch="opensky", config=config, dry_run=False)
+        # Process — flight_processing renames columns and adds alt_diff_ft
+        process(arch="opensky", config=config, dry_run=False)
 
         output = process_dir / "processed_20250101.parquet"
         assert output.exists()
@@ -146,7 +140,8 @@ typecodes:
         # Create input AND output so it should skip
         df = pl.DataFrame({"x": [1, 2, 3]})
         df.write_parquet(preprocess_dir / "file.parquet")
-        df.write_parquet(process_dir / "file.parquet")
+        df_out = pl.DataFrame({"flight_id": ["F1", "F2"], "typecode": ["A320", "A320"]})
+        df_out.write_parquet(process_dir / "file.parquet")
 
         # Should not raise — skip with info log
         process(arch="opensky", config=config, dry_run=False)

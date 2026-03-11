@@ -483,7 +483,7 @@ def preprocess(  # noqa: PLR0911, PLR0915
 # ---------------------------------------------------------------------------
 
 
-def process(
+def process(  # noqa: PLR0915
     *,
     arch: str,
     config: Path,
@@ -537,10 +537,48 @@ def process(
         processed.write_parquet(output)
         log.info("process_file_done", file=file.name, rows=len(processed))
 
-    # Create train/val/test split
-    from node_fdm_data.split import split_by_icao
+    # Create train/val/test split from data (by typecode groups)
+    all_frames = [pl.read_parquet(f) for f in sorted(process_dir.glob("*.parquet"))]
+    if not all_frames:
+        log.warning("process_no_files_for_split")
+        return
 
-    split_df = split_by_icao(process_dir)
+    combined = pl.concat(all_frames)
+    flights = combined.select("flight_id", "typecode").unique()
+
+    import random
+
+    rng = random.Random(42)  # noqa: S311
+    typecodes = sorted(flights["typecode"].unique().to_list())
+    rng.shuffle(typecodes)
+
+    # Assign typecodes to splits (70/15/15)
+    total = len(flights)
+    train_target = int(total * 0.7)
+    running = 0
+    train_tc: set[str] = set()
+    val_tc: set[str] = set()
+    for tc in typecodes:
+        n = flights.filter(pl.col("typecode") == tc).height
+        if running < train_target:
+            train_tc.add(tc)
+            running += n
+        else:
+            break
+    remaining = [tc for tc in typecodes if tc not in train_tc]
+    mid = len(remaining) // 2
+    val_tc = set(remaining[:mid]) if remaining else set()
+
+    def _assign(tc: str) -> str:
+        if tc in train_tc:
+            return "train"
+        if tc in val_tc:
+            return "val"
+        return "test"
+
+    split_series = flights["typecode"].map_elements(_assign, return_dtype=pl.Utf8)
+    split_df = flights.with_columns(split_series.alias("split"))
+
     split_csv = process_dir / "dataset_split.csv"
     split_df.write_csv(split_csv)
     log.info("process_split_done", flights=len(split_df), output=str(split_csv))
