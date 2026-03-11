@@ -10,5 +10,6 @@ __all__ = [
     "preprocessing",
     "processor",
     "schemas",
+    "segments",
     "split",
 ]
