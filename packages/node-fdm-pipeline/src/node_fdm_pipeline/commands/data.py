@@ -16,6 +16,7 @@ from typing import TYPE_CHECKING
 import structlog
 
 if TYPE_CHECKING:
+    import polars as pl
     from traffic.core import Flight, Traffic
 
 __all__ = [
@@ -199,6 +200,98 @@ def download(
 # ---------------------------------------------------------------------------
 
 
+class _ExtendedDecoder:
+    """Decode EHS data and expand BDS columns."""
+
+    def __init__(self, rawdata: object = None) -> None:
+        self.rawdata = rawdata
+
+    def __call__(self, flight: Flight) -> Flight | None:
+        from datetime import timedelta
+
+        import pandas as pd
+        from traffic.core import Flight as _Flight
+
+        if flight.duration < timedelta(minutes=4):
+            return None
+        decoded = flight.query_ehs(self.rawdata)
+        for bds in ("bds40", "bds50", "bds60"):
+            if bds not in decoded.data.columns:
+                return None
+        exp60 = decoded.data["bds60"].apply(pd.Series)
+        exp50 = (
+            decoded.data["bds50"]
+            .apply(pd.Series)
+            .drop(
+                columns=["groundspeed", "track"],
+            )
+        )
+        exp40 = decoded.data["bds40"].apply(pd.Series)
+        result = pd.concat(
+            [
+                decoded.data.drop(columns=["bds40", "bds50", "bds60"]),
+                exp40,
+                exp50,
+                exp60,
+            ],
+            axis=1,
+        )
+        drop_cols = [
+            "metadata",
+            "squawk",
+            "bds20",
+            "bds17",
+            "bds18",
+            "bds19",
+            "bds21",
+            "bds45",
+            "bds10",
+            "bds44",
+            "bds30",
+            0,
+            "bds",
+            "serials",
+            "alert",
+            "spi",
+            "geoaltitude",
+            "vrate_barometric",
+            "vrate_inertial",
+            "barometric_setting",
+            "selected_fms",
+            "target_source",
+            "df",
+            "frame",
+            "onground",
+        ]
+        return _Flight(result.drop(columns=drop_cols, errors="ignore"))
+
+
+class _DistanceADEPADES:
+    """Compute distance to departure/arrival airports."""
+
+    def __init__(self, flights: pl.DataFrame) -> None:
+        self._flights_pd = flights.to_pandas()
+
+    def __call__(self, flight: Flight) -> Flight:
+        from traffic.data import airports
+
+        candidate = self._flights_pd.query(
+            "icao24 == @flight.icao24 and "
+            "@flight.start < lastseen and @flight.stop > firstseen and "
+            "departure.notnull() and arrival.notnull()"
+        )
+        if candidate.shape[0] == 0:
+            return flight
+        adep = candidate.iloc[0].departure
+        ades = candidate.iloc[0].arrival
+        try:
+            flight = flight.distance(airports[adep], column_name="adep_dist")
+            flight = flight.distance(airports[ades], column_name="ades_dist")
+        except Exception:  # noqa: BLE001
+            log.debug("distance_failed", icao24=flight.icao24)
+        return flight
+
+
 def _split_at_gaps(
     traffic: Traffic,
     *,
@@ -238,7 +331,7 @@ def _split_at_gaps(
     return Traffic.from_flights(segments)
 
 
-def preprocess(  # noqa: PLR0911, PLR0915
+def preprocess(  # noqa: PLR0911
     *,
     config: Path,
     history_file: Path,
@@ -278,10 +371,7 @@ def preprocess(  # noqa: PLR0911, PLR0915
         return
 
     # Lazy imports — requires traffic
-    from datetime import timedelta as _td
-
-    from traffic.core import Flight, Traffic
-    from traffic.data import airports
+    from traffic.core import Traffic
 
     # --- Load data ---
     t = Traffic.from_file(history_file)
@@ -300,8 +390,6 @@ def preprocess(  # noqa: PLR0911, PLR0915
     aircraft_pl = pl.read_csv(aircraft_csv)
 
     # --- EHS decode filter (traffic interop → pandas) ---
-    import pandas as pd
-
     ext_pd = ext_pl.to_pandas()
     icao24_filtered = (
         ext_pd.groupby(["icao24"]).count().query("rawmsg > 50").reset_index().icao24.to_list()
@@ -312,88 +400,7 @@ def preprocess(  # noqa: PLR0911, PLR0915
         return
 
     aircraft_pd = aircraft_pl.select("icao24", "registration", "typecode").to_pandas()
-
-    # --- Build preprocessing pipeline ---
-    class _ExtendedDecoder:
-        def __init__(self, rawdata: object = None) -> None:
-            self.rawdata = rawdata
-
-        def __call__(self, flight: Flight) -> Flight | None:
-            if flight.duration < _td(minutes=4):
-                return None
-            decoded = flight.query_ehs(self.rawdata)
-            for bds in ("bds40", "bds50", "bds60"):
-                if bds not in decoded.data.columns:
-                    return None
-            exp60 = decoded.data["bds60"].apply(pd.Series)
-            exp50 = decoded.data["bds50"].apply(pd.Series).drop(columns=["groundspeed", "track"])
-            exp40 = decoded.data["bds40"].apply(pd.Series)
-            result = pd.concat(
-                [
-                    decoded.data.drop(columns=["bds40", "bds50", "bds60"]),
-                    exp40,
-                    exp50,
-                    exp60,
-                ],
-                axis=1,
-            )
-            drop_cols = [
-                "metadata",
-                "squawk",
-                "bds20",
-                "bds17",
-                "bds18",
-                "bds19",
-                "bds21",
-                "bds45",
-                "bds10",
-                "bds44",
-                "bds30",
-                0,
-                "bds",
-                "serials",
-                "alert",
-                "spi",
-                "geoaltitude",
-                "vrate_barometric",
-                "vrate_inertial",
-                "barometric_setting",
-                "selected_fms",
-                "target_source",
-                "df",
-                "frame",
-                "onground",
-            ]
-            return Flight(result.drop(columns=drop_cols, errors="ignore"))
-
-    class _DistanceADEPADES:
-        def __init__(self, flights: pl.DataFrame) -> None:
-            self._flights_pd = flights.to_pandas()
-
-        def __call__(self, flight: Flight) -> Flight:
-            candidate = self._flights_pd.query(
-                "icao24 == @flight.icao24 and "
-                "@flight.start < lastseen and @flight.stop > firstseen and "
-                "departure.notnull() and arrival.notnull()"
-            )
-            if candidate.shape[0] == 0:
-                return flight
-            adep = candidate.iloc[0].departure
-            ades = candidate.iloc[0].arrival
-            try:
-                flight = flight.distance(airports[adep], column_name="adep_dist")
-                flight = flight.distance(airports[ades], column_name="ades_dist")
-            except Exception:  # noqa: BLE001
-                log.debug("distance_failed", icao24=flight.icao24)
-            return flight
-
-    class _FlightIdNamer:
-        def __init__(self, date: str) -> None:
-            self.date = date
-
-        def format(s, self: Flight, idx: int) -> str:  # noqa: N805
-            """Generate flight ID: ``{date}_{typecode}_{idx:05}``."""
-            return f"{s.date}_{self.typecode}_{idx:05}"
+    # --- Build preprocessing pipeline (classes at module level for pickling) ---
 
     # --- Phase 1: Decode + Kalman filter (lazy, parallel) ---
     t_decoded = (
@@ -426,7 +433,7 @@ def preprocess(  # noqa: PLR0911, PLR0915
             errors="ignore",
         )
         .merge(aircraft_pd)
-        .assign_id(_FlightIdNamer(date))
+        .assign_id(f"{date}_{{self.typecode}}_{{idx:>05}}")
         .eval(desc="Phase 2 — resample + clean", max_workers=workers)
     )
 
