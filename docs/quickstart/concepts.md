@@ -88,17 +88,21 @@ graph LR
     subgraph Architecture Definition
         direction TB
         Hook1[[flight_processing]]
+        Hook3[[augment_lateral]]
         Hook2[[segment_filtering]]
     end
 
-    Hook1 -->|Augmented Data| Hook2
+    Hook1 -->|Derived Columns| Hook3
+    Hook3 -->|+ Lateral| Hook2
     Hook2 -->|Clean Data| Train[Training Set]
 
     style Hook1 fill:#FFF9C4,stroke:#FBC02D
     style Hook2 fill:#FFF9C4,stroke:#FBC02D
+    style Hook3 fill:#C8E6C9,stroke:#43A047
 ```
 
-* **`flight_processing`**: Augments raw data before training (e.g., computing `alt_diff`, smoothing signals).
+* **`flight_processing`**: Augments raw data before training (e.g., computing `alt_diff`, `gamma_air`, smoothing signals).
+* **`augment_lateral`**: Adds lateral dynamics columns — turn detection, orthodromic/rhumb bearings, drift angle, and lateral wind component.
 * **`segment_filtering`**: Removes poor-quality segments based on domain-specific rules.
 
 These hooks are referenced in the `ArchitectureSpec` as dotted paths and resolved at runtime.

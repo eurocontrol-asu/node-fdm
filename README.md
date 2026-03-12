@@ -89,10 +89,9 @@ fdm download --config config.yaml         # Download ADS-B parquet from OpenSky
 
 # 2. Preprocessing
 fdm preprocess --config config.yaml       # Clean, filter, unit-convert raw data
-fdm enrich --config config.yaml           # Add ERA5 meteorological features
 
-# 3. Processing
-fdm process --config config.yaml          # Segment + filter steady-state phases
+# 3. Processing (ERA5, segments, lateral)
+fdm process --arch opensky --config config.yaml  # Weather + derived columns + lateral augmentation
 
 # 4. Training
 fdm train --config config.yaml            # Train Neural ODE model
@@ -324,12 +323,12 @@ Community contributions are welcome! See the **[Contribution Guide](https://euro
 
 ### 🚧 Roadmap
 
-| Focus Area | Objective |
-| :--- | :--- |
-| **Model Scope** | Extend to **lateral dynamics** (turn rates, bank angles) for full 4D trajectory generation |
-| **Data Quality** | Improve **Mode S feature reconstruction** to reduce errors in training and evaluation |
-| **Physical Consistency** | Incorporate stronger **physical constraints** through physics-based loss regularization |
-| **Operationalization** | Train models to **complete ADS-B data** or **generate trajectories** from flight plans |
+| Focus Area | Status | Objective |
+| :--- | :--- | :--- |
+| **Model Scope** | ✅ Done | **Lateral dynamics** — turn detection, orthodromic/rhumb track, drift angle, lateral wind |
+| **Data Quality** | ⬜ Next | Improve **Mode S feature reconstruction** to reduce errors in training and evaluation |
+| **Physical Consistency** | ⬜ Next | Incorporate stronger **physical constraints** through physics-based loss regularization |
+| **Operationalization** | ⬜ Future | Train models to **complete ADS-B data** or **generate trajectories** from flight plans |
 
 ---
 

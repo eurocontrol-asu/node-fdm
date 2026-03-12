@@ -71,11 +71,15 @@ This reference pipeline processes public ADS-B data using the `fdm` CLI.
     ```
     * *Note*: Handles ADEP/ADES distance computation
 
-    **4. Enrichment**
+    **4. Process & Augment**
     ```bash
-    fdm enrich --config config.yaml
+    fdm process --arch opensky --config config.yaml
     ```
-    * *Output*: Enriched files in `data/processed_flights/<TYPECODE>/`
+    * ERA5 weather interpolation (TAS, Mach, CAS recomputation)
+    * Per-flight: derived columns (`gamma_air`, `long_wind`), segment estimation (`mach_sel`, `cas_sel`, `vz_sel`)
+    * Lateral augmentation: `in_turn`, `track_ortho`, `track_loxo`, `drift_angle`, `lat_wind`
+    * Distance-jump cropping and train/val/test split
+    * *Output*: Processed parquet files in `data/process/`
 
 === "Phase 2: Training"
 
