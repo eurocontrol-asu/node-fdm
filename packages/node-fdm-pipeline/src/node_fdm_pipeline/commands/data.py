@@ -509,6 +509,7 @@ def process(  # noqa: PLR0915, PLR0912
         dry_run: Validate config without performing I/O.
     """
     import polars as pl
+    from node_fdm_data.lateral import augment_lateral
     from node_fdm_data.meteo import compute_mach_and_cas, compute_tas
     from node_fdm_data.preprocessing.opensky import (
         crop_on_distance_jump,
@@ -539,7 +540,7 @@ def process(  # noqa: PLR0915, PLR0912
 
     # --- ERA5 weather interpolation ---
     try:
-        from fastmeteo import Grid as ArcoEra5
+        from fastmeteo.core.grid import Grid as ArcoEra5
     except ImportError:
         log.error(
             "fastmeteo_missing",
@@ -548,9 +549,7 @@ def process(  # noqa: PLR0915, PLR0912
         )
         raise SystemExit(1) from None
 
-    era5_cache = cfg.paths.resolve("era5_cache_dir")
-    era5_cache.mkdir(parents=True, exist_ok=True)
-    arco_grid = ArcoEra5(local_store=str(era5_cache))
+    arco_grid = ArcoEra5()
 
     # --- Selected params config ---
     sel_config = cfg.selected_params.model_dump()
@@ -575,8 +574,8 @@ def process(  # noqa: PLR0915, PLR0912
 
         # Stage 2: ERA5 weather interpolation (pandas interop)
         pd_df = df.to_pandas()
-        if "timestamp" in pd_df.columns:
-            pd_df = pd_df.rename(columns={"timestamp": "time"})
+        if "timestamp" in pd_df.columns and hasattr(pd_df["timestamp"].dtype, "tz"):
+            pd_df["timestamp"] = pd_df["timestamp"].dt.tz_localize(None)
         pd_df = arco_grid.interpolate(pd_df)
         df = pl.from_pandas(pd_df)
         log.info("process_era5_done", file=file.name, cols=len(df.columns))
@@ -610,10 +609,8 @@ def process(  # noqa: PLR0915, PLR0912
 
         for flight_df in flight_groups:
             try:
-                # Segment-based selected parameter estimation
-                flight_df = build_selected_params(flight_df, sel_config)
-
                 # Rename + derived columns (gamma_air, long_wind, alt_diff, fill nulls)
+                # Must run BEFORE segment estimation so gamma_air exists for gamma_sel
                 flight_df = flight_processing(flight_df.lazy()).collect()
 
                 # Cumulative distance
@@ -622,6 +619,14 @@ def process(  # noqa: PLR0915, PLR0912
 
                     # Crop on distance jumps
                     flight_df = crop_on_distance_jump(flight_df)
+
+                # Segment-based selected parameter estimation
+                # (runs after flight_processing so gamma_air, vz_sel_ftmin etc. exist)
+                flight_df = build_selected_params(flight_df, sel_config)
+
+                # Lateral dynamics augmentation — adds in_turn, track_ortho,
+                # track_loxo, drift_angle, lat_wind for Neural ODE control
+                flight_df = augment_lateral(flight_df)
 
                 # Filter: only keep flights with valid adep_dist and ades_dist
                 has_adep = "adep_dist" in flight_df.columns

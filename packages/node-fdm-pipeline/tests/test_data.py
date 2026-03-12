@@ -102,7 +102,7 @@ typecodes:
         df = pl.DataFrame(
             {
                 "flight_id": ["F001"] * n,
-                "timestamp": list(range(n)),
+                "timestamp": [float(i * 4) for i in range(n)],
                 "altitude": [35000.0 + i * 10 for i in range(n)],
                 "selected_mcp": [35000.0] * n,
                 "vertical_rate": [100.0] * n,
@@ -110,9 +110,10 @@ typecodes:
                 "IAS": [280.0] * n,
                 "TAS": [450.0] * n,
                 "groundspeed": [440.0 + i * 0.1 for i in range(n)],
-                "latitude": [48.0 + i * 0.01 for i in range(n)],
-                "longitude": [2.0 + i * 0.01 for i in range(n)],
+                "latitude": [48.0 + i * 0.001 for i in range(n)],
+                "longitude": [2.0 + i * 0.001 for i in range(n)],
                 "track": [90.0] * n,
+                "heading": [88.0] * n,
                 "typecode": ["A320"] * n,
                 "icao24": ["abc123"] * n,
                 "adep_dist": [100.0 - i for i in range(n)],
@@ -134,9 +135,16 @@ typecodes:
         mock_grid_instance.interpolate.side_effect = fake_interpolate
         mock_grid_cls.return_value = mock_grid_instance
 
+        # Patch the full import chain: fastmeteo.core.grid.Grid
+        mock_core_grid = mocker.MagicMock(Grid=mock_grid_cls)
+        mock_core = mocker.MagicMock(grid=mock_core_grid)
         mocker.patch.dict(
             "sys.modules",
-            {"fastmeteo": mocker.MagicMock(Grid=mock_grid_cls)},
+            {
+                "fastmeteo": mocker.MagicMock(Grid=mock_grid_cls),
+                "fastmeteo.core": mock_core,
+                "fastmeteo.core.grid": mock_core_grid,
+            },
         )
 
         process(arch="opensky", config=config, dry_run=False)
@@ -150,6 +158,9 @@ typecodes:
         assert "long_wind" in result.columns
         assert "mach_sel" in result.columns
         assert "distance_along_track_m" in result.columns
+        # Verify lateral augmentation columns
+        assert "track_ortho" in result.columns
+        assert "drift_angle" in result.columns
 
     def test_process_skip_existing(self, tmp_path: Path, mocker: Any) -> None:
         """Already-processed files are skipped."""
@@ -172,9 +183,16 @@ typecodes:
 """
         )
 
+        mock_grid_cls = mocker.MagicMock()
+        mock_core_grid = mocker.MagicMock(Grid=mock_grid_cls)
+        mock_core = mocker.MagicMock(grid=mock_core_grid)
         mocker.patch.dict(
             "sys.modules",
-            {"fastmeteo": mocker.MagicMock(Grid=mocker.MagicMock())},
+            {
+                "fastmeteo": mocker.MagicMock(Grid=mock_grid_cls),
+                "fastmeteo.core": mock_core,
+                "fastmeteo.core.grid": mock_core_grid,
+            },
         )
 
         # Create input AND output so it should skip
