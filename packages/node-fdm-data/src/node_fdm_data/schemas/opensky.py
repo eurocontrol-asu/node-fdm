@@ -1,29 +1,13 @@
-"""Column schemas and conversion registry for the OpenSky 2025 architecture.
+"""Column schemas for the OpenSky 2025 architecture.
 
-Column names are plain strings.  The ``CONVERSIONS`` dictionary maps
-raw column names to ``(conversion_fn, target_name)`` tuples, where
-*conversion_fn* is a Polars expression factory from
-:mod:`node_fdm_data.conversions`.
+All column names use SI units (m, m/s, rad, K).  Conversions from
+raw units (ft, kt, ft/min, °C, NM) are applied in
+:func:`~node_fdm_data.preprocessing.opensky.training_preprocessing`.
 """
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from typing import TYPE_CHECKING
-
-from node_fdm_data.conversions import (
-    celsius_to_kelvin,
-    ft_to_m,
-    ftmin_to_ms,
-    kt_to_ms,
-    nm_to_m,
-)
-
-if TYPE_CHECKING:
-    import polars as pl
-
 __all__ = [
-    "CONVERSIONS",
     "DX_COLS",
     "E0_COLS",
     "E1_COLS",
@@ -36,28 +20,28 @@ __all__ = [
 # ---------------------------------------------------------------------------
 X_COLS: list[str] = [
     "distance_m",
-    "altitude_ft",
+    "altitude_m",
     "gamma_rad",
-    "tas_kt",
+    "tas_ms",
 ]
 
 # ---------------------------------------------------------------------------
 # Control inputs (u) — selected / target values
 # ---------------------------------------------------------------------------
 U_COLS: list[str] = [
-    "alt_sel_ft",
+    "alt_sel_m",
     "mach_sel",
-    "cas_sel_kt",
-    "vz_sel_ftmin",
+    "cas_sel_ms",
+    "vz_sel_ms",
 ]
 
 # ---------------------------------------------------------------------------
 # Environment at t=0 (e0) — fed to trajectory layer
 # ---------------------------------------------------------------------------
 E0_COLS: list[str] = [
-    "long_wind_kt",
-    "adep_dist_nm",
-    "ades_dist_nm",
+    "long_wind_ms",
+    "adep_dist_m",
+    "ades_dist_m",
     "temperature_K",
 ]
 
@@ -65,35 +49,19 @@ E0_COLS: list[str] = [
 # Environment at t (e1) — derived by trajectory layer
 # ---------------------------------------------------------------------------
 E1_COLS: list[str] = [
-    "vz_ftmin",
+    "vz_ms",
     "mach",
-    "gs_kt",
-    "cas_kt",
-    "alt_diff_ft",
+    "gs_ms",
+    "cas_ms",
+    "alt_diff_m",
 ]
 
 # ---------------------------------------------------------------------------
 # Derivatives (dx) — sign and target column
 # ---------------------------------------------------------------------------
 DX_COLS: list[tuple[int, str]] = [
-    (1, "gs_kt"),
-    (1, "vz_ftmin"),
-    (1, "d_gamma_rad"),
-    (1, "d_tas_kt"),
+    (1, "gs_ms"),
+    (1, "vz_ms"),
+    (1, "d_gamma_rads"),
+    (1, "d_tas_ms"),
 ]
-
-# ---------------------------------------------------------------------------
-# Raw-column → (conversion_fn, target_name) registry
-# ---------------------------------------------------------------------------
-CONVERSIONS: dict[str, tuple[Callable[[str], pl.Expr], str]] = {
-    "altitude": (ft_to_m, "altitude_m"),
-    "TAS": (kt_to_ms, "tas_ms"),
-    "CAS": (kt_to_ms, "cas_ms"),
-    "groundspeed": (kt_to_ms, "gs_ms"),
-    "vertical_rate": (ftmin_to_ms, "vz_ms"),
-    "long_wind": (kt_to_ms, "long_wind_ms"),
-    "temperature": (celsius_to_kelvin, "temperature_K"),
-    "adep_dist": (nm_to_m, "adep_dist_m"),
-    "ades_dist": (nm_to_m, "ades_dist_m"),
-    "selected_mcp": (ft_to_m, "alt_sel_m"),
-}
