@@ -8,9 +8,18 @@ for training data extraction.
 
 from __future__ import annotations
 
+from collections.abc import Callable
+
 import numpy as np
 import polars as pl
 
+from node_fdm_data.conversions import (
+    celsius_to_kelvin,
+    ft_to_m,
+    ftmin_to_ms,
+    kt_to_ms,
+    nm_to_m,
+)
 from node_fdm_data.meteo import haversine
 from node_fdm_data.physics.constants import FTMIN, KT
 
@@ -49,7 +58,7 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
             or already-renamed data.
 
     Returns:
-        LazyFrame with normalised names, derived columns, and nulls filled.
+        LazyFrame with normalised names and derived columns.
     """
     # --- Sort by timestamp (OpenSky data may arrive unsorted) ---
     schema = df.collect_schema()
@@ -115,65 +124,77 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
     return df
 
 
+# ---------------------------------------------------------------------------
+# SI conversion table: (source_col, conversion_fn, target_col)
+# ---------------------------------------------------------------------------
+_SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
+    ("altitude_ft", ft_to_m, "altitude_m"),
+    ("alt_sel_ft", ft_to_m, "alt_sel_m"),
+    ("tas_kt", kt_to_ms, "tas_ms"),
+    ("cas_sel_kt", kt_to_ms, "cas_sel_ms"),
+    ("long_wind", kt_to_ms, "long_wind_ms"),
+    ("vz_sel_ftmin", ftmin_to_ms, "vz_sel_ms"),
+    ("adep_dist", nm_to_m, "adep_dist_m"),
+    ("ades_dist", nm_to_m, "ades_dist_m"),
+    ("temperature", celsius_to_kelvin, "temperature_K"),
+]
+
+# Derivative table: (source_si_col, target_deriv_col)
+_SI_DERIVATIVES: list[tuple[str, str]] = [
+    ("altitude_m", "vz_ms"),
+    ("gamma_rad", "d_gamma_rads"),
+    ("tas_ms", "d_tas_ms"),
+]
+
+
 def training_preprocessing(df: pl.DataFrame) -> pl.DataFrame:
     """Prepare processed flight data for the training loader.
 
     Bridges the gap between ``process`` command output (raw column names)
-    and the training schema expected by :func:`get_train_val_data`.
+    and the SI-unit training schema expected by :func:`get_train_val_data`.
 
     Steps:
 
     1. Run ``flight_processing`` on the eager DataFrame.
-    2. Rename columns to match the schema:
+    2. Rename columns:
        ``gamma_air`` → ``gamma_rad``,
-       ``distance_along_track_m`` → ``distance_m``,
-       ``long_wind`` → ``long_wind_kt``,
-       ``adep_dist`` → ``adep_dist_nm``,
-       ``ades_dist`` → ``ades_dist_nm``,
-       ``temperature`` → ``temperature_K``.
-    3. Compute finite-difference derivatives:
-       ``vz_ftmin`` from ``altitude_ft``,
-       ``d_gamma_rad`` from ``gamma_rad``,
-       ``d_tas_kt`` from ``tas_kt``.
+       ``distance_along_track_m`` → ``distance_m``.
+    3. Convert to SI units:
+       ft → m, kt → m/s, ft/min → m/s, °C → K, NM → m.
+    4. Compute finite-difference derivatives on SI columns:
+       ``vz_ms``, ``d_gamma_rads``, ``d_tas_ms``.
 
     Args:
         df: Eager DataFrame from processed parquet files.
 
     Returns:
-        DataFrame ready for the training loader.
+        DataFrame with all columns in SI units, ready for training.
     """
     # Step 1: flight_processing (renames traffic cols, adds gamma_air, etc.)
     df = flight_processing(df.lazy()).collect()
 
-    # Step 2: rename to schema names
+    # Step 2: rename to schema names (no unit change)
     rename_map: dict[str, str] = {
         "gamma_air": "gamma_rad",
         "distance_along_track_m": "distance_m",
-        "long_wind": "long_wind_kt",
-        "adep_dist": "adep_dist_nm",
-        "ades_dist": "ades_dist_nm",
-        "temperature": "temperature_K",
     }
     rename = {k: v for k, v in rename_map.items() if k in df.columns and v not in df.columns}
     if rename:
         df = df.rename(rename)
 
-    # Step 3: compute derivatives via finite differences
-    deriv_exprs: list[pl.Expr] = []
+    # Step 3: convert to SI units (table-driven)
+    cols = set(df.columns)
+    si_exprs = [fn(src).alias(tgt) for src, fn, tgt in _SI_CONVERSIONS if src in cols]
+    if si_exprs:
+        df = df.with_columns(si_exprs)
 
-    # vz_ftmin: rate of climb in ft/min from altitude_ft
-    # Δalt / Δt where Δt ≈ 4s for OpenSky, so ft/min = Δalt * 60/Δt
-    # Since we don't know Δt precisely, use raw diff
-    # (the Neural ODE will learn the scaling)
-    if "altitude_ft" in df.columns and "vz_ftmin" not in df.columns:
-        deriv_exprs.append(pl.col("altitude_ft").diff().fill_null(0.0).alias("vz_ftmin"))
-
-    if "gamma_rad" in df.columns and "d_gamma_rad" not in df.columns:
-        deriv_exprs.append(pl.col("gamma_rad").diff().fill_null(0.0).alias("d_gamma_rad"))
-
-    if "tas_kt" in df.columns and "d_tas_kt" not in df.columns:
-        deriv_exprs.append(pl.col("tas_kt").diff().fill_null(0.0).alias("d_tas_kt"))
-
+    # Step 4: compute derivatives via finite differences on SI columns
+    dcols = set(df.columns)
+    deriv_exprs = [
+        pl.col(src).diff().fill_null(0.0).alias(tgt)
+        for src, tgt in _SI_DERIVATIVES
+        if src in dcols
+    ]
     if deriv_exprs:
         df = df.with_columns(deriv_exprs)
 
