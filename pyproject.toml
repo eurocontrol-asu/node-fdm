@@ -82,8 +82,13 @@ disallow_untyped_defs = false
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["torch.*", "torchdiffeq.*", "scipy.*", "polars.*", "yaml.*", "cyclopts.*", "structlog.*", "traffic.*", "pandas.*"]
+module = [
+    "torch.*", "torchdiffeq.*", "scipy.*", "polars.*", "yaml.*",
+    "cyclopts.*", "structlog.*", "traffic.*", "pandas.*",
+    "pyBADA.*", "joblib.*", "fastmeteo.*", "altair.*",
+]
 ignore_missing_imports = true
+follow_untyped_imports = false
 
 [[tool.mypy.overrides]]
 module = ["node_fdm_pipeline.commands.data"]
@@ -98,3 +103,10 @@ module = ["scripts.*"]
 ignore_missing_imports = true
 disallow_untyped_defs = false
 disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = [
+    "node_fdm_data.lateral",
+    "node_fdm_pipeline.commands.visualize",
+]
+warn_return_any = false

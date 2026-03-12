@@ -124,7 +124,7 @@ class ODETrainer:
         # Compute stats from training data
         dx_col_names = [col for _, col in self.spec.dx_cols]
         self.stats_dict = compute_stats(
-            list(train_dataset),
+            list(train_dataset),  # type: ignore[call-overload]
             x_cols=self.spec.x_cols,
             u_cols=self.spec.u_cols,
             e_cols=self.spec.e0_cols,
@@ -263,7 +263,7 @@ class ODETrainer:
             for batch in train_loader:
                 loss = self._compute_batch_loss(batch)
                 self.optimizer.zero_grad()
-                loss.backward()
+                loss.backward()  # type: ignore[no-untyped-call]
                 torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     max_norm=self.config.grad_clip_norm,

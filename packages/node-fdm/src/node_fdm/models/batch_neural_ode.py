@@ -35,7 +35,7 @@ class BatchNeuralODE(nn.Module):
         super().__init__()
         self.model = model
         if hasattr(self.model, "reset_history"):
-            self.model.reset_history()
+            self.model.reset_history()  # type: ignore[operator]
         self.u_seq = u_seq
         self.e_seq = e_seq
         self.t_grid = t_grid
