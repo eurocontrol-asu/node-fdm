@@ -132,6 +132,7 @@ _SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
     ("alt_sel_ft", ft_to_m, "alt_sel_m"),
     ("tas_kt", kt_to_ms, "tas_ms"),
     ("cas_sel_kt", kt_to_ms, "cas_sel_ms"),
+    ("gs_kt", kt_to_ms, "gs_ms"),
     ("long_wind", kt_to_ms, "long_wind_ms"),
     ("vz_sel_ftmin", ftmin_to_ms, "vz_sel_ms"),
     ("adep_dist", nm_to_m, "adep_dist_m"),
