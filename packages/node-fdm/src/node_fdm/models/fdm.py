@@ -22,7 +22,7 @@ _DEFAULT_HEAD_DEPTH: int = 1
 _DEFAULT_NEURONS: int = 48
 
 
-class FlightDynamicsModel(nn.Module):  # type: ignore[misc]
+class FlightDynamicsModel(nn.Module):
     """Compute state derivatives using a layered flight dynamics architecture.
 
     The model iterates over ``spec.layers``, resolving each layer class at

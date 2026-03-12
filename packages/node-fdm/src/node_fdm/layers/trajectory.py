@@ -62,7 +62,7 @@ def _isa_pressure_torch(h: torch.Tensor) -> torch.Tensor:
     return torch.where(h <= _TROPO_ALT, p_tropo, p_strato)
 
 
-class TrajectoryLayer(nn.Module):  # type: ignore[misc]
+class TrajectoryLayer(nn.Module):
     """Compute trajectory outputs: vertical speed, Mach, CAS, ground speed.
 
     Column names are resolved through ``col_map`` so the same layer works

@@ -17,7 +17,7 @@ __all__ = [
 ]
 
 
-class StructuredLayer(nn.Module):  # type: ignore[misc]
+class StructuredLayer(nn.Module):
     """Structured layer: normalize → backbone → per-column heads → denormalize."""
 
     def __init__(

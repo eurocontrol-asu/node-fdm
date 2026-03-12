@@ -10,7 +10,7 @@ __all__ = [
 ]
 
 
-class BatchNeuralODE(nn.Module):  # type: ignore[misc]
+class BatchNeuralODE(nn.Module):
     """Wrap a neural ODE model with batched control and environment inputs.
 
     Interpolates ``u_seq`` and ``e_seq`` at arbitrary time ``t`` using

@@ -22,7 +22,7 @@ __all__ = [
 log = structlog.get_logger("node_fdm.models.fdm_prod")
 
 
-class FlightDynamicsModelProd(nn.Module):  # type: ignore[misc]
+class FlightDynamicsModelProd(nn.Module):
     """Load pretrained flight dynamics layers and run inference.
 
     Unlike the training :class:`FlightDynamicsModel`, this class loads

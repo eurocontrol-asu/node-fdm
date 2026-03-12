@@ -7,6 +7,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import polars as pl
+import pytest
 
 from node_fdm_pipeline.commands.predict import run_predict, run_predict_bada
 
@@ -255,3 +256,72 @@ bada:
         # Output dir created
         bada_dir = tmp_path / "data" / "bada_flights" / "A320"
         assert bada_dir.exists()
+
+    def test_predict_bada_missing_split(self, tmp_path: Path) -> None:
+        """SystemExit when split CSV is missing."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(parents=True)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        with pytest.raises(SystemExit, match="fdm process"):
+            run_predict_bada(config=config, typecode="A320", jobs=1)
+
+    @patch("node_fdm_bada.aircraft_mapping.get_bada_identifier")
+    def test_predict_bada_empty_test_set(
+        self,
+        mock_get_bada: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Empty test set → warning logged, no crash."""
+        import sys
+
+        config = self._make_config(tmp_path)
+
+        # Overwrite split CSV so A320 has train only
+        process_dir = tmp_path / "data" / "processed_flights"
+        split_df = pl.DataFrame(
+            {
+                "filepath": ["/fake/flight.parquet"],
+                "icao": ["abc123"],
+                "split": ["train"],
+                "aircraft_type": ["A320"],
+            }
+        )
+        split_df.write_csv(process_dir / "dataset_split.csv")
+
+        mock_get_bada.return_value = "A320_BADA"
+        mock_bada4 = MagicMock()
+        mock_bada_pkg = MagicMock()
+        mock_bada_pkg.bada4 = mock_bada4
+
+        with patch.dict(sys.modules, {"pyBADA": mock_bada_pkg, "pyBADA.bada4": mock_bada4}):
+            run_predict_bada(config=config, typecode="A320", jobs=1)
+
+
+class TestPredictMissingSplit:
+    """Edge case: missing split CSV for run_predict."""
+
+    def test_predict_missing_split_csv(self, tmp_path: Path) -> None:
+        """SystemExit when split CSV is missing."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(parents=True)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        with pytest.raises(SystemExit, match="fdm process"):
+            run_predict(arch="opensky", config=config, typecode="A320")

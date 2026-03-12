@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+from pathlib import Path
+from unittest.mock import MagicMock
+
 import numpy as np
 import polars as pl
 
@@ -105,3 +108,248 @@ class TestComputeErrorsByPhase:
             "Count",
         ]
         assert result.columns == expected_cols
+
+
+# ---------------------------------------------------------------------------
+# Tests for _evaluate_typecode
+# ---------------------------------------------------------------------------
+
+
+class TestEvaluateTypecode:
+    """Tests for ``_evaluate_typecode``."""
+
+    @staticmethod
+    def _make_gt_parquet(path: Path, n: int = 50) -> None:
+        """Write a ground-truth processed flight parquet."""
+        df = pl.DataFrame(
+            {
+                "alt_std_m": np.linspace(5000, 10000, n),
+                "tas_ms": np.linspace(200, 250, n),
+                "gamma_rad": np.linspace(-0.01, 0.01, n),
+                "vz_ms": np.concatenate(
+                    [np.full(n // 3, 2.0), np.full(n - 2 * (n // 3), 0.0), np.full(n // 3, -2.0)]
+                ),
+                "altitude": np.linspace(6000, 35000, n),
+                "latitude": np.linspace(45, 48, n),
+                "longitude": np.linspace(2, 5, n),
+                "timestamp": np.arange(n, dtype=float),
+            }
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(path)
+
+    @staticmethod
+    def _make_bada_parquet(path: Path, n: int = 50) -> None:
+        """Write a BADA prediction parquet (bada_ prefixed columns only)."""
+        df = pl.DataFrame(
+            {
+                "bada_alt_std_m": np.linspace(5050, 10050, n),
+                "bada_tas_ms": np.linspace(201, 251, n),
+                "bada_gamma_rad": np.linspace(-0.009, 0.011, n),
+            }
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(path)
+
+    @staticmethod
+    def _make_nodfdm_parquet(path: Path, n: int = 50) -> None:
+        """Write a Node-FDM prediction parquet (pred_ prefixed columns only)."""
+        df = pl.DataFrame(
+            {
+                "pred_alt_std_m": np.linspace(5010, 10010, n),
+                "pred_tas_ms": np.linspace(200.5, 250.5, n),
+                "pred_gamma_rad": np.linspace(-0.0095, 0.0105, n),
+            }
+        )
+        path.parent.mkdir(parents=True, exist_ok=True)
+        df.write_parquet(path)
+
+    def test_skip_no_predictions(self, tmp_path: Path) -> None:
+        """Returns empty list when neither bada nor pred dirs exist."""
+        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+
+        result = _evaluate_typecode(
+            "A320",
+            process_dir=tmp_path / "process",
+            predict_dir=tmp_path / "predict",
+            bada_dir=tmp_path / "bada",
+            processor=MagicMock(),
+            variables={"alt_std_m": "Altitude"},
+        )
+        assert result == []
+
+    def test_evaluate_with_predictions(self, tmp_path: Path) -> None:
+        """Returns metrics DataFrames for a typecode with predictions."""
+        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+
+        process_dir = tmp_path / "process"
+        bada_dir = tmp_path / "bada"
+        predict_dir = tmp_path / "predict"
+
+        # Create ground-truth + predictions for a flight
+        self._make_gt_parquet(process_dir / "A320" / "flight_001.parquet")
+        self._make_bada_parquet(bada_dir / "A320" / "flight_001.parquet")
+        self._make_nodfdm_parquet(predict_dir / "A320" / "flight_001.parquet")
+
+        # Processor mock that returns input unchanged
+        processor = MagicMock()
+        processor.process.return_value = MagicMock()
+        processor.process.return_value.collect.return_value = None
+
+        variables = {"alt_std_m": "Altitude [m]", "tas_ms": "TAS [m/s]"}
+        result = _evaluate_typecode(
+            "A320",
+            process_dir=process_dir,
+            predict_dir=predict_dir,
+            bada_dir=bada_dir,
+            processor=processor,
+            variables=variables,
+        )
+
+        assert len(result) > 0
+        for df in result:
+            assert "Aircraft" in df.columns
+            assert "Variable" in df.columns
+            assert "Model" in df.columns
+
+    def test_evaluate_file_error_continues(self, tmp_path: Path) -> None:
+        """Evaluation continues when a single flight file fails."""
+        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+
+        process_dir = tmp_path / "process"
+        bada_dir = tmp_path / "bada"
+        predict_dir = tmp_path / "predict"
+
+        # Create 2 flights: one valid, one that will fail (bad parquet)
+        self._make_gt_parquet(process_dir / "A320" / "flight_001.parquet")
+        self._make_bada_parquet(bada_dir / "A320" / "flight_001.parquet")
+
+        self._make_gt_parquet(process_dir / "A320" / "flight_002.parquet")
+        # Bad prediction file
+        bad_path = bada_dir / "A320" / "flight_002.parquet"
+        bad_path.parent.mkdir(parents=True, exist_ok=True)
+        bad_path.write_bytes(b"not a parquet")
+
+        processor = MagicMock()
+        processor.process.return_value = MagicMock()
+        processor.process.return_value.collect.return_value = None
+
+        variables = {"alt_std_m": "Altitude [m]"}
+        result = _evaluate_typecode(
+            "A320",
+            process_dir=process_dir,
+            predict_dir=predict_dir,
+            bada_dir=bada_dir,
+            processor=processor,
+            variables=variables,
+        )
+
+        # Should get metrics from the valid flight
+        assert len(result) > 0
+
+    def test_skip_no_parquet_files(self, tmp_path: Path) -> None:
+        """Returns empty list when prediction dir exists but has no parquets."""
+        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+
+        bada_dir = tmp_path / "bada"
+        (bada_dir / "A320").mkdir(parents=True)
+        # Dir exists, but no .parquet files
+
+        result = _evaluate_typecode(
+            "A320",
+            process_dir=tmp_path / "process",
+            predict_dir=tmp_path / "predict",
+            bada_dir=bada_dir,
+            processor=MagicMock(),
+            variables={"alt_std_m": "Altitude"},
+        )
+        assert result == []
+
+
+# ---------------------------------------------------------------------------
+# Tests for run_evaluate
+# ---------------------------------------------------------------------------
+
+
+class TestRunEvaluate:
+    """Tests for ``run_evaluate``."""
+
+    def test_run_evaluate_writes_output(self, tmp_path: Path) -> None:
+        """Full run produces a performance.parquet file."""
+        from node_fdm_pipeline.commands.evaluate import run_evaluate
+
+        data_dir = tmp_path / "data"
+        process_dir = data_dir / "processed_flights"
+        bada_dir = data_dir / "bada_flights"
+
+        # Create ground-truth + predictions for A320
+        n = 50
+        gt = pl.DataFrame(
+            {
+                "alt_std_m": np.linspace(5000, 10000, n),
+                "tas_ms": np.linspace(200, 250, n),
+                "gamma_rad": np.linspace(-0.01, 0.01, n),
+                "vz_ms": np.concatenate([np.full(17, 2.0), np.full(16, 0.0), np.full(17, -2.0)]),
+                "altitude": np.linspace(6000, 35000, n),
+                "latitude": np.linspace(45, 48, n),
+                "longitude": np.linspace(2, 5, n),
+                "timestamp": np.arange(n, dtype=float),
+            }
+        )
+        (process_dir / "A320").mkdir(parents=True)
+        gt.write_parquet(process_dir / "A320" / "f1.parquet")
+
+        pred = pl.DataFrame(
+            {
+                "bada_alt_std_m": np.linspace(5050, 10050, n),
+                "bada_tas_ms": np.linspace(201, 251, n),
+                "bada_gamma_rad": np.linspace(-0.009, 0.011, n),
+            }
+        )
+        (bada_dir / "A320").mkdir(parents=True)
+        pred.write_parquet(bada_dir / "A320" / "f1.parquet")
+
+        # Write config
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+
+        run_evaluate(arch="opensky", config=config)
+
+        output = data_dir / "performance.parquet"
+        assert output.exists()
+        result = pl.read_parquet(output)
+        assert len(result) > 0
+        assert "Aircraft" in result.columns
+        assert "Phase" in result.columns
+
+    def test_run_evaluate_no_results(self, tmp_path: Path) -> None:
+        """Logs warning when no predictions exist."""
+        from node_fdm_pipeline.commands.evaluate import run_evaluate
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+
+        # Should not crash, just log warning
+        run_evaluate(arch="opensky", config=config)
+
+        # No output file created
+        assert not (data_dir / "performance.parquet").exists()

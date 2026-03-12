@@ -6,6 +6,7 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 import polars as pl
+import pytest
 
 from node_fdm_pipeline.commands.stats import run_dataset_stats
 
@@ -86,3 +87,20 @@ typecodes:
 
         # B738 has no entries in split CSV → zero segments, no crash
         run_dataset_stats(arch="opensky", config=config)
+
+    def test_stats_missing_split_csv(self, tmp_path: Path) -> None:
+        """SystemExit when split CSV doesn't exist."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(parents=True)
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        with pytest.raises(SystemExit, match="fdm process"):
+            run_dataset_stats(arch="opensky", config=config)

@@ -36,7 +36,7 @@ class FlightSample:
     dx: torch.Tensor
 
 
-class FlightDataset(Dataset[FlightSample]):  # type: ignore[misc]
+class FlightDataset(Dataset[FlightSample]):
     """Dataset of pre-built flight samples.
 
     Accepts an already-constructed list of :class:`FlightSample` instances.

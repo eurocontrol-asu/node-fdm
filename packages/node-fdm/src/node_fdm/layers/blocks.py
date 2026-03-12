@@ -19,7 +19,7 @@ __all__ = [
 ]
 
 
-class MLPBlock(nn.Module):  # type: ignore[misc]
+class MLPBlock(nn.Module):
     """Simple configurable multi-layer perceptron block."""
 
     def __init__(
@@ -105,7 +105,7 @@ class Head(MLPBlock):
         )
 
 
-class MultiLayerDict(nn.Module):  # type: ignore[misc]
+class MultiLayerDict(nn.Module):
     """Module dictionary that builds one sub-module per output column.
 
     Keys are plain column name strings (not ``Column`` objects).

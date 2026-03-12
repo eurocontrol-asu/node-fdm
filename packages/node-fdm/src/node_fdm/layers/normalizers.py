@@ -15,7 +15,7 @@ __all__ = [
 ]
 
 
-class InputNormalizer(nn.Module):  # type: ignore[misc]
+class InputNormalizer(nn.Module):
     """Normalize inputs based on per-column mean/std statistics.
 
     Each column can be either ``"normal"`` (z-score) or ``None`` (passthrough).
@@ -58,7 +58,7 @@ class InputNormalizer(nn.Module):  # type: ignore[misc]
         return x
 
 
-class OutputDenormalizer(nn.Module):  # type: ignore[misc]
+class OutputDenormalizer(nn.Module):
     """Denormalize network outputs to physical scale.
 
     Supports ``"normal_clamp"`` (z-score + clamp) and ``"max"`` (scale by max).

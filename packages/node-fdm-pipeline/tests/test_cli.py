@@ -83,3 +83,16 @@ class TestCLI:
         output = result.stdout + result.stderr
         assert result.returncode == 0
         assert "--arch" in output
+
+    def test_import_cli_module(self) -> None:
+        """Direct import of cli module covers module-level code."""
+        from node_fdm_pipeline.cli import app
+
+        assert app is not None
+        assert app.name == ("fdm",)
+
+    def test_import_main_module(self) -> None:
+        """cli.main is a callable entry point for __main__."""
+        from node_fdm_pipeline.cli import main
+
+        assert callable(main)
