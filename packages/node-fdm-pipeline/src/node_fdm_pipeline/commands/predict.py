@@ -102,14 +102,16 @@ def run_predict(
             flight_id = flight_path.stem
 
             raw = pl.read_parquet(flight_path)
-            processed = processor.process(raw).collect()
+            processed = processor.process(raw)
+            if hasattr(processed, "collect"):
+                processed = processed.collect()
 
             # Extract arrays for predictor (float32 numpy)
             x_init = processed.select(info.x_cols).to_numpy().astype(np.float32)
             u_seq = processed.select(info.u_cols).to_numpy().astype(np.float32)
             e_seq = processed.select(info.e0_cols).to_numpy().astype(np.float32)
 
-            predictions = predictor.predict_flight(x_init, u_seq, e_seq)
+            predictions = predictor.predict_flight(x_init[0], u_seq, e_seq)
 
             pred_df = pl.DataFrame({f"pred_{k}": v for k, v in predictions.items()})
             pred_df.write_parquet(output_dir / f"{flight_id}.parquet")
