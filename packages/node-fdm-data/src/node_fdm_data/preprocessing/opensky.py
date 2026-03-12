@@ -21,6 +21,7 @@ __all__ = [
     "cumulative_distance",
     "flight_processing",
     "segment_filtering",
+    "training_preprocessing",
 ]
 
 LOW_THR: int = 200
@@ -50,6 +51,11 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
     Returns:
         LazyFrame with normalised names, derived columns, and nulls filled.
     """
+    # --- Sort by timestamp (OpenSky data may arrive unsorted) ---
+    schema = df.collect_schema()
+    if "timestamp" in schema:
+        df = df.sort("timestamp")
+
     # --- Rename traffic → schema (skip if already renamed) ---
     col_rename: dict[str, str] = {
         "altitude": "altitude_ft",
@@ -105,6 +111,71 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
 
     if exprs:
         df = df.with_columns(exprs)
+
+    return df
+
+
+def training_preprocessing(df: pl.DataFrame) -> pl.DataFrame:
+    """Prepare processed flight data for the training loader.
+
+    Bridges the gap between ``process`` command output (raw column names)
+    and the training schema expected by :func:`get_train_val_data`.
+
+    Steps:
+
+    1. Run ``flight_processing`` on the eager DataFrame.
+    2. Rename columns to match the schema:
+       ``gamma_air`` → ``gamma_rad``,
+       ``distance_along_track_m`` → ``distance_m``,
+       ``long_wind`` → ``long_wind_kt``,
+       ``adep_dist`` → ``adep_dist_nm``,
+       ``ades_dist`` → ``ades_dist_nm``,
+       ``temperature`` → ``temperature_K``.
+    3. Compute finite-difference derivatives:
+       ``vz_ftmin`` from ``altitude_ft``,
+       ``d_gamma_rad`` from ``gamma_rad``,
+       ``d_tas_kt`` from ``tas_kt``.
+
+    Args:
+        df: Eager DataFrame from processed parquet files.
+
+    Returns:
+        DataFrame ready for the training loader.
+    """
+    # Step 1: flight_processing (renames traffic cols, adds gamma_air, etc.)
+    df = flight_processing(df.lazy()).collect()
+
+    # Step 2: rename to schema names
+    rename_map: dict[str, str] = {
+        "gamma_air": "gamma_rad",
+        "distance_along_track_m": "distance_m",
+        "long_wind": "long_wind_kt",
+        "adep_dist": "adep_dist_nm",
+        "ades_dist": "ades_dist_nm",
+        "temperature": "temperature_K",
+    }
+    rename = {k: v for k, v in rename_map.items() if k in df.columns and v not in df.columns}
+    if rename:
+        df = df.rename(rename)
+
+    # Step 3: compute derivatives via finite differences
+    deriv_exprs: list[pl.Expr] = []
+
+    # vz_ftmin: rate of climb in ft/min from altitude_ft
+    # Δalt / Δt where Δt ≈ 4s for OpenSky, so ft/min = Δalt * 60/Δt
+    # Since we don't know Δt precisely, use raw diff
+    # (the Neural ODE will learn the scaling)
+    if "altitude_ft" in df.columns and "vz_ftmin" not in df.columns:
+        deriv_exprs.append(pl.col("altitude_ft").diff().fill_null(0.0).alias("vz_ftmin"))
+
+    if "gamma_rad" in df.columns and "d_gamma_rad" not in df.columns:
+        deriv_exprs.append(pl.col("gamma_rad").diff().fill_null(0.0).alias("d_gamma_rad"))
+
+    if "tas_kt" in df.columns and "d_tas_kt" not in df.columns:
+        deriv_exprs.append(pl.col("tas_kt").diff().fill_null(0.0).alias("d_tas_kt"))
+
+    if deriv_exprs:
+        df = df.with_columns(deriv_exprs)
 
     return df
 

@@ -51,8 +51,8 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
     match arch:
         case "opensky":
             from node_fdm_data.preprocessing.opensky import (
-                flight_processing,
                 segment_filtering,
+                training_preprocessing,
             )
             from node_fdm_data.schemas.opensky import DX_COLS, E0_COLS, U_COLS, X_COLS
 
@@ -62,14 +62,14 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
                 dx_cols=DX_COLS,
-                preprocessing_fn=flight_processing,
+                preprocessing_fn=training_preprocessing,
                 segment_filter_fn=segment_filtering,
                 architecture_import="node_fdm.architectures.opensky",
             )
         case "opensky_v2":
             from node_fdm_data.preprocessing.opensky import (
-                flight_processing,
                 segment_filtering,
+                training_preprocessing,
             )
             from node_fdm_data.schemas.opensky_v2 import DX_COLS, E0_COLS, U_COLS, X_COLS
 
@@ -79,7 +79,7 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
                 dx_cols=DX_COLS,
-                preprocessing_fn=flight_processing,
+                preprocessing_fn=training_preprocessing,
                 segment_filter_fn=segment_filtering,
                 architecture_import="node_fdm.architectures.opensky_v2",
             )
