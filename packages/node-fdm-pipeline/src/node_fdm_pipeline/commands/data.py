@@ -142,7 +142,7 @@ def download(
     if not aircraft_csv.exists():
         log.error("download_missing_aircraft_db", path=str(aircraft_csv))
         raise SystemExit(
-            f"aircraft_db.csv not found at {aircraft_csv}. " "Run 'fdm aircraft-list' first."
+            f"aircraft_db.csv not found at {aircraft_csv}. Run 'fdm aircraft-list' first."
         )
 
     log.info(

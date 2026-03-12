@@ -213,7 +213,7 @@ class TestDownloadCommand:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         (data_dir / "aircraft_db.csv").write_text(
-            "icao24,registration,typecode,age,airline\n" "abc123,F-WXYZ,A320,5,AFR\n"
+            "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
         )
         config = tmp_path / "config.yaml"
         config.write_text(
@@ -273,7 +273,7 @@ class TestAircraftListCommand:
         config.write_text(
             f"""\
 paths:
-  data_dir: "{tmp_path / 'data'}"
+  data_dir: "{tmp_path / "data"}"
 
 typecodes:
   - A320

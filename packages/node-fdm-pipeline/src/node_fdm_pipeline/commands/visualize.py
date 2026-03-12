@@ -179,7 +179,7 @@ def run_plot_performance(
 
     if not perf_path.exists():
         log.error("plot_performance_missing", path=str(perf_path))
-        msg = f"performance.parquet not found at {perf_path}. " "Run 'fdm evaluate' first."
+        msg = f"performance.parquet not found at {perf_path}. Run 'fdm evaluate' first."
         raise SystemExit(msg)
 
     _require_viz()
@@ -306,7 +306,7 @@ def run_plot_example(
 
     if not example_path.exists():
         log.error("plot_example_missing", path=str(example_path))
-        msg = f"example.parquet not found at {example_path}. " "Run 'fdm visualize' first."
+        msg = f"example.parquet not found at {example_path}. Run 'fdm visualize' first."
         raise SystemExit(msg)
 
     _require_viz()

@@ -189,7 +189,7 @@ typecodes:
   - UNKNOWN
 
 bada:
-  bada_4_2_dir: "{tmp_path / 'bada'}"
+  bada_4_2_dir: "{tmp_path / "bada"}"
 """
         )
 
