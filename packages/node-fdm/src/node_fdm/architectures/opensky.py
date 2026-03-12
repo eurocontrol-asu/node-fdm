@@ -32,7 +32,7 @@ OPENSKY_2025 = ArchitectureSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
             input_cols=X_COLS + U_COLS + E0_COLS + E1_COLS,
-            output_cols=["d_gamma_rad", "d_tas_kt"],
+            output_cols=["d_gamma_rads", "d_tas_ms"],
             trainable=True,
         ),
     ],

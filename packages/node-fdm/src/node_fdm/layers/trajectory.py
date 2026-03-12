@@ -27,18 +27,18 @@ _TROPO_ALT: float = 11_000.0  # m
 _T_STRATO: float = 216.65  # K
 _P_TROPO_11KM: float = 22_632.06  # Pa
 
-# Default column mapping (OpenSky naming)
+# Default column mapping (OpenSky naming — SI units)
 DEFAULT_COL_MAP: dict[str, str] = {
-    "tas": "tas_kt",
+    "tas": "tas_ms",
     "gamma": "gamma_rad",
-    "alt": "altitude_ft",
-    "wind": "long_wind_kt",
-    "alt_sel": "alt_sel_ft",
-    "vz": "vz_ftmin",
-    "gs": "gs_kt",
+    "alt": "altitude_m",
+    "wind": "long_wind_ms",
+    "alt_sel": "alt_sel_m",
+    "vz": "vz_ms",
+    "gs": "gs_ms",
     "mach": "mach",
-    "cas": "cas_kt",
-    "alt_diff": "alt_diff_ft",
+    "cas": "cas_ms",
+    "alt_diff": "alt_diff_m",
 }
 
 
