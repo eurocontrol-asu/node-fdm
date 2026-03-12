@@ -1,0 +1,9 @@
+# Mini training smoke test config
+# Uses the mini_process dataset (11 flights) from E2E pipeline test
+
+paths:
+  data_dir: "./data"
+  process_dir: "mini_process"
+
+typecodes:
+  - A320
