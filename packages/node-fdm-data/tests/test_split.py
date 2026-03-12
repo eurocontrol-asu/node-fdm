@@ -68,3 +68,22 @@ class TestSplitByIcao:
         assert "filepath" in result.columns
         assert "icao" in result.columns
         assert "split" in result.columns
+
+    def test_split_two_icaos(self, tmp_path: Path) -> None:
+        """Two ICAO groups → two-way split (train + val/test)."""
+        for icao in ["A320", "B738"]:
+            for j in range(10):
+                (tmp_path / f"flight_{icao}_{j:03d}_{icao}_seg.parquet").touch()
+        result = split_by_icao(tmp_path, ratios=(0.7, 0.15, 0.15))
+        assert len(result) == 20
+        splits = set(result["split"].unique().to_list())
+        assert "train" in splits
+
+    def test_split_single_icao(self, tmp_path: Path) -> None:
+        """Single ICAO → all goes to train."""
+        for j in range(5):
+            (tmp_path / f"flight_000_{j:03d}_A320_seg.parquet").touch()
+        result = split_by_icao(tmp_path, ratios=(0.7, 0.15, 0.15))
+        assert len(result) == 5
+        assert result["split"].unique().to_list() == ["train"]
+
