@@ -540,7 +540,7 @@ def process(  # noqa: PLR0915, PLR0912
 
     # --- ERA5 weather interpolation ---
     try:
-        from fastmeteo.core.grid import Grid as ArcoEra5
+        from fastmeteo.source.arco_era5 import ArcoEra5
     except ImportError:
         log.error(
             "fastmeteo_missing",
@@ -549,7 +549,10 @@ def process(  # noqa: PLR0915, PLR0912
         )
         raise SystemExit(1) from None
 
-    arco_grid = ArcoEra5()
+    era5_cache = cfg.paths.resolve("era5_cache_dir")
+    era5_cache.mkdir(parents=True, exist_ok=True)
+    era5_features = cfg.era5_features or None
+    arco_grid = ArcoEra5(local_store=str(era5_cache), features=era5_features)
 
     # --- Selected params config ---
     sel_config = cfg.selected_params.model_dump()
@@ -665,41 +668,50 @@ def process(  # noqa: PLR0915, PLR0912
         return
 
     combined = pl.concat(all_frames, how="diagonal_relaxed")
-    flights = combined.select("flight_id", "typecode").unique()
+
+    # --- Save per-flight parquet files ---
+    flights_dir = process_dir / "flights"
+    flights_dir.mkdir(parents=True, exist_ok=True)
 
     import random
 
     rng = random.Random(42)  # noqa: S311
-    typecodes = sorted(flights["typecode"].unique().to_list())
-    rng.shuffle(typecodes)
 
-    # Assign typecodes to splits (70/15/15)
-    total = len(flights)
-    train_target = int(total * 0.7)
-    running = 0
-    train_tc: set[str] = set()
-    val_tc: set[str] = set()
-    for tc in typecodes:
-        n = flights.filter(pl.col("typecode") == tc).height
-        if running < train_target:
-            train_tc.add(tc)
-            running += n
-        else:
-            break
-    remaining = [tc for tc in typecodes if tc not in train_tc]
-    mid = len(remaining) // 2
-    val_tc = set(remaining[:mid]) if remaining else set()
+    split_rows: list[dict[str, str]] = []
 
-    def _assign(tc: str) -> str:
-        if tc in train_tc:
-            return "train"
-        if tc in val_tc:
-            return "val"
-        return "test"
+    for tc in sorted(combined["typecode"].unique().to_list()):
+        tc_flights = combined.filter(pl.col("typecode") == tc).partition_by(
+            "flight_id", maintain_order=True
+        )
+        rng.shuffle(tc_flights)
 
-    split_series = flights["typecode"].map_elements(_assign, return_dtype=pl.Utf8)
-    split_df = flights.with_columns(split_series.alias("split"))
+        n = len(tc_flights)
+        n_train = max(1, int(n * 0.7))
+        n_val = max(1, int(n * 0.15)) if n > 2 else 0  # noqa: PLR2004
+        # rest goes to test
 
+        for i, flight_df in enumerate(tc_flights):
+            fid = flight_df["flight_id"][0]
+            out_path = flights_dir / f"{fid}.parquet"
+            flight_df.write_parquet(out_path)
+
+            if i < n_train:
+                split = "train"
+            elif i < n_train + n_val:
+                split = "val"
+            else:
+                split = "test"
+
+            split_rows.append(
+                {
+                    "flight_id": fid,
+                    "filepath": str(out_path.resolve()),
+                    "split": split,
+                    "aircraft_type": tc,
+                }
+            )
+
+    split_df = pl.DataFrame(split_rows)
     split_csv = process_dir / "dataset_split.csv"
     split_df.write_csv(split_csv)
     log.info("process_split_done", flights=len(split_df), output=str(split_csv))
