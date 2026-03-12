@@ -2,8 +2,6 @@
 
 from __future__ import annotations
 
-import polars as pl
-
 from node_fdm_data.schemas import opensky
 
 
@@ -37,17 +35,9 @@ class TestOpenSkySchema:
             assert isinstance(sign, int)
             assert isinstance(name, str)
 
-    def test_conversions_registry(self) -> None:
-        """All keys are strings, all values are (callable, str) tuples."""
-        assert isinstance(opensky.CONVERSIONS, dict)
-        assert len(opensky.CONVERSIONS) > 0
-        for key, (fn, target) in opensky.CONVERSIONS.items():
-            assert isinstance(key, str)
-            assert callable(fn)
-            assert isinstance(target, str)
-
-    def test_conversion_fn_returns_expr(self) -> None:
-        """Each conversion function returns a pl.Expr."""
-        for _key, (fn, _target) in opensky.CONVERSIONS.items():
-            result = fn("test_col")
-            assert isinstance(result, pl.Expr)
+    def test_si_unit_convention(self) -> None:
+        """All columns use SI unit suffixes (m, ms, rad, K)."""
+        all_names = opensky.X_COLS + opensky.U_COLS + opensky.E0_COLS + opensky.E1_COLS
+        # No non-SI suffixes should remain
+        non_si = [c for c in all_names if c.endswith(("_ft", "_kt", "_ftmin", "_nm"))]
+        assert non_si == [], f"Non-SI columns found: {non_si}"

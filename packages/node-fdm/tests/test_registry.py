@@ -63,9 +63,9 @@ class TestRegistry:
         spec = get("opensky_2025")
         assert spec.x_cols == [
             "distance_m",
-            "altitude_ft",
+            "altitude_m",
             "gamma_rad",
-            "tas_kt",
+            "tas_ms",
         ]
         assert len(spec.layers) == 2
         assert spec.layers[0].name == "trajectory"

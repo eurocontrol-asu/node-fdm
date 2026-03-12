@@ -218,7 +218,6 @@ class TestCropOnDistanceJump:
 
     def test_crop_filters_low_speed(self) -> None:
         """Rows with speed below min_speed are removed."""
-        import numpy as np
 
         from node_fdm_data.preprocessing.opensky import crop_on_distance_jump
 
@@ -260,3 +259,109 @@ class TestCropOnDistanceJump:
         result = crop_on_distance_jump(df, threshold=500.0)
         assert len(result) == 5
 
+
+class TestTrainingPreprocessingSI:
+    """SI unit conversions in ``training_preprocessing``."""
+
+    @pytest.fixture()
+    def flight_df(self) -> pl.DataFrame:
+        """Flight DataFrame with raw units (ft, kt, ft/min, °C, NM)."""
+        return pl.DataFrame(
+            {
+                "altitude_ft": [10000.0, 20000.0, 35000.0],
+                "alt_sel_ft": [15000.0, 25000.0, 36000.0],
+                "TAS": [250.0, 350.0, 450.0],
+                "groundspeed": [240.0, 340.0, 430.0],
+                "vertical_rate": [1000.0, 500.0, 0.0],
+                "Mach": [0.5, 0.7, 0.82],
+                "IAS": [200.0, 250.0, 280.0],
+                "temperature": [-10.0, -30.0, -50.0],
+                "adep_dist": [0.0, 50.0, 100.0],
+                "ades_dist": [200.0, 150.0, 100.0],
+                "distance_along_track_m": [0.0, 5000.0, 10000.0],
+            }
+        )
+
+    def test_altitude_ft_to_m(self, flight_df: pl.DataFrame) -> None:
+        """altitude_ft -> altitude_m via ft_to_m (x 0.3048)."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "altitude_m" in result.columns
+        assert result["altitude_m"][0] == pytest.approx(10000.0 * 0.3048)
+        assert result["altitude_m"][2] == pytest.approx(35000.0 * 0.3048)
+
+    def test_tas_kt_to_ms(self, flight_df: pl.DataFrame) -> None:
+        """TAS (kt) -> tas_ms via kt_to_ms (x 0.514444)."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "tas_ms" in result.columns
+        assert result["tas_ms"][2] == pytest.approx(450.0 * 0.514444, rel=1e-4)
+
+    def test_temperature_c_to_k(self, flight_df: pl.DataFrame) -> None:
+        """temperature (°C) → temperature_K via celsius_to_kelvin (+ 273.15)."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "temperature_K" in result.columns
+        assert result["temperature_K"][0] == pytest.approx(263.15)
+        assert result["temperature_K"][2] == pytest.approx(223.15)
+
+    def test_vz_derivative_si(self, flight_df: pl.DataFrame) -> None:
+        """vz_ms is diff of altitude_m (SI derivative)."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "vz_ms" in result.columns
+        # First row: fill_null → 0.0
+        assert result["vz_ms"][0] == pytest.approx(0.0)
+        # Second row: (20000 - 10000) * 0.3048 = 3048.0
+        assert result["vz_ms"][1] == pytest.approx(10000.0 * 0.3048)
+
+    def test_d_gamma_rads_derivative(self, flight_df: pl.DataFrame) -> None:
+        """d_gamma_rads is diff of gamma_rad."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "d_gamma_rads" in result.columns
+        assert result["d_gamma_rads"][0] == pytest.approx(0.0)
+
+    def test_d_tas_ms_derivative(self, flight_df: pl.DataFrame) -> None:
+        """d_tas_ms is diff of tas_ms."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "d_tas_ms" in result.columns
+        assert result["d_tas_ms"][0] == pytest.approx(0.0)
+        # 100 kt difference = 100 * 0.514444 m/s
+        assert result["d_tas_ms"][1] == pytest.approx(100.0 * 0.514444, rel=1e-4)
+
+    def test_distance_nm_to_m(self, flight_df: pl.DataFrame) -> None:
+        """adep_dist (NM) -> adep_dist_m via nm_to_m (x 1852)."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "adep_dist_m" in result.columns
+        assert result["adep_dist_m"][1] == pytest.approx(50.0 * 1852.0)
+
+    def test_gamma_rad_unchanged(self, flight_df: pl.DataFrame) -> None:
+        """gamma_air (already radians) is only renamed to gamma_rad, not scaled."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        assert "gamma_rad" in result.columns
+        # gamma_air was computed from vz and TAS — check it's in valid range
+        gamma = result["gamma_rad"][0]
+        assert -1.57 < gamma < 1.57  # within ±π/2
+
+    def test_all_schema_cols_present(self, flight_df: pl.DataFrame) -> None:
+        """After preprocessing, all X_COLS and U_COLS from schema exist."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+        from node_fdm_data.schemas.opensky import U_COLS, X_COLS
+
+        result = training_preprocessing(flight_df)
+        for col in X_COLS:
+            assert col in result.columns, f"Missing X_COL: {col}"
+        for col in U_COLS:
+            assert col in result.columns, f"Missing U_COL: {col}"
