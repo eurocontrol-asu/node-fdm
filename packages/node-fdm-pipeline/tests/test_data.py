@@ -63,9 +63,16 @@ typecodes:
 """
         )
 
+        mock_arco_cls = mocker.MagicMock()
+        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
+        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
         mocker.patch.dict(
             "sys.modules",
-            {"fastmeteo": mocker.MagicMock(Grid=mocker.MagicMock())},
+            {
+                "fastmeteo": mocker.MagicMock(),
+                "fastmeteo.source": mock_source,
+                "fastmeteo.source.arco_era5": mock_source_arco,
+            },
         )
 
         process(arch="opensky", config=config, dry_run=False)
@@ -130,20 +137,20 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        mock_grid_cls = mocker.MagicMock()
-        mock_grid_instance = mocker.MagicMock()
-        mock_grid_instance.interpolate.side_effect = fake_interpolate
-        mock_grid_cls.return_value = mock_grid_instance
+        mock_arco_cls = mocker.MagicMock()
+        mock_arco_instance = mocker.MagicMock()
+        mock_arco_instance.interpolate.side_effect = fake_interpolate
+        mock_arco_cls.return_value = mock_arco_instance
 
-        # Patch the full import chain: fastmeteo.core.grid.Grid
-        mock_core_grid = mocker.MagicMock(Grid=mock_grid_cls)
-        mock_core = mocker.MagicMock(grid=mock_core_grid)
+        # Patch the full import chain: fastmeteo.source.arco_era5.ArcoEra5
+        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
+        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
         mocker.patch.dict(
             "sys.modules",
             {
-                "fastmeteo": mocker.MagicMock(Grid=mock_grid_cls),
-                "fastmeteo.core": mock_core,
-                "fastmeteo.core.grid": mock_core_grid,
+                "fastmeteo": mocker.MagicMock(),
+                "fastmeteo.source": mock_source,
+                "fastmeteo.source.arco_era5": mock_source_arco,
             },
         )
 
@@ -183,15 +190,15 @@ typecodes:
 """
         )
 
-        mock_grid_cls = mocker.MagicMock()
-        mock_core_grid = mocker.MagicMock(Grid=mock_grid_cls)
-        mock_core = mocker.MagicMock(grid=mock_core_grid)
+        mock_arco_cls = mocker.MagicMock()
+        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
+        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
         mocker.patch.dict(
             "sys.modules",
             {
-                "fastmeteo": mocker.MagicMock(Grid=mock_grid_cls),
-                "fastmeteo.core": mock_core,
-                "fastmeteo.core.grid": mock_core_grid,
+                "fastmeteo": mocker.MagicMock(),
+                "fastmeteo.source": mock_source,
+                "fastmeteo.source.arco_era5": mock_source_arco,
             },
         )
 
