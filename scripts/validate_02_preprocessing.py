@@ -262,10 +262,9 @@ def plot_flight_analysis(df: pl.DataFrame, figure_dir: Path) -> None:
             tooltip=base_tooltip,
         )
     )
-    (line + pts_alt).properties(
+    traj_alt = (line + pts_alt).properties(
         title=f"Trajectory (altitude) — {sample_id}", width=600, height=400
-    ).save(figure_dir / "02_trajectory_altitude.html")
-    _status(True, "02_trajectory_altitude.html")
+    )
 
     # --- Trajectory colored by groundspeed ---
     pts_gs = (
@@ -278,30 +277,33 @@ def plot_flight_analysis(df: pl.DataFrame, figure_dir: Path) -> None:
             tooltip=base_tooltip,
         )
     )
-    (line + pts_gs).properties(
+    traj_gs = (line + pts_gs).properties(
         title=f"Trajectory (groundspeed) — {sample_id}", width=600, height=400
-    ).save(figure_dir / "02_trajectory_groundspeed.html")
-    _status(True, "02_trajectory_groundspeed.html")
+    )
 
     # --- Altitude vs time ---
-    alt.Chart(flight).mark_line().encode(
-        x=alt.X("t:Q", title="Sample index"),
-        y=alt.Y("altitude:Q", title="Altitude (ft)"),
-        tooltip=base_tooltip,
-    ).properties(title=f"Altitude profile — {sample_id}", width=700, height=250).save(
-        figure_dir / "02_altitude_profile.html"
+    alt_profile = (
+        alt.Chart(flight)
+        .mark_line()
+        .encode(
+            x=alt.X("t:Q", title="Sample index"),
+            y=alt.Y("altitude:Q", title="Altitude (ft)"),
+            tooltip=base_tooltip,
+        )
+        .properties(title=f"Altitude profile — {sample_id}", width=700, height=250)
     )
-    _status(True, "02_altitude_profile.html")
 
     # --- Groundspeed vs time ---
-    alt.Chart(flight).mark_line().encode(
-        x=alt.X("t:Q", title="Sample index"),
-        y=alt.Y("groundspeed:Q", title="Groundspeed (kt)"),
-        tooltip=base_tooltip,
-    ).properties(title=f"Groundspeed profile — {sample_id}", width=700, height=250).save(
-        figure_dir / "02_groundspeed_profile.html"
+    gs_profile = (
+        alt.Chart(flight)
+        .mark_line()
+        .encode(
+            x=alt.X("t:Q", title="Sample index"),
+            y=alt.Y("groundspeed:Q", title="Groundspeed (kt)"),
+            tooltip=base_tooltip,
+        )
+        .properties(title=f"Groundspeed profile — {sample_id}", width=700, height=250)
     )
-    _status(True, "02_groundspeed_profile.html")
 
     # --- ADEP/ADES distances vs time ---
     adep = (
@@ -313,12 +315,23 @@ def plot_flight_analysis(df: pl.DataFrame, figure_dir: Path) -> None:
         )
     )
     ades = alt.Chart(flight).mark_line(color="coral").encode(x="t:Q", y="ades_dist:Q")
-    (adep + ades).properties(
+    dist_profile = (adep + ades).properties(
         title=f"ADEP (blue) / ADES (coral) distance — {sample_id}",
         width=700,
         height=250,
-    ).save(figure_dir / "02_distances_profile.html")
-    _status(True, "02_distances_profile.html")
+    )
+
+    # --- Combine all into a single HTML ---
+    dashboard = alt.vconcat(
+        alt.hconcat(traj_alt, traj_gs),
+        alt_profile,
+        gs_profile,
+        dist_profile,
+    ).resolve_scale(color="independent")
+
+    output = figure_dir / "02_flight_analysis.html"
+    dashboard.save(output)
+    _status(True, f"Flight analysis dashboard saved to {output}")
 
 
 def plot_dt_distribution(deltas: np.ndarray, figure_dir: Path) -> None:
