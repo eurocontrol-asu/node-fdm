@@ -14,7 +14,6 @@ import numpy as np
 import polars as pl
 
 from node_fdm_data.conversions import (
-    celsius_to_kelvin,
     ft_to_m,
     ftmin_to_ms,
     kt_to_ms,
@@ -137,7 +136,8 @@ _SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
     ("vz_sel_ftmin", ftmin_to_ms, "vz_sel_ms"),
     ("adep_dist", nm_to_m, "adep_dist_m"),
     ("ades_dist", nm_to_m, "ades_dist_m"),
-    ("temperature", celsius_to_kelvin, "temperature_K"),
+    # ERA5 temperature is already in Kelvin — just rename, no conversion.
+    ("temperature", lambda col: pl.col(col), "temperature_K"),
 ]
 
 # Derivative table: (source_si_col, target_deriv_col)
