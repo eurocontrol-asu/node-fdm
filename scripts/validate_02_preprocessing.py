@@ -89,6 +89,40 @@ def validate_structure(df: pl.DataFrame) -> bool:
 
 
 # ---------------------------------------------------------------------------
+# T1b — Temporal ordering (each flight sorted by timestamp)
+# ---------------------------------------------------------------------------
+
+
+def validate_temporal_order(df: pl.DataFrame) -> bool:
+    """Check that timestamps are monotonically increasing within each flight.
+
+    Args:
+        df: Preprocessed dataframe.
+
+    Returns:
+        True if all flights are sorted by timestamp.
+    """
+    ok = True
+    violation_count = 0
+
+    for (fid,), flight in df.group_by("flight_id"):
+        ts = flight["timestamp"]
+        if not ts.equals(ts.sort()):
+            violation_count += 1
+            if violation_count <= 5:
+                _status(False, f"Flight {fid} is not sorted by timestamp")
+            ok = False
+
+    if violation_count > 5:
+        _status(False, f"... and {violation_count - 5} more flights unsorted")
+
+    if ok:
+        n_flights = df["flight_id"].n_unique()
+        _status(True, f"All {n_flights} flights sorted by timestamp")
+    return ok
+
+
+# ---------------------------------------------------------------------------
 # T2 — No temporal gaps > 30s (post gap-split)
 # ---------------------------------------------------------------------------
 
@@ -279,6 +313,9 @@ def main() -> None:
     print("\n--- T1: Structure validation ---")
     t1_ok = validate_structure(df)
 
+    print("\n--- T1b: Temporal ordering ---")
+    t1b_ok = validate_temporal_order(df)
+
     print("\n--- T2: No temporal gaps > 30s ---")
     t2_ok = validate_no_gaps(df)
 
@@ -294,7 +331,7 @@ def main() -> None:
     plot_dt_distribution(deltas, figure_dir)
 
     # Summary
-    all_ok = t1_ok and t2_ok and t3_ok and t4_ok
+    all_ok = t1_ok and t1b_ok and t2_ok and t3_ok and t4_ok
     print("\n" + "=" * 60)
     icon = "✅" if all_ok else "❌"
     print(f"  {icon} Overall: {'PASS' if all_ok else 'FAIL'}")
