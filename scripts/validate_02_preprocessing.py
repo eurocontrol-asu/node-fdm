@@ -222,44 +222,103 @@ def validate_distances(df: pl.DataFrame) -> bool:
 # ---------------------------------------------------------------------------
 
 
-def plot_trajectory(df: pl.DataFrame, figure_dir: Path) -> None:
-    """Generate a clean trajectory plot (lat/lon colored by altitude).
+def plot_flight_analysis(df: pl.DataFrame, figure_dir: Path) -> None:
+    """Generate a multi-panel flight analysis for a sample flight.
+
+    Produces:
+      - Trajectory colored by altitude
+      - Trajectory colored by groundspeed
+      - Altitude vs time profile
+      - Groundspeed vs time profile
+      - adep_dist / ades_dist vs time
 
     Args:
         df: Preprocessed dataframe.
-        figure_dir: Directory to save the chart.
+        figure_dir: Directory to save charts.
     """
     import altair as alt
 
     sample_id = df["flight_id"].unique().sort()[0]
     flight = df.filter(pl.col("flight_id") == sample_id).sort("timestamp")
+    flight = flight.with_row_index("t")
 
-    chart = (
+    figure_dir.mkdir(parents=True, exist_ok=True)
+
+    base_tooltip = ["flight_id", "timestamp:T", "altitude", "groundspeed", "track"]
+
+    # --- Trajectory colored by altitude ---
+    line = (
         alt.Chart(flight)
-        .mark_line(point=True, size=1)
+        .mark_line(strokeWidth=0.5, color="gray")
+        .encode(x="longitude:Q", y="latitude:Q", order="timestamp:T")
+    )
+    pts_alt = (
+        alt.Chart(flight)
+        .mark_circle(size=20)
         .encode(
             x=alt.X("longitude:Q"),
             y=alt.Y("latitude:Q"),
-            color=alt.Color("altitude:Q"),
-            order=alt.Order("timestamp:T"),
-            tooltip=[
-                "flight_id",
-                "timestamp:T",
-                "altitude",
-                "groundspeed",
-                "track",
-                "icao24",
-                "adep_dist",
-                "ades_dist",
-            ],
+            color=alt.Color("altitude:Q", scale=alt.Scale(scheme="viridis")),
+            tooltip=base_tooltip,
         )
-        .properties(title=f"Clean trajectory — {sample_id}", width=600, height=400)
     )
+    (line + pts_alt).properties(
+        title=f"Trajectory (altitude) — {sample_id}", width=600, height=400
+    ).save(figure_dir / "02_trajectory_altitude.html")
+    _status(True, "02_trajectory_altitude.html")
 
-    figure_dir.mkdir(parents=True, exist_ok=True)
-    output = figure_dir / "02_clean_trajectory.html"
-    chart.save(output)
-    _status(True, f"Trajectory chart saved to {output}")
+    # --- Trajectory colored by groundspeed ---
+    pts_gs = (
+        alt.Chart(flight)
+        .mark_circle(size=20)
+        .encode(
+            x=alt.X("longitude:Q"),
+            y=alt.Y("latitude:Q"),
+            color=alt.Color("groundspeed:Q", scale=alt.Scale(scheme="plasma")),
+            tooltip=base_tooltip,
+        )
+    )
+    (line + pts_gs).properties(
+        title=f"Trajectory (groundspeed) — {sample_id}", width=600, height=400
+    ).save(figure_dir / "02_trajectory_groundspeed.html")
+    _status(True, "02_trajectory_groundspeed.html")
+
+    # --- Altitude vs time ---
+    alt.Chart(flight).mark_line().encode(
+        x=alt.X("t:Q", title="Sample index"),
+        y=alt.Y("altitude:Q", title="Altitude (ft)"),
+        tooltip=base_tooltip,
+    ).properties(title=f"Altitude profile — {sample_id}", width=700, height=250).save(
+        figure_dir / "02_altitude_profile.html"
+    )
+    _status(True, "02_altitude_profile.html")
+
+    # --- Groundspeed vs time ---
+    alt.Chart(flight).mark_line().encode(
+        x=alt.X("t:Q", title="Sample index"),
+        y=alt.Y("groundspeed:Q", title="Groundspeed (kt)"),
+        tooltip=base_tooltip,
+    ).properties(title=f"Groundspeed profile — {sample_id}", width=700, height=250).save(
+        figure_dir / "02_groundspeed_profile.html"
+    )
+    _status(True, "02_groundspeed_profile.html")
+
+    # --- ADEP/ADES distances vs time ---
+    adep = (
+        alt.Chart(flight)
+        .mark_line(color="steelblue")
+        .encode(
+            x=alt.X("t:Q", title="Sample index"),
+            y=alt.Y("adep_dist:Q", title="Distance (nm)"),
+        )
+    )
+    ades = alt.Chart(flight).mark_line(color="coral").encode(x="t:Q", y="ades_dist:Q")
+    (adep + ades).properties(
+        title=f"ADEP (blue) / ADES (coral) distance — {sample_id}",
+        width=700,
+        height=250,
+    ).save(figure_dir / "02_distances_profile.html")
+    _status(True, "02_distances_profile.html")
 
 
 def plot_dt_distribution(deltas: np.ndarray, figure_dir: Path) -> None:
@@ -327,7 +386,7 @@ def main() -> None:
 
     print("\n--- Plots ---")
     figure_dir = data_dir / "figures"
-    plot_trajectory(df, figure_dir)
+    plot_flight_analysis(df, figure_dir)
     plot_dt_distribution(deltas, figure_dir)
 
     # Summary
