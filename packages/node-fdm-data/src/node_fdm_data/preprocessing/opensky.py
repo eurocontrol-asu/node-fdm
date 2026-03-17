@@ -70,7 +70,7 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
         "altitude": "altitude_ft",
         "selected_mcp": "alt_sel_ft",
         "vertical_rate": "vz_sel_ftmin",
-        "Mach": "mach_sel",
+        "Mach": "mach",
         "IAS": "cas_sel_kt",
         "TAS": "tas_kt",
         "groundspeed": "gs_kt",
@@ -111,7 +111,7 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
     # Fill nulls in control inputs
     fill_cols = {
         "vz_sel_ftmin": 0.0,
-        "mach_sel": 0.0,
+        "mach": 0.0,
         "cas_sel_kt": 0.0,
     }
     for col, val in fill_cols.items():

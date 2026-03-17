@@ -89,20 +89,20 @@ def validate_feature_set(df: pl.DataFrame) -> bool:
     if missing_w:
         _status(False, f"  Missing weather: {sorted(missing_w)}")
 
-    # Aero -- after flight_processing(), TAS is renamed to tas_kt and
-    # CAS stays as CAS.  The computed Mach is consumed into mach_sel
-    # by flight_processing() + build_selected_params(), so there is no
-    # standalone Mach column in the output.
+    # Aero -- after flight_processing(), TAS is renamed to tas_kt,
+    # CAS stays as CAS, and the computed Mach becomes 'mach'.
+    # Segment-detected Mach is in 'mach_sel' (step-like, with NaN gaps).
     aero_checks = [
         (("TAS", "tas_ms", "tas_kt"), "TAS/tas_ms/tas_kt"),
         (("CAS", "cas_ms", "cas_sel_kt"), "CAS/cas_ms/cas_sel_kt"),
+        (("mach", "Mach"), "mach/Mach (continuous computed)"),
     ]
     aero_ok = True
     for candidates, label in aero_checks:
         if not any(c in df.columns for c in candidates):
             _status(False, f"  Missing aero column: {label}")
             aero_ok = False
-    ok = _status(aero_ok, "Aero columns (TAS, CAS)") and ok
+    ok = _status(aero_ok, "Aero columns (TAS, CAS, Mach)") and ok
 
     # Physics-derived
     physics = {"gamma_air", "long_wind"}
@@ -152,12 +152,10 @@ def validate_physics(df: pl.DataFrame) -> bool:
     """
     ok = True
 
-    # Mach -- the computed Mach is consumed into mach_sel by the pipeline
-    # (flight_processing renames Mach -> mach_sel, then build_selected_params
-    # overwrites with segment means).  We validate mach_sel bounds as proxy.
-    mach_col = _resolve_col(df, "Mach", "mach")
+    # Mach -- continuous computed Mach lives in 'mach' column.
+    # 'mach_sel' is the segment-detected selected Mach (step-like).
+    mach_col = _resolve_col(df, "mach", "Mach")
     if mach_col:
-        # Standalone Mach column exists (rare)
         mach = df[mach_col].drop_nulls().to_numpy()
         in_range = bool(np.all((mach > 0.05) & (mach < 1.05)))
         ok = (
@@ -168,9 +166,7 @@ def validate_physics(df: pl.DataFrame) -> bool:
             and ok
         )
     elif "mach_sel" in df.columns:
-        # Use mach_sel as proxy (segment-detected from computed Mach).
-        # NaN fill is used for points outside detected segments, so
-        # we must strip both polars nulls and numpy NaNs.
+        # Fallback: use mach_sel as proxy (segment-detected from computed Mach).
         mach = df["mach_sel"].drop_nulls().to_numpy()
         mach = mach[~np.isnan(mach)]
         if len(mach) > 0:
@@ -185,7 +181,7 @@ def validate_physics(df: pl.DataFrame) -> bool:
         else:
             _status(True, "mach_sel all null (segment detection found no stable regions)")
     else:
-        ok = _status(False, "No Mach or mach_sel column found") and ok
+        ok = _status(False, "No mach or mach_sel column found") and ok
 
     # gamma_air (flight path angle in radians)
     if "gamma_air" in df.columns:

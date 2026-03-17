@@ -24,7 +24,7 @@ class TestOpenSkyPreprocessing:
                 "altitude_ft": [5000.0, 10000.0, 15000.0, 20000.0, 25000.0],
                 "alt_sel_ft": [10000.0, 15000.0, 20000.0, 25000.0, 30000.0],
                 "vz_sel_ftmin": [None, 500.0, None, 1000.0, 500.0],
-                "mach_sel": [0.5, None, 0.6, None, 0.7],
+                "mach": [0.5, None, 0.6, None, 0.7],
                 "cas_sel_kt": [None, None, 200.0, 250.0, 300.0],
                 "distance_m": [0.0, 500.0, 1200.0, 2000.0, 2800.0],
             }
@@ -41,7 +41,7 @@ class TestOpenSkyPreprocessing:
         """NaN values in control columns are filled with 0."""
         result = flight_processing(opensky_df).collect()
         assert result["vz_sel_ftmin"].null_count() == 0
-        assert result["mach_sel"].null_count() == 0
+        assert result["mach"].null_count() == 0
         assert result["cas_sel_kt"].null_count() == 0
 
     def test_segment_filtering_valid(self) -> None:
@@ -138,6 +138,26 @@ class TestOpenSkyPreprocessing:
         assert "alt_sel_ft" in result.columns
         assert "vz_sel_ftmin" in result.columns
         assert "alt_diff_ft" in result.columns
+        # Mach → mach (not mach_sel)
+        assert "mach" in result.columns
+        assert "mach_sel" not in result.columns
+
+    def test_mach_column_preserved_after_rename(self) -> None:
+        """Mach is renamed to 'mach' (continuous), not consumed into 'mach_sel'."""
+        df = pl.LazyFrame(
+            {
+                "altitude": [35000.0, 35000.0],
+                "selected_mcp": [36000.0, 36000.0],
+                "vertical_rate": [0.0, 0.0],
+                "Mach": [0.78, 0.80],
+                "IAS": [280.0, 285.0],
+                "TAS": [450.0, 455.0],
+                "groundspeed": [430.0, 435.0],
+            }
+        )
+        result = flight_processing(df).collect()
+        assert "mach" in result.columns
+        assert result["mach"].to_list() == [0.78, 0.80]
 
     def test_segment_filtering_empty_segment(self) -> None:
         """Segment of length 1 (empty diffs) returns False."""
@@ -275,6 +295,7 @@ class TestTrainingPreprocessingSI:
                 "vertical_rate": [1000.0, 500.0, 0.0],
                 "Mach": [0.5, 0.7, 0.82],
                 "IAS": [200.0, 250.0, 280.0],
+                "mach_sel": [0.5, 0.7, 0.82],  # from build_selected_params
                 "temperature": [-10.0, -30.0, -50.0],
                 "adep_dist": [0.0, 50.0, 100.0],
                 "ades_dist": [200.0, 150.0, 100.0],

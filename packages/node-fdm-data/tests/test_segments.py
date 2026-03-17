@@ -271,3 +271,70 @@ class TestBuildSelectedParams:
         result = build_selected_params(df, config)
         assert "mach_sel" in result.columns
         assert "cas_sel" not in result.columns  # CAS column not provided
+
+    def test_mach_and_mach_sel_coexist(self) -> None:
+        """After flight_processing + build_selected_params, both mach and mach_sel exist."""
+        from node_fdm_data.preprocessing.opensky import flight_processing
+
+        n = 200
+        rng = np.random.default_rng(42)
+
+        alt = np.concatenate(
+            [
+                np.linspace(0, 35000, 100),
+                np.full(100, 35000),
+            ]
+        )
+        mach_vals = np.concatenate(
+            [
+                np.linspace(0.3, 0.78, 100),
+                np.full(100, 0.78) + rng.normal(0, 0.0001, 100),
+            ]
+        )
+
+        df = pl.DataFrame(
+            {
+                "altitude": alt,
+                "Mach": mach_vals,
+                "TAS": np.full(n, 450.0),
+                "groundspeed": np.full(n, 430.0),
+                "vertical_rate": np.full(n, 0.0),
+                "IAS": np.full(n, 280.0),
+                "selected_mcp": np.full(n, 36000.0),
+            }
+        )
+
+        # Step 1: flight_processing renames Mach → mach
+        df = flight_processing(df.lazy()).collect()
+        assert "mach" in df.columns
+        assert "mach_sel" not in df.columns  # not yet created
+
+        # Step 2: build_selected_params creates mach_sel from mach
+        config = {
+            "mach": {
+                "tol": 0.001,
+                "min_len": 20,
+                "alt_threshold": 15000,
+                "use_alt": True,
+            },
+            "cas": {
+                "tol": 1.0,
+                "min_len": 20,
+                "use_alt": False,
+            },
+            "vz": {
+                "tol": 25,
+                "min_len": 20,
+                "use_alt": False,
+            },
+        }
+        df = build_selected_params(df, config)
+
+        # Both columns exist
+        assert "mach" in df.columns, "continuous mach column missing"
+        assert "mach_sel" in df.columns, "segment-detected mach_sel column missing"
+
+        # mach is continuous (no NaN), mach_sel has NaN gaps
+        assert df["mach"].null_count() == 0
+        mach_sel_nulls = df["mach_sel"].is_null().sum() + df["mach_sel"].is_nan().sum()
+        assert mach_sel_nulls > 0, "mach_sel should have NaN gaps outside segments"

@@ -195,7 +195,7 @@ def build_selected_params(
     alt_arr = df[alt_col].to_numpy()
 
     # --- Mach selected ---
-    mach_col = "mach_sel" if "mach_sel" in df.columns else "Mach"
+    mach_col = "mach" if "mach" in df.columns else "Mach"
     if mach_col in df.columns:
         mach_cfg = config.get("mach", {})
         mach_segs = detect_constant_segments(
