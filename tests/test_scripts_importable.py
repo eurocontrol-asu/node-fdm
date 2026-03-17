@@ -25,6 +25,7 @@ OPTIONAL_DEPS = {
     "scripts.opensky.03_preprocess_data": "traffic",
     "scripts.opensky.11_explore_dataset": "traffic",
     "scripts.opensky.07_bada_prediction": "pyBADA",
+    "scripts.validate_01_acquisition": "polars",
 }
 
 ALL_SCRIPTS = [
@@ -43,6 +44,7 @@ ALL_SCRIPTS = [
     "scripts.opensky.13_example_flight",
     "scripts.qar.01_training",
     "scripts.qar.02_inference",
+    "scripts.validate_01_acquisition",
 ]
 
 
