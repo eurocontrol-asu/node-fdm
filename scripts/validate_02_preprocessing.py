@@ -207,7 +207,17 @@ def plot_trajectory(df: pl.DataFrame, figure_dir: Path) -> None:
             x=alt.X("longitude:Q"),
             y=alt.Y("latitude:Q"),
             color=alt.Color("altitude:Q"),
-            tooltip=["flight_id", "altitude", "groundspeed"],
+            order=alt.Order("timestamp:T"),
+            tooltip=[
+                "flight_id",
+                "timestamp:T",
+                "altitude",
+                "groundspeed",
+                "track",
+                "icao24",
+                "adep_dist",
+                "ades_dist",
+            ],
         )
         .properties(title=f"Clean trajectory — {sample_id}", width=600, height=400)
     )
