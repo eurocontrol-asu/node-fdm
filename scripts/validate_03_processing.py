@@ -70,8 +70,9 @@ def _resolve_col(df: pl.DataFrame, *candidates: str) -> str | None:
 def validate_feature_set(df: pl.DataFrame) -> bool:
     """Validate that all derived columns are present.
 
-    Checks weather (ERA5), aero (TAS/Mach/CAS with fallback names),
-    physics-derived, selected params, lateral dynamics, and distance columns.
+    Checks weather (ERA5), aero (TAS as tas_kt, CAS), physics-derived,
+    selected params (mach_sel, cas_sel, vz_sel), lateral dynamics,
+    and distance columns.
 
     Args:
         df: Processed dataframe.
@@ -88,18 +89,20 @@ def validate_feature_set(df: pl.DataFrame) -> bool:
     if missing_w:
         _status(False, f"  Missing weather: {sorted(missing_w)}")
 
-    # Aero — accept either raw or SI column names
+    # Aero -- after flight_processing(), TAS is renamed to tas_kt and
+    # CAS stays as CAS.  The computed Mach is consumed into mach_sel
+    # by flight_processing() + build_selected_params(), so there is no
+    # standalone Mach column in the output.
     aero_checks = [
-        (("TAS", "tas_ms"), "TAS/tas_ms"),
-        (("Mach", "mach"), "Mach/mach"),
-        (("CAS", "cas_ms"), "CAS/cas_ms"),
+        (("TAS", "tas_ms", "tas_kt"), "TAS/tas_ms/tas_kt"),
+        (("CAS", "cas_ms", "cas_sel_kt"), "CAS/cas_ms/cas_sel_kt"),
     ]
     aero_ok = True
     for candidates, label in aero_checks:
         if not any(c in df.columns for c in candidates):
             _status(False, f"  Missing aero column: {label}")
             aero_ok = False
-    ok = _status(aero_ok, "Aero columns (TAS, Mach, CAS)") and ok
+    ok = _status(aero_ok, "Aero columns (TAS, CAS)") and ok
 
     # Physics-derived
     physics = {"gamma_air", "long_wind"}
@@ -149,9 +152,12 @@ def validate_physics(df: pl.DataFrame) -> bool:
     """
     ok = True
 
-    # Mach
+    # Mach -- the computed Mach is consumed into mach_sel by the pipeline
+    # (flight_processing renames Mach -> mach_sel, then build_selected_params
+    # overwrites with segment means).  We validate mach_sel bounds as proxy.
     mach_col = _resolve_col(df, "Mach", "mach")
     if mach_col:
+        # Standalone Mach column exists (rare)
         mach = df[mach_col].drop_nulls().to_numpy()
         in_range = bool(np.all((mach > 0.05) & (mach < 1.05)))
         ok = (
@@ -161,8 +167,22 @@ def validate_physics(df: pl.DataFrame) -> bool:
             )
             and ok
         )
+    elif "mach_sel" in df.columns:
+        # Use mach_sel as proxy (segment-detected from computed Mach)
+        mach = df["mach_sel"].drop_nulls().to_numpy()
+        if len(mach) > 0:
+            in_range = bool(np.all((mach > 0.05) & (mach < 1.05)))
+            ok = (
+                _status(
+                    in_range,
+                    f"mach_sel in [0.05, 1.05] -- actual [{mach.min():.4f}, {mach.max():.4f}]",
+                )
+                and ok
+            )
+        else:
+            _status(True, "mach_sel all null (segment detection found no stable regions)")
     else:
-        ok = _status(False, "Mach column not found") and ok
+        ok = _status(False, "No Mach or mach_sel column found") and ok
 
     # gamma_air (flight path angle in radians)
     if "gamma_air" in df.columns:
@@ -179,7 +199,7 @@ def validate_physics(df: pl.DataFrame) -> bool:
         ok = _status(False, "gamma_air column not found") and ok
 
     # TAS > 0
-    tas_col = _resolve_col(df, "TAS", "tas_ms")
+    tas_col = _resolve_col(df, "TAS", "tas_ms", "tas_kt")
     if tas_col:
         tas = df[tas_col].drop_nulls().to_numpy()
         all_positive = bool(np.all(tas > 0))
@@ -367,6 +387,9 @@ def plot_enriched_profile(df: pl.DataFrame, figure_dir: Path) -> None:
 def plot_mach_vs_selected(df: pl.DataFrame, figure_dir: Path) -> None:
     """Generate Mach vs mach_sel overlay for a sample flight.
 
+    If a standalone Mach column exists, overlays raw Mach (blue) with
+    mach_sel segments (red dashed).  Otherwise plots mach_sel alone.
+
     Args:
         df: Processed dataframe.
         figure_dir: Directory to save the chart.
@@ -378,28 +401,38 @@ def plot_mach_vs_selected(df: pl.DataFrame, figure_dir: Path) -> None:
     flight = flight.with_row_index("t")
     flight_pd = flight.to_pandas()
 
-    mach_col = "Mach" if "Mach" in flight.columns else "mach"
+    layers = []
 
-    mach_chart = (
-        alt.Chart(flight_pd)
-        .mark_line()
-        .encode(
-            x=alt.X("t:Q", title="Time step"),
-            y=alt.Y(f"{mach_col}:Q", title="Mach"),
-            color=alt.value("blue"),
+    # Raw Mach (if available)
+    mach_col = _resolve_col(flight, "Mach", "mach")
+    if mach_col:
+        layers.append(
+            alt.Chart(flight_pd)
+            .mark_line()
+            .encode(
+                x=alt.X("t:Q", title="Time step"),
+                y=alt.Y(f"{mach_col}:Q", title="Mach"),
+                color=alt.value("blue"),
+            )
         )
-    )
-    mach_sel_chart = (
-        alt.Chart(flight_pd)
-        .mark_line(strokeDash=[5, 3])
-        .encode(
-            x=alt.X("t:Q", title="Time step"),
-            y=alt.Y("mach_sel:Q", title="Mach"),
-            color=alt.value("red"),
-        )
-    )
 
-    chart = (mach_chart + mach_sel_chart).properties(
+    # mach_sel (segment-detected)
+    if "mach_sel" in flight.columns:
+        layers.append(
+            alt.Chart(flight_pd)
+            .mark_line(strokeDash=[5, 3])
+            .encode(
+                x=alt.X("t:Q", title="Time step"),
+                y=alt.Y("mach_sel:Q", title="Mach"),
+                color=alt.value("red"),
+            )
+        )
+
+    if not layers:
+        _status(False, "No Mach columns available for plot")
+        return
+
+    chart = alt.layer(*layers).properties(
         title=f"Mach vs mach_sel -- {sample_id}",
         width=700,
         height=250,
