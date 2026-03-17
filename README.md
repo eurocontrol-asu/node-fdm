@@ -170,7 +170,7 @@ node-fdm-v2/
 │       ├── commands/           # fdm CLI commands (data, train, predict, ...)
 │       ├── config              # PipelineConfig (Pydantic, YAML)
 │       └── resolver            # Architecture dispatcher
-├── scripts/                    # Development utilities
+├── scripts/                    # Development utilities (e.g. validate_01_acquisition.py — acquisition QA)
 ├── fixtures/                   # Golden test data
 └── docs/                       # MkDocs documentation
 ```
