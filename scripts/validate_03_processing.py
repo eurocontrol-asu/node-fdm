@@ -168,8 +168,11 @@ def validate_physics(df: pl.DataFrame) -> bool:
             and ok
         )
     elif "mach_sel" in df.columns:
-        # Use mach_sel as proxy (segment-detected from computed Mach)
+        # Use mach_sel as proxy (segment-detected from computed Mach).
+        # NaN fill is used for points outside detected segments, so
+        # we must strip both polars nulls and numpy NaNs.
         mach = df["mach_sel"].drop_nulls().to_numpy()
+        mach = mach[~np.isnan(mach)]
         if len(mach) > 0:
             in_range = bool(np.all((mach > 0.05) & (mach < 1.05)))
             ok = (
