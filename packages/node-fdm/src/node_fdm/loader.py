@@ -84,7 +84,7 @@ def _load_and_window(
                 e_arr[start:end],
                 dx_arr[start:end],
             ]
-            if any(np.isnan(s).any() for s in slices):
+            if not all(np.isfinite(s).all() for s in slices):
                 continue
 
             # Custom segment filter

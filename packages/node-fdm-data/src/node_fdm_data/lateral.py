@@ -72,7 +72,7 @@ def orthodromic_bearing(
     y = np.sin(d_lam) * np.cos(phi2)
     x = np.cos(phi1) * np.sin(phi2) - np.sin(phi1) * np.cos(phi2) * np.cos(d_lam)
     bearing = np.arctan2(y, x)
-    return (bearing + 2 * np.pi) % (2 * np.pi)
+    return np.asarray((bearing + 2 * np.pi) % (2 * np.pi))
 
 
 def rhumb_bearing(

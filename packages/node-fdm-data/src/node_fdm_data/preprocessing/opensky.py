@@ -192,7 +192,7 @@ def training_preprocessing(df: pl.DataFrame) -> pl.DataFrame:
     # Step 4: compute derivatives via finite differences on SI columns
     dcols = set(df.columns)
     deriv_exprs = [
-        pl.col(src).diff().fill_null(0.0).alias(tgt)
+        pl.col(src).diff().backward_fill().fill_null(0.0).alias(tgt)
         for src, tgt in _SI_DERIVATIVES
         if src in dcols
     ]

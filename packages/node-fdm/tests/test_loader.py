@@ -192,6 +192,65 @@ class TestLoadAndWindow:
         clean_samples = _load_and_window([path_clean], x, u, e, dx, seq_len=10, shift=5)
         assert len(nan_samples) < len(clean_samples)
 
+    def test_inf_windows_skipped(self, tmp_path: Path) -> None:
+        """Windows containing inf values are excluded."""
+        n = 30
+        alt = np.linspace(1000, 10000, n)
+        alt[5] = np.inf  # +inf in first window
+
+        df = pl.DataFrame(
+            {
+                "alt": alt,
+                "tas": np.linspace(200, 250, n),
+                "cmd": np.zeros(n),
+                "temp": np.full(n, 220.0),
+                "d_alt": np.ones(n),
+            }
+        )
+        path_inf = tmp_path / "inf.parquet"
+        df.write_parquet(path_inf)
+
+        # Clean version for comparison
+        clean = pl.DataFrame(
+            {
+                "alt": np.linspace(1000, 10000, n),
+                "tas": np.linspace(200, 250, n),
+                "cmd": np.zeros(n),
+                "temp": np.full(n, 220.0),
+                "d_alt": np.ones(n),
+            }
+        )
+        path_clean = tmp_path / "clean.parquet"
+        clean.write_parquet(path_clean)
+
+        x, u, e, dx = self._cols()
+        inf_samples = _load_and_window([path_inf], x, u, e, dx, seq_len=10, shift=5)
+        clean_samples = _load_and_window([path_clean], x, u, e, dx, seq_len=10, shift=5)
+        assert len(inf_samples) < len(clean_samples)
+
+    def test_neg_inf_windows_skipped(self, tmp_path: Path) -> None:
+        """Windows containing -inf values are also excluded."""
+        n = 20
+        tas = np.linspace(200, 250, n)
+        tas[15] = -np.inf  # -inf in last window
+
+        df = pl.DataFrame(
+            {
+                "alt": np.linspace(1000, 10000, n),
+                "tas": tas,
+                "cmd": np.zeros(n),
+                "temp": np.full(n, 220.0),
+                "d_alt": np.ones(n),
+            }
+        )
+        path = tmp_path / "neginf.parquet"
+        df.write_parquet(path)
+
+        x, u, e, dx = self._cols()
+        samples = _load_and_window([path], x, u, e, dx, seq_len=10, shift=10)
+        # Second window (rows 10-19) contains -inf → should be filtered
+        assert len(samples) == 1
+
     def test_segment_filter_fn(self, tmp_path: Path) -> None:
         """Custom segment_filter_fn can reject windows."""
         path = tmp_path / "seg.parquet"

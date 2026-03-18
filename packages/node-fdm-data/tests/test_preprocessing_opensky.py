@@ -330,31 +330,33 @@ class TestTrainingPreprocessingSI:
         assert result["temperature_K"][2] == pytest.approx(223.15)
 
     def test_vz_derivative_si(self, flight_df: pl.DataFrame) -> None:
-        """vz_ms is diff of altitude_m (SI derivative)."""
+        """vz_ms is diff of altitude_m (SI derivative) with backward fill."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
         assert "vz_ms" in result.columns
-        # First row: fill_null → 0.0
-        assert result["vz_ms"][0] == pytest.approx(0.0)
+        # First row: backward_fill propagates second row value
+        assert result["vz_ms"][0] == pytest.approx(10000.0 * 0.3048)
         # Second row: (20000 - 10000) * 0.3048 = 3048.0
         assert result["vz_ms"][1] == pytest.approx(10000.0 * 0.3048)
 
     def test_d_gamma_rads_derivative(self, flight_df: pl.DataFrame) -> None:
-        """d_gamma_rads is diff of gamma_rad."""
+        """d_gamma_rads is diff of gamma_rad with backward fill."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
         assert "d_gamma_rads" in result.columns
-        assert result["d_gamma_rads"][0] == pytest.approx(0.0)
+        # First row = second row (backward fill), not 0.0
+        assert result["d_gamma_rads"][0] == pytest.approx(result["d_gamma_rads"][1])
 
     def test_d_tas_ms_derivative(self, flight_df: pl.DataFrame) -> None:
-        """d_tas_ms is diff of tas_ms."""
+        """d_tas_ms is diff of tas_ms with backward fill."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
         assert "d_tas_ms" in result.columns
-        assert result["d_tas_ms"][0] == pytest.approx(0.0)
+        # First row = backward fill of second row diff
+        assert result["d_tas_ms"][0] == pytest.approx(100.0 * 0.514444, rel=1e-4)
         # 100 kt difference = 100 * 0.514444 m/s
         assert result["d_tas_ms"][1] == pytest.approx(100.0 * 0.514444, rel=1e-4)
 
@@ -375,6 +377,18 @@ class TestTrainingPreprocessingSI:
         # gamma_air was computed from vz and TAS — check it's in valid range
         gamma = result["gamma_rad"][0]
         assert -1.57 < gamma < 1.57  # within ±π/2
+
+    def test_derivative_backward_fill_not_zero(self, flight_df: pl.DataFrame) -> None:
+        """Derivative first row uses backward_fill, not zero fill (legacy alignment)."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(flight_df)
+        # With backward_fill, first row should equal second row for all derivatives
+        for col in ("vz_ms", "d_gamma_rads", "d_tas_ms"):
+            assert result[col][0] != 0.0, f"{col} first row should not be zero"
+            assert result[col][0] == pytest.approx(
+                result[col][1]
+            ), f"{col} first row should equal second row (backward fill)"
 
     def test_all_schema_cols_present(self, flight_df: pl.DataFrame) -> None:
         """After preprocessing, all X_COLS and U_COLS from schema exist."""
