@@ -71,7 +71,7 @@ def _filter_nan_segments(
     return x_arr[finite_mask][0], u_seq[finite_mask], e_seq[finite_mask]
 
 
-def run_predict(
+def run_predict(  # noqa: PLR0915
     *,
     arch: str,
     config: Path,
@@ -180,7 +180,11 @@ def run_predict(
             if result is None:
                 continue
 
-            predictions = predictor.predict_flight(*result)
+            try:
+                predictions = predictor.predict_flight(*result)
+            except ValueError:
+                log.warning("predict_skip_bad_x_init", flight_id=flight_id)
+                continue
 
             pred_df = pl.DataFrame({f"pred_{k}": v for k, v in predictions.items()})
             pred_df.write_parquet(output_dir / f"{flight_id}.parquet")

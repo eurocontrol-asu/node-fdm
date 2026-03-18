@@ -140,6 +140,14 @@ class NodeFDMPredictor:
             Dictionary mapping state column names to predicted arrays
             of shape ``(n_steps,)``.
         """
+        if not np.isfinite(x_init).all():
+            bad_mask = ~np.isfinite(x_init)
+            bad_cols = [
+                f"{self.spec.x_cols[i]}={x_init[i]}" for i in range(len(x_init)) if bad_mask[i]
+            ]
+            msg = f"x_init contains non-finite values: {', '.join(bad_cols)}"
+            raise ValueError(msg)
+
         n_steps = u_seq.shape[0]
         results: dict[str, list[float]] = {col: [] for col in self.spec.x_cols}
 

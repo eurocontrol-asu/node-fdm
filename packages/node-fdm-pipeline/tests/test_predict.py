@@ -626,3 +626,109 @@ typecodes:
         )
         with pytest.raises(SystemExit, match="fdm process"):
             run_predict(arch="opensky", config=config, typecode="A320")
+
+
+class TestPredictXInitGuard:
+    """Regression tests for AXM-494: x_init finite guard in predict_flight."""
+
+    @patch("node_fdm.predictor.NodeFDMPredictor")
+    @patch("node_fdm_pipeline.resolver.resolve_architecture")
+    def test_predict_skips_flight_on_bad_x_init(
+        self,
+        mock_resolve: MagicMock,
+        mock_predictor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """predict_flight raising ValueError → flight skipped, no output."""
+        from node_fdm_pipeline.resolver import ArchitectureInfo
+
+        # Setup config + data
+        data_dir = tmp_path / "data"
+        process_dir = data_dir / "processed_flights"
+        models_dir = data_dir / "models"
+        acft_dir = process_dir / "A320"
+        process_dir.mkdir(parents=True)
+        models_dir.mkdir(parents=True)
+        acft_dir.mkdir(parents=True)
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+
+        flight = pl.DataFrame(
+            {
+                "altitude_ft": [35000.0] * 10,
+                "alt_sel_ft": [35000.0] * 10,
+                "vz_sel_ftmin": [0.0] * 10,
+                "mach_sel": [0.82] * 10,
+                "cas_sel_kt": [280.0] * 10,
+                "groundspeed": [450.0] * 10,
+                "vertical_rate": [0.0] * 10,
+                "latitude": [48.0] * 10,
+                "longitude": [2.0] * 10,
+                "track": [90.0] * 10,
+                "flight_id": ["F001"] * 10,
+                "timestamp": list(range(10)),
+            }
+        )
+        flight_path = acft_dir / "flight001.parquet"
+        flight.write_parquet(flight_path)
+
+        split_df = pl.DataFrame(
+            {
+                "filepath": [str(flight_path)],
+                "icao": ["abc123"],
+                "split": ["test"],
+                "aircraft_type": ["A320"],
+            }
+        )
+        split_df.write_csv(process_dir / "dataset_split.csv")
+
+        model_dir = models_dir / "opensky_2025_A320"
+        model_dir.mkdir()
+
+        # Mock architecture
+        mock_preprocessing = MagicMock()
+        mock_result = MagicMock()
+        mock_result.select.return_value.to_numpy.return_value = np.zeros((10, 1), dtype=np.float32)
+        mock_preprocessing.return_value = mock_result
+
+        mock_resolve.return_value = ArchitectureInfo(
+            name="opensky_2025",
+            x_cols=["distance_m"],
+            u_cols=["alt_sel_m"],
+            e0_cols=["long_wind_ms"],
+            dx_cols=[(1, "gs_ms")],
+            preprocessing_fn=mock_preprocessing,
+            segment_filter_fn=None,
+            architecture_import="node_fdm.architectures.opensky",
+        )
+
+        # Mock predictor to raise ValueError (simulating bad x_init)
+        mock_predictor = MagicMock()
+        mock_predictor.predict_flight.side_effect = ValueError(
+            "x_init contains non-finite values: altitude_m=nan"
+        )
+        mock_predictor_cls.return_value = mock_predictor
+
+        run_predict(
+            arch="opensky",
+            config=config,
+            typecode="A320",
+            device="cpu",
+            local_model=True,
+        )
+
+        # predict_flight was called but ValueError was caught
+        mock_predictor.predict_flight.assert_called_once()
+
+        # No output parquet written for the skipped flight
+        output_file = tmp_path / "data" / "predicted_flights" / "A320" / "flight001.parquet"
+        assert not output_file.exists()
