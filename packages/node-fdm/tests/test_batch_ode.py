@@ -36,7 +36,7 @@ class TestBatchNeuralODE:
         return HistoryModel()
 
     def test_forward_shape(self) -> None:
-        """Output shape matches input batch × n_x."""
+        """Output shape matches input batch x n_x."""
         batch, time, n_x, n_u, n_e = 4, 10, 3, 2, 1
         model = self._dummy_model()
         u_seq = torch.randn(batch, time, n_u)
@@ -52,7 +52,12 @@ class TestBatchNeuralODE:
     def test_interpolation_at_grid_point(self) -> None:
         """At a grid point, interpolation returns exact values."""
         batch, time, n_u, n_e = 2, 5, 1, 1
-        u_seq = torch.arange(time, dtype=torch.float32).unsqueeze(0).unsqueeze(-1).expand(batch, -1, n_u)
+        u_seq = (
+            torch.arange(time, dtype=torch.float32)
+            .unsqueeze(0)
+            .unsqueeze(-1)
+            .expand(batch, -1, n_u)
+        )
         e_seq = torch.zeros(batch, time, n_e)
         t_grid = torch.linspace(0, 1, time)
 
@@ -66,7 +71,7 @@ class TestBatchNeuralODE:
 
     def test_interpolation_midpoint(self) -> None:
         """Mid-point interpolation produces blended u input."""
-        batch, n_u, n_e = 1, 1, 1
+        batch, n_e = 1, 1
 
         class AddUModel(torch.nn.Module):
             def forward(self, x: torch.Tensor, u: torch.Tensor, e: torch.Tensor) -> torch.Tensor:
@@ -111,7 +116,7 @@ class TestBatchNeuralODE:
 
     def test_same_t0_t1(self) -> None:
         """When t0 == t1, alpha defaults to 0 (no division by zero)."""
-        batch, n_u, n_e = 1, 1, 1
+        batch, n_e = 1, 1
 
         class AddUModel(torch.nn.Module):
             def forward(self, x: torch.Tensor, u: torch.Tensor, e: torch.Tensor) -> torch.Tensor:

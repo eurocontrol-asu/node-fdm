@@ -71,7 +71,7 @@ class TestGetTrainValData:
             shift=10,
         )
         sample = train_ds[0]
-        assert sample.x.shape == (10, 2)  # seq_len × n_x
+        assert sample.x.shape == (10, 2)  # seq_len x n_x
         assert sample.u.shape == (10, 1)
         assert sample.e.shape == (10, 1)
         assert sample.dx.shape == (10, 1)
