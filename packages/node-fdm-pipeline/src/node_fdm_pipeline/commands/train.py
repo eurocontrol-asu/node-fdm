@@ -129,6 +129,7 @@ def run_training(
             train_dataset=train_ds,
             val_dataset=val_ds,
             model_dir=models_dir,
+            device=device,
         )
 
         trainer.train()

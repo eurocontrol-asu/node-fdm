@@ -113,9 +113,10 @@ class ODETrainer:
         val_dataset: FlightDataset,
         model_dir: Path,
         callbacks: Sequence[TrainingCallback] | None = None,
+        device: str = "cpu",
     ) -> None:
         self.config = config
-        self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+        self.device = torch.device(device)
 
         self.spec: ArchitectureSpec = get(config.architecture_name)
         self.model_dir = model_dir / config.model_name
