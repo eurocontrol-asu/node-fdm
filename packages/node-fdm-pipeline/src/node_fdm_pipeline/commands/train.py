@@ -108,6 +108,22 @@ def run_training(
             val_limit=5000,
         )
 
+        if epochs is None:
+            n_step_per_epoch = max(len(train_ds) // training_config.batch_size, 1)
+            coeff = min(50 / n_step_per_epoch, 10.0)
+            adjusted_epochs = int(training_config.epochs * coeff)
+            log.info(
+                "train_epoch_adjust",
+                typecode=acft,
+                original_epochs=training_config.epochs,
+                adjusted_epochs=adjusted_epochs,
+                n_step_per_epoch=n_step_per_epoch,
+                coeff=round(coeff, 3),
+            )
+            training_config = training_config.model_copy(
+                update={"epochs": adjusted_epochs},
+            )
+
         trainer = ODETrainer(
             config=training_config,
             train_dataset=train_ds,
