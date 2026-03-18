@@ -28,6 +28,10 @@ __all__ = [
 
 log = structlog.get_logger()
 
+# A320 fleet: maximum physically plausible Mach number.
+# ADS-B groundspeed outliers can inflate recomputed TAS → Mach > 1.05.
+MACH_UPPER = 1.05
+
 
 # ---------------------------------------------------------------------------
 # Traffic guard
@@ -644,6 +648,12 @@ def process(  # noqa: PLR0915, PLR0912
                 # Rename + derived columns (gamma_air, long_wind, alt_diff, fill nulls)
                 # Must run BEFORE segment estimation so gamma_air exists for gamma_sel
                 flight_df = flight_processing(flight_df.lazy()).collect()
+
+                # Filter erroneous ADS-B rows that produce impossible Mach
+                # flight_processing renames "Mach" → "mach"
+                mach_col = "mach" if "mach" in flight_df.columns else "Mach"
+                if mach_col in flight_df.columns:
+                    flight_df = flight_df.filter(pl.col(mach_col) <= MACH_UPPER)
 
                 # Cumulative distance
                 if "latitude" in flight_df.columns and "longitude" in flight_df.columns:

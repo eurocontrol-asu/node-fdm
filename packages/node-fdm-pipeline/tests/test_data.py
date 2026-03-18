@@ -425,6 +425,95 @@ typecodes:
         assert result["mach"].is_nan().sum() == 0
         assert result["distance_along_track_m"].is_nan().sum() == 0
 
+    def test_process_filters_mach_outliers(self, tmp_path: Path, mocker: Any) -> None:
+        """Rows with Mach > 1.05 (ADS-B groundspeed outliers) are filtered out."""
+        data_dir = tmp_path / "data"
+        preprocess_dir = data_dir / "preprocess"
+        preprocess_dir.mkdir(parents=True)
+        process_dir = data_dir / "process"
+        process_dir.mkdir(parents=True)
+        era5_cache = data_dir / "era5_cache"
+        era5_cache.mkdir(parents=True)
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+  preprocess_dir: "preprocess"
+  process_dir: "process"
+  era5_cache_dir: "era5_cache"
+
+typecodes:
+  - A320
+"""
+        )
+
+        n_good = 48
+        n_bad = 2
+        n = n_good + n_bad
+
+        # Good rows: TAS 450 kt → Mach ~0.78 at FL350/220K
+        # Bad rows: TAS 630 kt → Mach ~1.09 (erroneous ADS-B groundspeed)
+        tas_values = [450.0] * n_good + [630.0] * n_bad
+
+        df = pl.DataFrame(
+            {
+                "flight_id": ["F001"] * n,
+                "timestamp": [float(i * 4) for i in range(n)],
+                "altitude": [35000.0 + i * 10 for i in range(n)],
+                "selected_mcp": [35000.0] * n,
+                "vertical_rate": [100.0] * n,
+                "Mach": [0.78] * n,
+                "IAS": [280.0] * n,
+                "TAS": tas_values,
+                "groundspeed": [440.0 + i * 0.1 for i in range(n)],
+                "latitude": [48.0 + i * 0.001 for i in range(n)],
+                "longitude": [2.0 + i * 0.001 for i in range(n)],
+                "track": [90.0] * n,
+                "heading": [88.0] * n,
+                "typecode": ["A320"] * n,
+                "icao24": ["abc123"] * n,
+                "adep_dist": [100.0 - i for i in range(n)],
+                "ades_dist": [float(i * 2) for i in range(n)],
+            }
+        )
+        df.write_parquet(preprocess_dir / "processed_20250101.parquet")
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            pdf["temperature"] = 220.0
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        mock_arco_cls = mocker.MagicMock()
+        mock_arco_instance = mocker.MagicMock()
+        mock_arco_instance.interpolate.side_effect = fake_interpolate
+        mock_arco_cls.return_value = mock_arco_instance
+
+        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
+        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
+        mocker.patch.dict(
+            "sys.modules",
+            {
+                "fastmeteo": mocker.MagicMock(),
+                "fastmeteo.source": mock_source,
+                "fastmeteo.source.arco_era5": mock_source_arco,
+            },
+        )
+
+        process(arch="opensky", config=config, dry_run=False)
+
+        output = process_dir / "processed_20250101.parquet"
+        assert output.exists()
+
+        result = pl.read_parquet(output)
+        # All Mach values must be ≤ 1.05 — outlier rows filtered
+        mach_max: float | None = result["mach"].cast(pl.Float64).max()  # type: ignore[assignment]
+        assert mach_max is not None and mach_max <= 1.05
+        assert len(result) > 0
+
 
 class TestDownloadCommand:
     """Tests for the ``download`` command."""
