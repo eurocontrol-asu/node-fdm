@@ -581,6 +581,24 @@ def process(  # noqa: PLR0915, PLR0912
             pd_df["timestamp"] = pd_df["timestamp"].dt.tz_localize(None)
         pd_df = arco_grid.interpolate(pd_df)
         df = pl.from_pandas(pd_df)
+
+        # --- ERA5 validation gate (AXM-491) ---
+        _era5_expected = cfg.era5_features or [
+            "temperature",
+            "u_component_of_wind",
+            "v_component_of_wind",
+        ]
+        _era5_missing = [c for c in _era5_expected if c not in df.columns]
+        _era5_null = [c for c in _era5_expected if c in df.columns and df[c].is_null().all()]
+        if _era5_missing or _era5_null:
+            log.error(
+                "process_era5_validation_failed",
+                file=file.name,
+                missing=_era5_missing,
+                all_null=_era5_null,
+            )
+            continue
+
         log.info("process_era5_done", file=file.name, cols=len(df.columns))
 
         # Stage 3: Recompute TAS from wind + GS

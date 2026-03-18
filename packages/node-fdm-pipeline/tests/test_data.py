@@ -211,6 +211,128 @@ typecodes:
         # Should not raise — skip with info log
         process(arch="opensky", config=config, dry_run=False)
 
+    # --- ERA5 post-interpolation validation (AXM-491) ---
+
+    def _make_process_env(
+        self,
+        tmp_path: Path,
+        mocker: Any,
+        *,
+        interpolate_fn: Any,
+    ) -> tuple[Path, Path]:
+        """Set up dirs, config, synthetic parquet, and fastmeteo mock.
+
+        Returns ``(config_path, output_path)`` for assertion.
+        """
+        data_dir = tmp_path / "data"
+        preprocess_dir = data_dir / "preprocess"
+        preprocess_dir.mkdir(parents=True)
+        process_dir = data_dir / "process"
+        process_dir.mkdir(parents=True)
+        era5_cache = data_dir / "era5_cache"
+        era5_cache.mkdir(parents=True)
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+  preprocess_dir: "preprocess"
+  process_dir: "process"
+  era5_cache_dir: "era5_cache"
+
+typecodes:
+  - A320
+"""
+        )
+
+        n = 50
+        df = pl.DataFrame(
+            {
+                "flight_id": ["F001"] * n,
+                "timestamp": [float(i * 4) for i in range(n)],
+                "altitude": [35000.0 + i * 10 for i in range(n)],
+                "selected_mcp": [35000.0] * n,
+                "vertical_rate": [100.0] * n,
+                "Mach": [0.78] * n,
+                "IAS": [280.0] * n,
+                "TAS": [450.0] * n,
+                "groundspeed": [440.0 + i * 0.1 for i in range(n)],
+                "latitude": [48.0 + i * 0.001 for i in range(n)],
+                "longitude": [2.0 + i * 0.001 for i in range(n)],
+                "track": [90.0] * n,
+                "heading": [88.0] * n,
+                "typecode": ["A320"] * n,
+                "icao24": ["abc123"] * n,
+                "adep_dist": [100.0 - i for i in range(n)],
+                "ades_dist": [float(i * 2) for i in range(n)],
+            }
+        )
+        df.write_parquet(preprocess_dir / "processed_20250101.parquet")
+
+        mock_arco_cls = mocker.MagicMock()
+        mock_arco_instance = mocker.MagicMock()
+        mock_arco_instance.interpolate.side_effect = interpolate_fn
+        mock_arco_cls.return_value = mock_arco_instance
+
+        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
+        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
+        mocker.patch.dict(
+            "sys.modules",
+            {
+                "fastmeteo": mocker.MagicMock(),
+                "fastmeteo.source": mock_source,
+                "fastmeteo.source.arco_era5": mock_source_arco,
+            },
+        )
+
+        output = process_dir / "processed_20250101.parquet"
+        return config, output
+
+    def test_process_detects_missing_era5_columns(self, tmp_path: Path, mocker: Any) -> None:
+        """Interpolate returns df without ERA5 cols → file skipped."""
+
+        def fake_interpolate(pdf: Any) -> Any:
+            return pdf.copy()  # no ERA5 cols added
+
+        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        process(arch="opensky", config=config, dry_run=False)
+
+        assert not output.exists()
+
+    def test_process_detects_all_null_era5(self, tmp_path: Path, mocker: Any) -> None:
+        """Interpolate returns df with all-null ERA5 cols → file skipped."""
+        import numpy as np
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            pdf["temperature"] = np.nan
+            pdf["u_component_of_wind"] = np.nan
+            pdf["v_component_of_wind"] = np.nan
+            return pdf
+
+        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        process(arch="opensky", config=config, dry_run=False)
+
+        assert not output.exists()
+
+    def test_process_era5_happy_path(self, tmp_path: Path, mocker: Any) -> None:
+        """Interpolate returns df with valid ERA5 cols → file processed."""
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            pdf["temperature"] = 220.0
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        process(arch="opensky", config=config, dry_run=False)
+
+        assert output.exists()
+        result = pl.read_parquet(output)
+        assert "temperature" in result.columns
+
 
 class TestDownloadCommand:
     """Tests for the ``download`` command."""
@@ -413,6 +535,7 @@ class TestSplitAtGaps:
 
         f = _make_flight(60)
         t = Traffic.from_flights([f])
+        assert t is not None
         result = _split_at_gaps(t, threshold="30s", min_points=10)
 
         assert result is not None
@@ -427,6 +550,7 @@ class TestSplitAtGaps:
 
         f = _make_flight(80, gap_at=40, gap_seconds=60)
         t = Traffic.from_flights([f])
+        assert t is not None
         result = _split_at_gaps(t, threshold="30s", min_points=10)
 
         assert result is not None
@@ -443,6 +567,7 @@ class TestSplitAtGaps:
         # 50 pts total, gap at 5 → seg[0]=5 pts (too short), seg[1]=45 pts (ok)
         f = _make_flight(50, gap_at=5, gap_seconds=60)
         t = Traffic.from_flights([f])
+        assert t is not None
         result = _split_at_gaps(t, threshold="30s", min_points=10)
 
         assert result is not None
@@ -455,6 +580,7 @@ class TestSplitAtGaps:
         # 10 pts, gap at 5 → two segments of 5 pts each, both below min_points=20
         f = _make_flight(10, gap_at=5, gap_seconds=60)
         t = Traffic.from_flights([f])
+        assert t is not None
         result = _split_at_gaps(t, threshold="30s", min_points=20)
 
         assert result is None
@@ -466,6 +592,7 @@ class TestSplitAtGaps:
         # 3 points — always below any reasonable min_points
         f = _make_flight(3)
         t = Traffic.from_flights([f])
+        assert t is not None
         result = _split_at_gaps(t, threshold="30s", min_points=10)
 
         assert result is None
