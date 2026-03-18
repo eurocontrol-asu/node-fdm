@@ -20,7 +20,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `layers.structured` | `StructuredLayer` — normalize → backbone → heads → denormalize |
 | `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed |
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
-| `trainer` | `ODETrainer` + `TrainingConfig` with structlog |
+| `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata) |
 | `dataset` | `FlightDataset` → `FlightSample` (typed tensors) |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame |
@@ -71,6 +71,8 @@ config = TrainingConfig(
     batch_size=512,
     epochs=800,
     method="rk4",
+    # Optional: per-variable loss weights for x_cols (defaults to 1.0 for all)
+    alpha_dict={"altitude_ft": 2.0, "tas_kt": 1.5},
 )
 
 trainer = ODETrainer(
