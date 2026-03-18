@@ -88,7 +88,6 @@ module = [
     "pyBADA.*", "joblib.*", "fastmeteo.*", "altair.*",
 ]
 ignore_missing_imports = true
-follow_untyped_imports = false
 
 [[tool.mypy.overrides]]
 module = ["node_fdm_pipeline.commands.data"]

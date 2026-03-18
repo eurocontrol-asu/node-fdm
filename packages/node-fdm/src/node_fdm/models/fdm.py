@@ -147,11 +147,13 @@ class FlightDynamicsModel(nn.Module):
             dim=1,
         )
 
-        # Store history for debugging/analysis
+        # Store history for debugging/analysis (detached to avoid breaking
+        # autograd when the model is called repeatedly inside odeint).
         for col, vect in vect_dict.items():
+            vect_d = vect.detach()
             if col in self.history:
-                self.history[col] = torch.cat([self.history[col], vect.unsqueeze(1)], dim=1)
+                self.history[col] = torch.cat([self.history[col], vect_d.unsqueeze(1)], dim=1)
             else:
-                self.history[col] = vect.unsqueeze(1)
+                self.history[col] = vect_d.unsqueeze(1)
 
         return ode_output

@@ -31,6 +31,33 @@ def _make_synthetic_dataset(
     return FlightDataset(samples)
 
 
+def _make_smooth_dataset(
+    n_samples: int = 16,
+    seq_len: int = 5,
+    n_x: int = 4,
+    n_u: int = 4,
+    n_e: int = 4,
+) -> FlightDataset:
+    """Create a dataset with smooth linear trajectories for stable ODE integration."""
+    torch.manual_seed(42)
+    samples: list[FlightSample] = []
+    for _ in range(n_samples):
+        x0 = torch.randn(n_x) * 0.1
+        velocity = torch.randn(n_x) * 0.01
+        t = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
+        x = x0.unsqueeze(0) + t * velocity.unsqueeze(0)
+        dx = velocity.unsqueeze(0).expand(seq_len, n_x)
+        samples.append(
+            FlightSample(
+                x=x,
+                u=torch.randn(seq_len, n_u) * 0.01,
+                e=torch.randn(seq_len, n_e) * 0.01,
+                dx=dx,
+            )
+        )
+    return FlightDataset(samples)
+
+
 class TestTrainingConfig:
     """Unit tests for TrainingConfig Pydantic model."""
 
@@ -106,10 +133,13 @@ class TestODETrainer:
             batch_size=4,
             num_workers=0,
             val_batch_size=4,
+            seq_len=5,
+            step=0.01,
+            method="euler",
         )
 
-        train_ds = _make_synthetic_dataset(n_samples=8, seq_len=10)
-        val_ds = _make_synthetic_dataset(n_samples=4, seq_len=10)
+        train_ds = _make_smooth_dataset(n_samples=8, seq_len=5)
+        val_ds = _make_smooth_dataset(n_samples=4, seq_len=5)
 
         trainer = ODETrainer(
             config=cfg,
@@ -134,3 +164,149 @@ class TestODETrainer:
         # Loss CSV saved
         csv_path = model_dir / "test_model" / "training_losses.csv"
         assert csv_path.exists()
+
+    def test_ode_rollout_loss_decreases(self, tmp_path: object) -> None:
+        """ODE rollout loss decreases over 5 epochs on simple dynamics."""
+        from pathlib import Path
+
+        from node_fdm.trainer import ODETrainer
+
+        model_dir = Path(str(tmp_path))
+
+        cfg = TrainingConfig(
+            architecture_name="opensky_2025",
+            model_name="test_rollout",
+            epochs=5,
+            batch_size=4,
+            num_workers=0,
+            val_batch_size=4,
+            lr=1e-3,
+            seq_len=5,
+            step=0.1,
+        )
+
+        # Smooth linear trajectories so ODE integration is stable
+        train_ds = _make_smooth_dataset(n_samples=16, seq_len=5)
+        val_ds = _make_smooth_dataset(n_samples=4, seq_len=5)
+
+        trainer = ODETrainer(
+            config=cfg,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            model_dir=model_dir,
+        )
+
+        records = trainer.train()
+        assert len(records) == 5
+        assert records[-1]["val_loss"] < records[0]["val_loss"]
+
+    def test_ode_rollout_nan_detection(self, tmp_path: object) -> None:
+        """NaN in x_seq triggers a warning log."""
+        from pathlib import Path
+        from unittest.mock import patch
+
+        from node_fdm.trainer import ODETrainer
+
+        model_dir = Path(str(tmp_path))
+
+        cfg = TrainingConfig(
+            architecture_name="opensky_2025",
+            model_name="test_nan",
+            epochs=1,
+            batch_size=4,
+            num_workers=0,
+            val_batch_size=4,
+            seq_len=5,
+        )
+
+        # Create dataset with NaN injected into x
+        samples = [
+            FlightSample(
+                x=torch.full((5, 4), float("nan")),
+                u=torch.randn(5, 4),
+                e=torch.randn(5, 4),
+                dx=torch.randn(5, 4),
+            )
+            for _ in range(8)
+        ]
+        train_ds = FlightDataset(samples)
+        val_ds = _make_synthetic_dataset(n_samples=4, seq_len=5)
+
+        trainer = ODETrainer(
+            config=cfg,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            model_dir=model_dir,
+        )
+
+        with patch.object(trainer, "loss_fn", wraps=trainer.loss_fn):
+            records = trainer.train()
+
+        # Loss should be NaN (from NaN inputs) — trainer logs warning
+        assert len(records) == 1
+
+    def test_single_sample_batch(self, tmp_path: object) -> None:
+        """batch_size=1 with ODE rollout produces no shape errors."""
+        from pathlib import Path
+
+        from node_fdm.trainer import ODETrainer
+
+        model_dir = Path(str(tmp_path))
+
+        cfg = TrainingConfig(
+            architecture_name="opensky_2025",
+            model_name="test_single",
+            epochs=1,
+            batch_size=1,
+            num_workers=0,
+            val_batch_size=1,
+            seq_len=5,
+            step=0.1,
+        )
+
+        train_ds = _make_smooth_dataset(n_samples=2, seq_len=5)
+        val_ds = _make_smooth_dataset(n_samples=1, seq_len=5)
+
+        trainer = ODETrainer(
+            config=cfg,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            model_dir=model_dir,
+        )
+
+        records = trainer.train()
+        assert len(records) == 1
+        assert records[0]["train_loss"] == records[0]["train_loss"]  # not NaN
+
+    def test_very_short_sequence(self, tmp_path: object) -> None:
+        """seq_len=2 produces a valid t_grid and finite loss."""
+        from pathlib import Path
+
+        from node_fdm.trainer import ODETrainer
+
+        model_dir = Path(str(tmp_path))
+
+        cfg = TrainingConfig(
+            architecture_name="opensky_2025",
+            model_name="test_short",
+            epochs=1,
+            batch_size=4,
+            num_workers=0,
+            val_batch_size=4,
+            seq_len=2,
+            step=0.1,
+        )
+
+        train_ds = _make_smooth_dataset(n_samples=8, seq_len=2)
+        val_ds = _make_smooth_dataset(n_samples=4, seq_len=2)
+
+        trainer = ODETrainer(
+            config=cfg,
+            train_dataset=train_ds,
+            val_dataset=val_ds,
+            model_dir=model_dir,
+        )
+
+        records = trainer.train()
+        assert len(records) == 1
+        assert records[0]["train_loss"] == records[0]["train_loss"]

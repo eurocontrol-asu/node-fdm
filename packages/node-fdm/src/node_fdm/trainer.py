@@ -18,11 +18,13 @@ import torch
 import torch.nn as nn
 from pydantic import BaseModel, Field
 from torch.utils.data import DataLoader
+from torchdiffeq import odeint
 
 from node_fdm.architectures.registry import ArchitectureSpec, get
 from node_fdm.callbacks import ConsoleCallback, TrainingCallback
 from node_fdm.dataset import FlightDataset, FlightSample, compute_stats
 from node_fdm.losses import get_loss
+from node_fdm.models.batch_neural_ode import BatchNeuralODE
 from node_fdm.models.fdm import FlightDynamicsModel
 
 __all__ = [
@@ -55,6 +57,8 @@ class TrainingConfig(BaseModel):
         num_workers: Number of DataLoader workers.
         loss_name: Loss function identifier.
         grad_clip_norm: Max gradient norm for clipping.
+        alpha_dict: Per-variable loss weighting for ``x_cols``.
+            Defaults to ``1.0`` for all variables when ``None``.
     """
 
     architecture_name: str
@@ -72,6 +76,7 @@ class TrainingConfig(BaseModel):
     num_workers: int = Field(default=4, ge=0)
     loss_name: str = "mse"
     grad_clip_norm: float = Field(default=1.0, gt=0)
+    alpha_dict: dict[str, float] | None = None
 
 
 def _collate_flight_samples(
@@ -142,6 +147,11 @@ class ODETrainer:
         )
         self.best_val_loss = float("inf")
         self.loss_fn: nn.Module = get_loss(config.loss_name)
+
+        # Precompute normalization vectors for ODE rollout loss
+        self._norm_mean, self._norm_std = self._build_norm_vectors()
+        self._alpha_weights = self._build_alpha_weights()
+
         self.save_meta()
         log.info(
             "trainer_initialized",
@@ -194,14 +204,49 @@ class ODETrainer:
             self.save_layer_checkpoint(name, epoch)
         log.debug("model_saved", epoch=epoch)
 
+    def _build_norm_vectors(self) -> tuple[torch.Tensor, torch.Tensor]:
+        """Build normalization mean/std tensors for ``x_cols``.
+
+        Returns:
+            Tuple of ``(mean, std)`` tensors of shape ``(n_x,)`` on
+            ``self.device``.
+        """
+        means: list[float] = []
+        stds: list[float] = []
+        for col in self.spec.x_cols:
+            stats = self.stats_dict.get(col, {"mean": 0.0, "std": 1.0})
+            means.append(stats["mean"])
+            stds.append(stats["std"])
+        return (
+            torch.tensor(means, device=self.device),
+            torch.tensor(stds, device=self.device),
+        )
+
+    def _build_alpha_weights(self) -> torch.Tensor:
+        """Build per-variable weight vector from ``alpha_dict``.
+
+        Returns:
+            Tensor of shape ``(n_x,)`` with per-variable weights.
+        """
+        n_x = len(self.spec.x_cols)
+        weights = torch.ones(n_x, device=self.device)
+        if self.config.alpha_dict is not None:
+            for i, col in enumerate(self.spec.x_cols):
+                if col in self.config.alpha_dict:
+                    weights[i] = self.config.alpha_dict[col]
+        return weights
+
     def _compute_batch_loss(
         self,
         batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
     ) -> torch.Tensor:
-        """Compute loss for a single batch using derivative matching.
+        """Compute loss via ODE rollout trajectory comparison.
 
-        Computes predicted derivatives at each timestep and compares
-        against the true derivatives from the dataset.
+        Integrates the Neural ODE forward from ``x0`` using
+        ``torchdiffeq.odeint`` and compares the predicted trajectory
+        against the true state sequence. Both trajectories are
+        normalized using dataset statistics and weighted by
+        ``alpha_dict`` before the loss function is applied.
 
         Args:
             batch: Tuple of ``(x_seq, u_seq, e_seq, dx_seq)``.
@@ -209,18 +254,38 @@ class ODETrainer:
         Returns:
             Scalar loss tensor.
         """
-        x_seq, u_seq, e_seq, dx_seq = (t.to(self.device) for t in batch)
+        x_seq, u_seq, e_seq, _ = (t.to(self.device) for t in batch)
         seq_len = x_seq.shape[1]
+        x0 = x_seq[:, 0, :]
 
-        # Forward pass: predict derivatives at each timestep
-        pred_list = []
-        for t in range(seq_len):
-            self.model.reset_history()
-            dx_pred = self.model(x_seq[:, t, :], u_seq[:, t, :], e_seq[:, t, :])
-            pred_list.append(dx_pred)
+        t_grid = torch.arange(
+            0,
+            seq_len * self.config.step,
+            self.config.step,
+            dtype=torch.float32,
+            device=self.device,
+        )
 
-        pred_dx = torch.stack(pred_list, dim=1)  # (batch, seq_len, n_dx)
-        loss: torch.Tensor = self.loss_fn(pred_dx, dx_seq)
+        self.model.reset_history()
+        func = BatchNeuralODE(self.model, u_seq, e_seq, t_grid)
+        x_pred = odeint(func, x0, t_grid, method=self.config.method)
+
+        # odeint returns (time, batch, n_x) → (batch, time, n_x)
+        x_pred = x_pred.permute(1, 0, 2)
+
+        # Compare predicted vs true trajectory (skip initial condition)
+        pred = x_pred[:, 1:, :]
+        true = x_seq[:, 1:, :]
+
+        # Normalize in loss space (scale-invariant across variables)
+        pred_norm = (pred - self._norm_mean) / self._norm_std
+        true_norm = (true - self._norm_mean) / self._norm_std
+
+        # Apply per-variable alpha weights
+        pred_weighted = pred_norm * self._alpha_weights
+        true_weighted = true_norm * self._alpha_weights
+
+        loss: torch.Tensor = self.loss_fn(pred_weighted, true_weighted)
 
         if torch.isnan(loss) or torch.isinf(loss):
             log.warning("nan_or_inf_loss", loss=loss.item())
@@ -264,6 +329,11 @@ class ODETrainer:
                 loss = self._compute_batch_loss(batch)
                 self.optimizer.zero_grad()
                 loss.backward()  # type: ignore[no-untyped-call]
+                # Sanitize NaN/Inf gradients from ODE rollout through
+                # physics layers before clipping and stepping.
+                for p in self.model.parameters():
+                    if p.grad is not None:
+                        torch.nan_to_num(p.grad, nan=0.0, posinf=0.0, neginf=0.0, out=p.grad)
                 torch.nn.utils.clip_grad_norm_(
                     self.model.parameters(),
                     max_norm=self.config.grad_clip_norm,
