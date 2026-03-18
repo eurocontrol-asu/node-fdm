@@ -74,24 +74,34 @@ typecodes:
         return config, flight_path
 
     @patch("node_fdm.predictor.NodeFDMPredictor")
-    @patch("node_fdm_data.processor.FlightProcessor")
+    @patch("node_fdm_pipeline.resolver.resolve_architecture")
     def test_predict_output_format(
         self,
-        mock_processor_cls: MagicMock,
+        mock_resolve: MagicMock,
         mock_predictor_cls: MagicMock,
         tmp_path: Path,
     ) -> None:
         """Output parquet has pred_* columns."""
         config, _flight_path = self._make_config_and_data(tmp_path)
 
-        # Mock processor
-        mock_processor = MagicMock()
-        mock_collected = MagicMock()
-        mock_collected.select.return_value.to_numpy.return_value = np.zeros(
-            (10, 1), dtype=np.float32
+        # Mock preprocessing_fn as a direct callable (no FlightProcessor)
+        mock_preprocessing = MagicMock()
+        mock_result = MagicMock()
+        mock_result.select.return_value.to_numpy.return_value = np.zeros((10, 1), dtype=np.float32)
+        mock_preprocessing.return_value = mock_result
+
+        from node_fdm_pipeline.resolver import ArchitectureInfo
+
+        mock_resolve.return_value = ArchitectureInfo(
+            name="opensky_2025",
+            x_cols=["distance_m"],
+            u_cols=["alt_sel_m"],
+            e0_cols=["long_wind_ms"],
+            dx_cols=[(1, "gs_ms")],
+            preprocessing_fn=mock_preprocessing,
+            segment_filter_fn=None,
+            architecture_import="node_fdm.architectures.opensky",
         )
-        mock_processor.process.return_value.collect.return_value = mock_collected
-        mock_processor_cls.return_value = mock_processor
 
         # Mock predictor
         mock_predictor = MagicMock()
@@ -108,6 +118,11 @@ typecodes:
             device="cpu",
             local_model=True,
         )
+
+        # preprocessing_fn called directly with a DataFrame (not LazyFrame)
+        mock_preprocessing.assert_called_once()
+        call_arg = mock_preprocessing.call_args[0][0]
+        assert isinstance(call_arg, pl.DataFrame)
 
         # Check output dir was created
         predict_dir = tmp_path / "data" / "predicted_flights" / "A320"
@@ -168,6 +183,75 @@ typecodes:
 
         # Predictor should not have been used for prediction
         mock_predictor_cls.return_value.predict_flight.assert_not_called()
+
+
+class TestPredictSIPreprocessing:
+    """Regression tests for AXM-492: prediction must use SI preprocessing."""
+
+    @pytest.fixture()
+    def sample_flight(self) -> pl.DataFrame:
+        """Raw flight data with non-SI columns, mimicking processed parquet."""
+        n = 20
+        return pl.DataFrame(
+            {
+                "timestamp": list(range(n)),
+                "latitude": [48.0 + i * 0.01 for i in range(n)],
+                "longitude": [2.0 + i * 0.01 for i in range(n)],
+                "altitude": [35000.0] * n,
+                "selected_mcp": [35000.0] * n,
+                "vertical_rate": [0.0] * n,
+                "Mach": [0.82] * n,
+                "IAS": [280.0] * n,
+                "TAS": [450.0] * n,
+                "groundspeed": [440.0] * n,
+                "track": [90.0] * n,
+                "flight_id": ["F001"] * n,
+                "mach_sel": [0.82] * n,
+                "temperature": [220.0] * n,
+                "adep_dist": [500.0] * n,
+                "ades_dist": [300.0] * n,
+                "distance_along_track_m": [float(i * 1000) for i in range(n)],
+            }
+        )
+
+    def test_predict_produces_si_columns(self, sample_flight: pl.DataFrame) -> None:
+        """Prediction preprocessing outputs SI-unit columns."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+
+        result = training_preprocessing(sample_flight)
+
+        si_cols = {"altitude_m", "tas_ms", "gamma_rad", "temperature_K"}
+        assert si_cols.issubset(set(result.columns))
+
+    def test_predict_preprocessing_matches_training(self, sample_flight: pl.DataFrame) -> None:
+        """Columns from prediction path match training path."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+        from node_fdm_data.schemas.opensky import E0_COLS, U_COLS, X_COLS
+
+        result = training_preprocessing(sample_flight)
+
+        # All schema columns must be present after preprocessing
+        for col_list, label in [
+            (X_COLS, "x_cols"),
+            (U_COLS, "u_cols"),
+            (E0_COLS, "e0_cols"),
+        ]:
+            missing = set(col_list) - set(result.columns)
+            assert not missing, f"{label} missing columns: {missing}"
+
+    def test_predict_no_nan_on_clean_input(self, sample_flight: pl.DataFrame) -> None:
+        """No NaN in schema columns when input data is complete."""
+        from node_fdm_data.preprocessing.opensky import training_preprocessing
+        from node_fdm_data.schemas.opensky import E0_COLS, U_COLS, X_COLS
+
+        result = training_preprocessing(sample_flight)
+
+        all_cols = X_COLS + U_COLS + E0_COLS
+        for col in all_cols:
+            null_count = result[col].null_count()
+            nan_sum = result[col].is_nan().sum()
+            assert null_count == 0, f"{col} has {null_count} nulls"
+            assert nan_sum == 0, f"{col} has {nan_sum} NaNs"
 
 
 class TestRunPredictBada:

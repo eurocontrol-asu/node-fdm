@@ -36,7 +36,6 @@ def run_predict(
     import numpy as np
     import polars as pl
     from node_fdm.predictor import NodeFDMPredictor
-    from node_fdm_data.processor import FlightProcessor
 
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
@@ -57,7 +56,6 @@ def run_predict(
         raise SystemExit(msg)
 
     split_df = pl.read_csv(split_csv)
-    processor = FlightProcessor(steps=[info.preprocessing_fn])
 
     log.info(
         "predict_start",
@@ -102,9 +100,7 @@ def run_predict(
             flight_id = flight_path.stem
 
             raw = pl.read_parquet(flight_path)
-            processed = processor.process(raw)
-            if hasattr(processed, "collect"):
-                processed = processed.collect()
+            processed = info.preprocessing_fn(raw)
 
             # Extract arrays for predictor (float32 numpy)
             x_init = processed.select(info.x_cols).to_numpy().astype(np.float32)
