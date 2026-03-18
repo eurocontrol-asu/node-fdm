@@ -316,6 +316,155 @@ typecodes:
 
         assert not output.exists()
 
+    def test_process_era5_partial_null(self, tmp_path: Path, mocker: Any) -> None:
+        """ERA5 with 10% null temperature → file skipped (> 5% threshold)."""
+        import numpy as np
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            n = len(pdf)
+            temps = [220.0] * n
+            # Set 10% of rows to null (via NaN in pandas → null in Polars)
+            for i in range(n // 10):
+                temps[i] = np.nan
+            pdf["temperature"] = temps
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        process(arch="opensky", config=config, dry_run=False)
+
+        assert not output.exists()
+
+    def test_process_era5_below_threshold(self, tmp_path: Path, mocker: Any) -> None:
+        """ERA5 with 2% null temperature → file processed, null rows dropped."""
+        import numpy as np
+
+        data_dir = tmp_path / "data"
+        preprocess_dir = data_dir / "preprocess"
+        preprocess_dir.mkdir(parents=True)
+        process_dir = data_dir / "process"
+        process_dir.mkdir(parents=True)
+        era5_cache = data_dir / "era5_cache"
+        era5_cache.mkdir(parents=True)
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+  preprocess_dir: "preprocess"
+  process_dir: "process"
+  era5_cache_dir: "era5_cache"
+
+typecodes:
+  - A320
+"""
+        )
+
+        n = 51
+        df = pl.DataFrame(
+            {
+                "flight_id": ["F001"] * n,
+                "timestamp": [float(i * 4) for i in range(n)],
+                "altitude": [35000.0 + i * 10 for i in range(n)],
+                "selected_mcp": [35000.0] * n,
+                "vertical_rate": [100.0] * n,
+                "Mach": [0.78] * n,
+                "IAS": [280.0] * n,
+                "TAS": [450.0] * n,
+                "groundspeed": [440.0 + i * 0.1 for i in range(n)],
+                # Small lat/lon step so dropping any row won't create
+                # a > 200 m gap in cumulative_distance after unique() reorder
+                "latitude": [48.0 + i * 0.0001 for i in range(n)],
+                "longitude": [2.0 + i * 0.0001 for i in range(n)],
+                "track": [90.0] * n,
+                "heading": [88.0] * n,
+                "typecode": ["A320"] * n,
+                "icao24": ["abc123"] * n,
+                "adep_dist": [100.0 - i for i in range(n)],
+                "ades_dist": [float(i * 2) for i in range(n)],
+            }
+        )
+        df.write_parquet(preprocess_dir / "processed_20250101.parquet")
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            temps = [220.0] * len(pdf)
+            # Set last row to NaN (< 5% threshold for 55 rows)
+            temps[-1] = np.nan
+            pdf["temperature"] = temps
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        mock_arco_cls = mocker.MagicMock()
+        mock_arco_instance = mocker.MagicMock()
+        mock_arco_instance.interpolate.side_effect = fake_interpolate
+        mock_arco_cls.return_value = mock_arco_instance
+
+        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
+        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
+        mocker.patch.dict(
+            "sys.modules",
+            {
+                "fastmeteo": mocker.MagicMock(),
+                "fastmeteo.source": mock_source,
+                "fastmeteo.source.arco_era5": mock_source_arco,
+            },
+        )
+
+        output = process_dir / "processed_20250101.parquet"
+        process(arch="opensky", config=config, dry_run=False)
+
+        assert output.exists()
+        result = pl.read_parquet(output)
+        # The null row should have been dropped
+        assert result["temperature"].null_count() == 0
+        assert result["temperature"].is_nan().sum() == 0
+
+    def test_process_era5_nan_values(self, tmp_path: Path, mocker: Any) -> None:
+        """ERA5 with NaN (not null) temperature above threshold → file skipped."""
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            n = len(pdf)
+            temps = [220.0] * n
+            # Set 10% of rows to NaN (float, not pandas NA)
+            for i in range(n // 10):
+                temps[i] = float("nan")
+            pdf["temperature"] = temps
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        process(arch="opensky", config=config, dry_run=False)
+
+        assert not output.exists()
+
+    def test_process_era5_one_column_above_threshold(self, tmp_path: Path, mocker: Any) -> None:
+        """One ERA5 column at 6% null, others at 0% → file skipped entirely."""
+        import numpy as np
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            n = len(pdf)
+            temps = [220.0] * n
+            # Set 3 rows to null (6% of 50 rows)
+            for i in range(3):
+                temps[i] = np.nan
+            pdf["temperature"] = temps
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        process(arch="opensky", config=config, dry_run=False)
+
+        assert not output.exists()
+
     def test_process_era5_happy_path(self, tmp_path: Path, mocker: Any) -> None:
         """Interpolate returns df with valid ERA5 cols → file processed."""
 

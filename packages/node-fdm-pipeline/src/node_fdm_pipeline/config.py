@@ -148,6 +148,7 @@ class PipelineConfig(BaseModel, frozen=True):
     paths: PathsConfig
     typecodes: list[str]
     era5_features: list[str] = []
+    era5_null_threshold: float = 0.05
     computing: ComputingConfig = ComputingConfig()
     bada: BadaConfig = BadaConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()

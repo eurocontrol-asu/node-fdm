@@ -597,22 +597,61 @@ def process(  # noqa: PLR0915, PLR0912
         pd_df = arco_grid.interpolate(pd_df)
         df = pl.from_pandas(pd_df)
 
-        # --- ERA5 validation gate (AXM-491) ---
+        # --- ERA5 validation gate (AXM-491, AXM-513) ---
         _era5_expected = cfg.era5_features or [
             "temperature",
             "u_component_of_wind",
             "v_component_of_wind",
         ]
         _era5_missing = [c for c in _era5_expected if c not in df.columns]
-        _era5_null = [c for c in _era5_expected if c in df.columns and df[c].is_null().all()]
-        if _era5_missing or _era5_null:
+        if _era5_missing:
             log.error(
                 "process_era5_validation_failed",
                 file=file.name,
                 missing=_era5_missing,
-                all_null=_era5_null,
             )
             continue
+
+        n_rows = len(df)
+        _era5_null_counts: dict[str, int] = {}
+        _era5_above_threshold: list[str] = []
+        for c in _era5_expected:
+            n_bad = int(df[c].is_null().sum()) + int(df[c].is_nan().sum())
+            _era5_null_counts[c] = n_bad
+            if n_rows > 0 and n_bad / n_rows > cfg.era5_null_threshold:
+                _era5_above_threshold.append(c)
+
+        if _era5_null_counts:
+            log.info(
+                "process_era5_null_counts",
+                file=file.name,
+                counts=_era5_null_counts,
+            )
+
+        if _era5_above_threshold:
+            log.error(
+                "process_era5_validation_failed",
+                file=file.name,
+                above_threshold=_era5_above_threshold,
+                threshold=cfg.era5_null_threshold,
+                counts=_era5_null_counts,
+            )
+            continue
+
+        # Row-level ERA5 cleanup: drop rows with null/NaN in ERA5 columns
+        n_before_era5 = len(df)
+        df = df.filter(
+            pl.all_horizontal(
+                pl.col(c).is_not_null() & ~pl.col(c).is_nan() for c in _era5_expected
+            )
+        )
+        n_era5_dropped = n_before_era5 - len(df)
+        if n_era5_dropped:
+            log.info(
+                "process_era5_rows_dropped",
+                file=file.name,
+                dropped=n_era5_dropped,
+            )
 
         log.info("process_era5_done", file=file.name, cols=len(df.columns))
 
