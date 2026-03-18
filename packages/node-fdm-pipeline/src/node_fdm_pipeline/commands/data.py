@@ -575,6 +575,17 @@ def process(  # noqa: PLR0915, PLR0912
             df = df.drop(existing_drops)
         df = df.unique()
 
+        # Stage 1b: Drop rows with null coordinates (AXM-511)
+        n_before_coord = len(df)
+        df = df.filter(pl.col("latitude").is_not_null() & pl.col("longitude").is_not_null())
+        n_null_coords = n_before_coord - len(df)
+        if n_null_coords:
+            log.info(
+                "process_null_coords_dropped",
+                file=file.name,
+                dropped=n_null_coords,
+            )
+
         # Stage 2: ERA5 weather interpolation (pandas interop)
         pd_df = df.to_pandas()
         if "timestamp" in pd_df.columns and hasattr(pd_df["timestamp"].dtype, "tz"):

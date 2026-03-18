@@ -217,6 +217,9 @@ def cumulative_distance(df: pl.DataFrame) -> pl.DataFrame:
     lat_col = "latitude"
     lon_col = "longitude"
 
+    # Defensive guard: drop null-coord rows to prevent NaN in haversine (AXM-511)
+    df = df.filter(pl.col(lat_col).is_not_null() & pl.col(lon_col).is_not_null())
+
     lat = df[lat_col].to_numpy()
     lon = df[lon_col].to_numpy()
 

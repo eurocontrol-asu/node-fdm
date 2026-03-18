@@ -192,6 +192,24 @@ class TestCumulativeDistance:
         result = cumulative_distance(df)
         assert result["distance_along_track_m"][0] == 0.0
 
+    def test_null_coords(self) -> None:
+        """Null lat/lon rows are dropped — no NaN in output (AXM-511)."""
+        from node_fdm_data.preprocessing.opensky import cumulative_distance
+
+        df = pl.DataFrame(
+            {
+                "latitude": [48.0, None, 48.02, None, 48.04],
+                "longitude": [2.0, None, 2.0, None, 2.0],
+            }
+        )
+        result = cumulative_distance(df)
+        assert len(result) == 3
+        d = result["distance_along_track_m"]
+        assert d.null_count() == 0
+        assert d.is_nan().sum() == 0
+        assert d[0] == 0.0
+        assert all(d[i] > d[i - 1] for i in range(1, len(d)))
+
 
 class TestCropOnDistanceJump:
     """Tests for ``crop_on_distance_jump``."""

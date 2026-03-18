@@ -333,6 +333,98 @@ typecodes:
         result = pl.read_parquet(output)
         assert "temperature" in result.columns
 
+    def test_process_drops_null_coords(self, tmp_path: Path, mocker: Any) -> None:
+        """Null lat/lon rows are dropped before ERA5 — no NaN in output (AXM-511)."""
+        data_dir = tmp_path / "data"
+        preprocess_dir = data_dir / "preprocess"
+        preprocess_dir.mkdir(parents=True)
+        process_dir = data_dir / "process"
+        process_dir.mkdir(parents=True)
+        era5_cache = data_dir / "era5_cache"
+        era5_cache.mkdir(parents=True)
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+  preprocess_dir: "preprocess"
+  process_dir: "process"
+  era5_cache_dir: "era5_cache"
+
+typecodes:
+  - A320
+"""
+        )
+
+        n = 55
+        n_nulls = 5
+        lats: list[float | None] = [48.0 + i * 0.001 for i in range(n)]
+        lons: list[float | None] = [2.0 + i * 0.001 for i in range(n)]
+        # Inject null coordinates at the tail (last n_nulls rows)
+        for idx in range(n - n_nulls, n):
+            lats[idx] = None
+            lons[idx] = None
+
+        df = pl.DataFrame(
+            {
+                "flight_id": ["F001"] * n,
+                "timestamp": [float(i * 4) for i in range(n)],
+                "altitude": [35000.0 + i * 10 for i in range(n)],
+                "selected_mcp": [35000.0] * n,
+                "vertical_rate": [100.0] * n,
+                "Mach": [0.78] * n,
+                "IAS": [280.0] * n,
+                "TAS": [450.0] * n,
+                "groundspeed": [440.0 + i * 0.1 for i in range(n)],
+                "latitude": lats,
+                "longitude": lons,
+                "track": [90.0] * n,
+                "heading": [88.0] * n,
+                "typecode": ["A320"] * n,
+                "icao24": ["abc123"] * n,
+                "adep_dist": [100.0 - i for i in range(n)],
+                "ades_dist": [float(i * 2) for i in range(n)],
+            }
+        )
+        df.write_parquet(preprocess_dir / "processed_20250101.parquet")
+
+        def fake_interpolate(pdf: Any) -> Any:
+            pdf = pdf.copy()
+            pdf["temperature"] = 220.0
+            pdf["u_component_of_wind"] = 5.0
+            pdf["v_component_of_wind"] = -3.0
+            return pdf
+
+        mock_arco_cls = mocker.MagicMock()
+        mock_arco_instance = mocker.MagicMock()
+        mock_arco_instance.interpolate.side_effect = fake_interpolate
+        mock_arco_cls.return_value = mock_arco_instance
+
+        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
+        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
+        mocker.patch.dict(
+            "sys.modules",
+            {
+                "fastmeteo": mocker.MagicMock(),
+                "fastmeteo.source": mock_source,
+                "fastmeteo.source.arco_era5": mock_source_arco,
+            },
+        )
+
+        process(arch="opensky", config=config, dry_run=False)
+
+        output = process_dir / "processed_20250101.parquet"
+        assert output.exists()
+
+        result = pl.read_parquet(output)
+        # Null-coord rows dropped; crop may trim further
+        assert len(result) <= n - n_nulls
+        assert len(result) > 0
+        # No NaN in mach or distance columns
+        assert result["mach"].is_nan().sum() == 0
+        assert result["distance_along_track_m"].is_nan().sum() == 0
+
 
 class TestDownloadCommand:
     """Tests for the ``download`` command."""
