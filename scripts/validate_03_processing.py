@@ -156,15 +156,23 @@ def validate_physics(df: pl.DataFrame) -> bool:
     # 'mach_sel' is the segment-detected selected Mach (step-like).
     mach_col = _resolve_col(df, "mach", "Mach")
     if mach_col:
-        mach = df[mach_col].drop_nulls().to_numpy()
-        in_range = bool(np.all((mach > 0.05) & (mach < 1.05)))
-        ok = (
-            _status(
-                in_range,
-                f"Mach in [0.05, 1.05] -- actual [{mach.min():.4f}, {mach.max():.4f}]",
+        raw = df[mach_col].drop_nulls().to_numpy()
+        nan_count = int(np.isnan(raw).sum())
+        if nan_count > 0:
+            _status(False, f"⚠️ {nan_count:,} NaN values in {mach_col} column")
+            ok = False
+        mach = raw[~np.isnan(raw)]
+        if len(mach) > 0:
+            in_range = bool(np.all((mach > 0.05) & (mach < 1.05)))
+            ok = (
+                _status(
+                    in_range,
+                    f"Mach in [0.05, 1.05] -- actual [{mach.min():.4f}, {mach.max():.4f}]",
+                )
+                and ok
             )
-            and ok
-        )
+        else:
+            ok = _status(False, f"No valid (non-NaN) values in {mach_col}") and ok
     elif "mach_sel" in df.columns:
         # Fallback: use mach_sel as proxy (segment-detected from computed Mach).
         mach = df["mach_sel"].drop_nulls().to_numpy()
@@ -185,30 +193,46 @@ def validate_physics(df: pl.DataFrame) -> bool:
 
     # gamma_air (flight path angle in radians)
     if "gamma_air" in df.columns:
-        gamma = df["gamma_air"].drop_nulls().to_numpy()
-        in_range = bool(np.all(np.abs(gamma) < 0.3))
-        ok = (
-            _status(
-                in_range,
-                f"gamma_air in [-0.3, 0.3] -- actual [{gamma.min():.4f}, {gamma.max():.4f}]",
+        raw_gamma = df["gamma_air"].drop_nulls().to_numpy()
+        nan_count_g = int(np.isnan(raw_gamma).sum())
+        if nan_count_g > 0:
+            _status(False, f"⚠️ {nan_count_g:,} NaN values in gamma_air column")
+            ok = False
+        gamma = raw_gamma[~np.isnan(raw_gamma)]
+        if len(gamma) > 0:
+            in_range = bool(np.all(np.abs(gamma) < 0.3))
+            ok = (
+                _status(
+                    in_range,
+                    f"gamma_air in [-0.3, 0.3] -- actual [{gamma.min():.4f}, {gamma.max():.4f}]",
+                )
+                and ok
             )
-            and ok
-        )
+        else:
+            ok = _status(False, "No valid (non-NaN) values in gamma_air") and ok
     else:
         ok = _status(False, "gamma_air column not found") and ok
 
     # TAS > 0
     tas_col = _resolve_col(df, "TAS", "tas_ms", "tas_kt")
     if tas_col:
-        tas = df[tas_col].drop_nulls().to_numpy()
-        all_positive = bool(np.all(tas > 0))
-        ok = (
-            _status(
-                all_positive,
-                f"TAS > 0 -- min={tas.min():.2f}",
+        raw_tas = df[tas_col].drop_nulls().to_numpy()
+        nan_count_t = int(np.isnan(raw_tas).sum())
+        if nan_count_t > 0:
+            _status(False, f"⚠️ {nan_count_t:,} NaN values in {tas_col} column")
+            ok = False
+        tas = raw_tas[~np.isnan(raw_tas)]
+        if len(tas) > 0:
+            all_positive = bool(np.all(tas > 0))
+            ok = (
+                _status(
+                    all_positive,
+                    f"TAS > 0 -- min={tas.min():.2f}",
+                )
+                and ok
             )
-            and ok
-        )
+        else:
+            ok = _status(False, f"No valid (non-NaN) values in {tas_col}") and ok
     else:
         ok = _status(False, "TAS column not found") and ok
 
@@ -236,9 +260,19 @@ def validate_distance_monotonicity(df: pl.DataFrame) -> bool:
 
     ok = True
     violation_count = 0
+    nan_flights = 0
 
     for (fid,), flight in df.group_by("flight_id"):
         d = flight.sort("timestamp")["distance_along_track_m"].to_numpy()
+        nan_count = int(np.isnan(d).sum())
+        if nan_count > 0:
+            nan_flights += 1
+            if nan_flights <= 5:
+                _status(False, f"⚠️ Flight {fid}: {nan_count:,} NaN in distance")
+            ok = False
+            d = d[~np.isnan(d)]
+        if len(d) < 2:
+            continue
         diffs = np.diff(d)
         if not np.all(diffs >= -1.0):
             violation_count += 1
@@ -247,6 +281,8 @@ def validate_distance_monotonicity(df: pl.DataFrame) -> bool:
                 _status(False, f"Flight {fid}: min diff = {min_diff:.2f} m")
             ok = False
 
+    if nan_flights > 5:
+        _status(False, f"... and {nan_flights - 5} more flights with NaN distance")
     if violation_count > 5:
         _status(False, f"... and {violation_count - 5} more flights non-monotone")
 
