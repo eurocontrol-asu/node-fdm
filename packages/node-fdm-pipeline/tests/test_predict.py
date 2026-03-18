@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import TYPE_CHECKING
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -10,6 +11,9 @@ import polars as pl
 import pytest
 
 from node_fdm_pipeline.commands.predict import run_predict, run_predict_bada
+
+if TYPE_CHECKING:
+    from node_fdm_pipeline.resolver import ArchitectureInfo
 
 
 class TestRunPredict:
@@ -388,6 +392,219 @@ typecodes:
 
         with patch.dict(sys.modules, {"pyBADA": mock_bada_pkg, "pyBADA.bada4": mock_bada4}):
             run_predict_bada(config=config, typecode="A320", jobs=1)
+
+
+class TestPredictNanFiltering:
+    """Regression tests for AXM-493: filter NaN segments in prediction."""
+
+    def _make_config_and_nan_flight(
+        self,
+        tmp_path: Path,
+        *,
+        nan_fraction: float,
+    ) -> tuple[Path, Path]:
+        """Create config + flight parquet with controllable NaN fraction.
+
+        Args:
+            tmp_path: Pytest temporary directory.
+            nan_fraction: Fraction of rows to set mach_sel to NaN (0.0-1.0).
+
+        Returns:
+            Tuple of (config_path, flight_parquet_path).
+        """
+        data_dir = tmp_path / "data"
+        process_dir = data_dir / "processed_flights"
+        models_dir = data_dir / "models"
+        acft_dir = process_dir / "A320"
+        process_dir.mkdir(parents=True)
+        models_dir.mkdir(parents=True)
+        acft_dir.mkdir(parents=True)
+
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+
+        # Build flight: n rows, first nan_count rows have NaN mach_sel
+        n = 100
+        nan_count = int(n * nan_fraction)
+        mach_sel = [float("nan")] * nan_count + [0.82] * (n - nan_count)
+
+        flight = pl.DataFrame(
+            {
+                "altitude_ft": [35000.0] * n,
+                "alt_sel_ft": [35000.0] * n,
+                "vz_sel_ftmin": [0.0] * n,
+                "mach_sel": mach_sel,
+                "cas_sel_kt": [280.0] * n,
+                "groundspeed": [450.0] * n,
+                "vertical_rate": [0.0] * n,
+                "latitude": [48.0] * n,
+                "longitude": [2.0] * n,
+                "track": [90.0] * n,
+                "flight_id": ["F001"] * n,
+                "timestamp": list(range(n)),
+            }
+        )
+        flight_path = acft_dir / "flight001.parquet"
+        flight.write_parquet(flight_path)
+
+        # Split CSV
+        split_df = pl.DataFrame(
+            {
+                "filepath": [str(flight_path)],
+                "icao": ["abc123"],
+                "split": ["test"],
+                "aircraft_type": ["A320"],
+            }
+        )
+        split_df.write_csv(process_dir / "dataset_split.csv")
+
+        # Model dir
+        model_dir = models_dir / "opensky_2025_A320"
+        model_dir.mkdir()
+
+        return config, flight_path
+
+    def _mock_architecture(self) -> ArchitectureInfo:
+        """Build a mock ArchitectureInfo that passes through columns.
+
+        When nan_passthrough is True, preprocessing returns raw data as-is
+        (preserving NaN for testing the filter).
+        """
+        from node_fdm_pipeline.resolver import ArchitectureInfo
+
+        # Preprocessing: identity (return input as-is to preserve NaN)
+        def identity_preprocess(df: pl.DataFrame) -> pl.DataFrame:
+            return df
+
+        mock_arch = ArchitectureInfo(
+            name="opensky_2025",
+            x_cols=["altitude_ft"],
+            u_cols=["mach_sel", "cas_sel_kt"],
+            e0_cols=["groundspeed"],
+            dx_cols=[(1, "vertical_rate")],
+            preprocessing_fn=identity_preprocess,
+            segment_filter_fn=None,
+            architecture_import="node_fdm.architectures.opensky",
+        )
+        return mock_arch
+
+    @patch("node_fdm.predictor.NodeFDMPredictor")
+    @patch("node_fdm_pipeline.resolver.resolve_architecture")
+    def test_predict_filters_nan_segments(
+        self,
+        mock_resolve: MagicMock,
+        mock_predictor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Flight with 60% NaN mach_sel → only ~40 finite rows predicted."""
+        config, _ = self._make_config_and_nan_flight(tmp_path, nan_fraction=0.6)
+
+        mock_resolve.return_value = self._mock_architecture()
+
+        mock_predictor = MagicMock()
+
+        # Return arrays sized to whatever input length is passed
+        def fake_predict(
+            x_init: np.ndarray,
+            u_seq: np.ndarray,
+            e_seq: np.ndarray,
+        ) -> dict[str, np.ndarray]:
+            return {"altitude_ft": np.zeros(len(u_seq))}
+
+        mock_predictor.predict_flight.side_effect = fake_predict
+        mock_predictor_cls.return_value = mock_predictor
+
+        run_predict(
+            arch="opensky",
+            config=config,
+            typecode="A320",
+            device="cpu",
+            local_model=True,
+        )
+
+        # predict_flight must have been called with filtered (shorter) arrays
+        mock_predictor.predict_flight.assert_called_once()
+        call_args = mock_predictor.predict_flight.call_args
+        u_seq_arg = call_args[0][1]  # second positional arg
+        assert len(u_seq_arg) == 40, f"Expected 40 finite rows, got {len(u_seq_arg)}"
+
+    @patch("node_fdm.predictor.NodeFDMPredictor")
+    @patch("node_fdm_pipeline.resolver.resolve_architecture")
+    def test_predict_skips_flight_above_threshold(
+        self,
+        mock_resolve: MagicMock,
+        mock_predictor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Flight with 90% NaN (>80% threshold) → skipped, not predicted."""
+        config, _ = self._make_config_and_nan_flight(tmp_path, nan_fraction=0.9)
+
+        mock_resolve.return_value = self._mock_architecture()
+
+        mock_predictor = MagicMock()
+        mock_predictor_cls.return_value = mock_predictor
+
+        run_predict(
+            arch="opensky",
+            config=config,
+            typecode="A320",
+            device="cpu",
+            local_model=True,
+        )
+
+        # predict_flight should NOT have been called — flight skipped
+        mock_predictor.predict_flight.assert_not_called()
+
+        # Output parquet should not exist
+        output_file = tmp_path / "data" / "predicted_flights" / "A320" / "flight001.parquet"
+        assert not output_file.exists()
+
+    @patch("node_fdm.predictor.NodeFDMPredictor")
+    @patch("node_fdm_pipeline.resolver.resolve_architecture")
+    def test_predict_clean_flight_unchanged(
+        self,
+        mock_resolve: MagicMock,
+        mock_predictor_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Flight with 0% NaN → all 100 timesteps predicted."""
+        config, _ = self._make_config_and_nan_flight(tmp_path, nan_fraction=0.0)
+
+        mock_resolve.return_value = self._mock_architecture()
+
+        mock_predictor = MagicMock()
+
+        def fake_predict(
+            x_init: np.ndarray,
+            u_seq: np.ndarray,
+            e_seq: np.ndarray,
+        ) -> dict[str, np.ndarray]:
+            return {"altitude_ft": np.zeros(len(u_seq))}
+
+        mock_predictor.predict_flight.side_effect = fake_predict
+        mock_predictor_cls.return_value = mock_predictor
+
+        run_predict(
+            arch="opensky",
+            config=config,
+            typecode="A320",
+            device="cpu",
+            local_model=True,
+        )
+
+        # predict_flight called with all rows
+        mock_predictor.predict_flight.assert_called_once()
+        call_args = mock_predictor.predict_flight.call_args
+        u_seq_arg = call_args[0][1]
+        assert len(u_seq_arg) == 100, f"Expected 100 rows, got {len(u_seq_arg)}"
 
 
 class TestPredictMissingSplit:
