@@ -265,6 +265,24 @@ def derive(
 
 
 @app.command
+def segments(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Detect constant segments and build fdm_*_sel columns — étape 5."""
+    from node_fdm_pipeline.commands.data import segments as segments_fn
+
+    segments_fn(config=config, dry_run=dry_run)
+
+
+@app.command
 def flag(
     *,
     config: Annotated[

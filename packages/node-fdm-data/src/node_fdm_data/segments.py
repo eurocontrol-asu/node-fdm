@@ -66,7 +66,7 @@ def detect_constant_segments(
         List of segment dicts, each with keys ``start_idx``,
         ``end_idx``, ``var_mean``.
     """
-    y = np.asarray(values, dtype=np.float64)
+    y = np.array(values, dtype=np.float64, copy=True)
     nan_mask = np.isnan(y)
 
     # Interpolate NaNs before smoothing (savgol can't handle them)
@@ -240,31 +240,37 @@ def build_selected_params(
         gamma_segs = detect_constant_segments(gamma_arr, **gamma_cfg)
         df = add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
 
-    # --- Altitude selected (optional, backfill) ---
+    # --- Altitude selected (optional, detect on bds_mcp_sel_alt_ft) ---
     alt_cfg = config.get("alt")
-    if alt_cfg is not None:
+    mcp_col = "bds_mcp_sel_alt_ft"
+    if alt_cfg is not None and mcp_col in df.columns:
+        mcp_arr = df[mcp_col].to_numpy()
         alt_segs = detect_constant_segments(
-            alt_arr,
+            mcp_arr,
             **alt_cfg,
         )
         df = add_segment_column(df, alt_segs, "fdm_alt_sel_ft")
-        # Backfill: last point inherits actual altitude, then bfill
-        mcp = df["fdm_alt_sel_ft"].to_list()
-        mcp[-1] = float(alt_arr[-1])
-        # Backward fill
-        for i in range(len(mcp) - 2, -1, -1):
-            if np.isnan(mcp[i]):
-                mcp[i] = mcp[i + 1]
-        df = df.with_columns(pl.Series("fdm_mcp_alt_sel_ft", mcp))
+        # MCP backfill: forward-fill then backward-fill → never NaN
+        df = df.with_columns(
+            pl.col("fdm_alt_sel_ft")
+            .fill_nan(None)
+            .forward_fill()
+            .backward_fill()
+            .fill_nan(None)
+            .fill_null(pl.lit(float("nan")))
+            .alias("fdm_mcp_alt_sel_ft")
+        )
 
-    # --- Fill NaN with 0.0 for segment-detected columns (legacy parity) ---
-    # Non-segment timesteps → 0.0 means "no active selection" for the model.
-    sel_cols = [
-        c
-        for c in ("fdm_mach_sel", "fdm_cas_sel_kt", "fdm_vz_sel_ftmin", "fdm_gamma_sel_rad")
-        if c in df.columns
-    ]
-    if sel_cols:
-        df = df.with_columns(pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols)
+    # --- FMS altitude backfill ---
+    fms_col = "bds_fms_sel_alt_ft"
+    if fms_col in df.columns:
+        df = df.with_columns(
+            pl.col(fms_col)
+            .fill_nan(None)
+            .forward_fill()
+            .backward_fill()
+            .fill_null(pl.lit(float("nan")))
+            .alias("fdm_fms_alt_sel_ft")
+        )
 
     return df

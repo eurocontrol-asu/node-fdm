@@ -605,6 +605,58 @@ def derive(
     )
 
 
+def segments(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Detect constant segments and build selected-parameter columns (étape 5).
+
+    Reads the Delta Table produced by ``derive``, runs segment detection
+    per flight, and writes ``fdm_*_sel`` columns plus MCP/FMS backfill
+    columns back to the table.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.segments import build_selected_params
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+    sel_config = cfg.selected_params.model_dump()
+
+    log.info("segments_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("segments_dry_run", msg="Config valid, would detect segments")
+        return
+
+    df = read_delta_table(delta_table)
+
+    # Segment detection is per-flight (row-iterative)
+    flights = df.partition_by("meta_flight_id", maintain_order=True)
+    processed: list[pl.DataFrame] = []
+    for flight_df in flights:
+        flight_df = build_selected_params(flight_df, sel_config)
+        processed.append(flight_df)
+
+    df = pl.concat(processed, how="diagonal_relaxed")
+
+    write_columns(df, delta_table)
+
+    sel_cols = [c for c in df.columns if "_sel" in c]
+    log.info(
+        "segments_done",
+        rows=len(df),
+        flights=len(processed),
+        sel_cols=sel_cols,
+    )
+
+
 def _build_airport_coords(df: pl.DataFrame) -> dict[str, tuple[float, float]] | None:
     """Build ICAO → (lat, lon) mapping from ``traffic.data.airports``.
 
