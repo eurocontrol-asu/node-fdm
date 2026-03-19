@@ -33,6 +33,7 @@ class PathsConfig(BaseModel, frozen=True):
     models_dir: str = "models"
     figure_dir: str = "figures"
     era5_cache_dir: str = "era5_cache"
+    delta_table: str = "flights.delta"
 
     def resolve(self, name: str) -> Path:
         """Resolve a sub-directory path relative to data_dir.

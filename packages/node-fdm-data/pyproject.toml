@@ -18,6 +18,7 @@ dependencies = [
     "polars>=1.0",
     "numpy>=1.26",
     "scipy>=1.13",
+    "deltalake>=0.18",
 ]
 
 [project.urls]

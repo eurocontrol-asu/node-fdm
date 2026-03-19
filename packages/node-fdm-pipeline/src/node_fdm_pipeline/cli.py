@@ -339,6 +339,27 @@ def plot_performance(
     run_plot_performance(config=config)
 
 
+@app.command(name="table-info")
+def table_info_cmd(
+    *,
+    table_path: Annotated[
+        Path,
+        cyclopts.Parameter(name="--table-path", help="Path to the Delta table directory"),
+    ] = Path("data/flights.delta"),
+) -> None:
+    """Inspect a Delta table: partitions, columns, and version count."""
+    from node_fdm_pipeline.commands.table_info import table_info
+
+    info = table_info(table_path)
+    print(f"Partitions ({len(info['partitions'])}):")  # noqa: T201
+    for p in info["partitions"]:
+        print(f"  - {p}")  # noqa: T201
+    print(f"\nColumns ({len(info['columns'])}):")  # noqa: T201
+    for c in info["columns"]:
+        print(f"  - {c}")  # noqa: T201
+    print(f"\nVersions: {info['versions']}")  # noqa: T201
+
+
 @app.command(name="plot-example")
 def plot_example(
     *,
