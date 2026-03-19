@@ -49,7 +49,7 @@ def _load_preprocessed(preprocess_dir: Path) -> pl.DataFrame | None:
         return None
 
     frames = [pl.read_parquet(f) for f in files]
-    df = pl.concat(frames)
+    df = pl.concat(frames, how="align")
     _status(True, f"Loaded {len(files)} file(s): {sum(len(f) for f in frames):,} rows total")
     return df
 
