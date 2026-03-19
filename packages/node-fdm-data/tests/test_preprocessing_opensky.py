@@ -317,9 +317,9 @@ class TestTrainingPreprocessingSI:
                 "fdm_cas_sel_kt": [200.0, 250.0, 280.0],
                 "fdm_vz_sel_ftmin": [1000.0, 500.0, 0.0],
                 "fdm_mcp_alt_sel_ft": [15000.0, 25000.0, 36000.0],
-                "temperature": [-10.0, -30.0, -50.0],
-                "adep_dist": [0.0, 50.0, 100.0],
-                "ades_dist": [200.0, 150.0, 100.0],
+                "era_temp_K": [-10.0, -30.0, -50.0],
+                "fdm_adep_dist_nm": [0.0, 50.0, 100.0],
+                "fdm_ades_dist_nm": [200.0, 150.0, 100.0],
                 "distance_along_track_m": [0.0, 5000.0, 10000.0],
             }
         )
@@ -341,13 +341,13 @@ class TestTrainingPreprocessingSI:
         assert "era_tas_ms" in result.columns
         assert result["era_tas_ms"][2] == pytest.approx(450.0 * 0.514444, rel=1e-4)
 
-    def test_temperature_c_to_k(self, flight_df: pl.DataFrame) -> None:
-        """temperature → era_temp_K (identity, already Kelvin in ERA5)."""
+    def test_temperature_identity(self, flight_df: pl.DataFrame) -> None:
+        """era_temp_K → era_temp_K (identity, already Kelvin in ERA5)."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
         assert "era_temp_K" in result.columns
-        # temperature column is passed through as-is (identity conversion)
+        # era_temp_K column is passed through as-is (identity conversion)
         assert result["era_temp_K"][0] == pytest.approx(-10.0)
         assert result["era_temp_K"][2] == pytest.approx(-50.0)
 
@@ -383,7 +383,7 @@ class TestTrainingPreprocessingSI:
         assert result["fdm_d_tas_ms"][1] == pytest.approx(100.0 * 0.514444, rel=1e-4)
 
     def test_distance_nm_to_m(self, flight_df: pl.DataFrame) -> None:
-        """adep_dist (NM) -> fdm_adep_dist_m via nm_to_m (x 1852)."""
+        """fdm_adep_dist_nm (NM) -> fdm_adep_dist_m via nm_to_m (x 1852)."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)

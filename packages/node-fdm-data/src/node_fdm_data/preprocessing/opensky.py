@@ -137,10 +137,10 @@ _SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
     ("fdm_mcp_alt_sel_ft", ft_to_m, "fdm_mcp_alt_sel_m"),
     ("fdm_cas_sel_kt", kt_to_ms, "fdm_cas_sel_ms"),
     ("fdm_vz_sel_ftmin", ftmin_to_ms, "fdm_vz_sel_ms"),
-    ("adep_dist", nm_to_m, "fdm_adep_dist_m"),
-    ("ades_dist", nm_to_m, "fdm_ades_dist_m"),
-    # ERA5 temperature is already in Kelvin — just rename, no conversion.
-    ("temperature", lambda col: pl.col(col), "era_temp_K"),
+    ("fdm_adep_dist_nm", nm_to_m, "fdm_adep_dist_m"),
+    ("fdm_ades_dist_nm", nm_to_m, "fdm_ades_dist_m"),
+    # ERA5 temperature is already in Kelvin — identity.
+    ("era_temp_K", lambda col: pl.col(col), "era_temp_K"),
 ]
 
 # Derivative table: (source_si_col, target_deriv_col)

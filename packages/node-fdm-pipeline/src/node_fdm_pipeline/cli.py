@@ -283,6 +283,24 @@ def segments(
 
 
 @app.command
+def convert(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Convert to SI units and compute temporal derivatives — étapes 6-7."""
+    from node_fdm_pipeline.commands.data import convert as convert_fn
+
+    convert_fn(config=config, dry_run=dry_run)
+
+
+@app.command
 def flag(
     *,
     config: Annotated[

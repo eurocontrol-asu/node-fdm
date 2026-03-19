@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "aircraft_list",
+    "convert",
     "derive",
     "download",
     "enrich",
@@ -654,6 +655,56 @@ def segments(
         rows=len(df),
         flights=len(processed),
         sel_cols=sel_cols,
+    )
+
+
+def convert(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Convert to SI units and compute temporal derivatives (étapes 6-7).
+
+    Reads the Delta Table produced by ``segments``, adds SI-unit columns
+    via :func:`~node_fdm_data.preprocessing.convert.convert_si` and
+    per-flight derivatives via
+    :func:`~node_fdm_data.preprocessing.convert.compute_derivatives`,
+    then writes the new columns back.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.preprocessing.convert import compute_derivatives, convert_si
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("convert_start", table=str(delta_table))
+
+    if dry_run:
+        log.info(
+            "convert_dry_run", msg="Config valid, would convert to SI and compute derivatives"
+        )
+        return
+
+    df = read_delta_table(delta_table)
+
+    df = convert_si(df)
+    df = compute_derivatives(df)
+
+    write_columns(df, delta_table)
+
+    si_cols = [c for c in df.columns if c.endswith(("_m", "_ms"))]
+    deriv_cols = [c for c in df.columns if c.startswith("fdm_d_")]
+    log.info(
+        "convert_done",
+        rows=len(df),
+        si_cols=si_cols,
+        deriv_cols=deriv_cols,
     )
 
 
