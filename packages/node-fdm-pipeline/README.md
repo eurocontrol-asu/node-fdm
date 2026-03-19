@@ -28,6 +28,7 @@ fdm evaluate --arch opensky --config config.yaml
 | Command | Description | Status |
 |---|---|---|
 | `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
+| `fdm derive` | Compute derived physics columns (gamma, wind, distance) — étape 4 | ✅ Implemented |
 | `fdm train` | Train Neural ODE models | Placeholder (AXM-363) |
 | `fdm predict` | Predict with trained models | Placeholder (AXM-363) |
 | `fdm predict-bada` | BADA 4.2 baseline predictions | Placeholder (AXM-363) |

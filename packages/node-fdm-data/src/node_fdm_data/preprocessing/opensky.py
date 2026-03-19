@@ -257,7 +257,12 @@ def crop_on_distance_jump(
     Returns:
         Cropped DataFrame, reset to contiguous integer index.
     """
-    gs_col = "gs_kt" if "gs_kt" in df.columns else "groundspeed"
+    if "gs_kt" in df.columns:
+        gs_col = "gs_kt"
+    elif "raw_gs_kt" in df.columns:
+        gs_col = "raw_gs_kt"
+    else:
+        gs_col = "groundspeed"
 
     # Filter low speed
     df = df.filter(pl.col(gs_col) > min_speed)

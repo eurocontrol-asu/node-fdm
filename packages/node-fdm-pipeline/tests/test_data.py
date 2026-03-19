@@ -13,6 +13,7 @@ from node_fdm_pipeline.commands.data import (
     _require_traffic,
     _split_at_gaps,
     aircraft_list,
+    derive,
     download,
     identify,
     process,
@@ -1267,3 +1268,142 @@ class TestSplitAtGaps:
         result = _split_at_gaps(t, threshold="30s", min_points=10)
 
         assert result is None
+
+
+# ---------------------------------------------------------------------------
+# derive tests (v3 étape 4)
+# ---------------------------------------------------------------------------
+
+
+def _make_derive_delta_table(tmp_path: Path, *, n_flights: int = 1) -> Path:
+    """Create a Delta Table with all columns needed for the derive step."""
+    import numpy as np
+
+    rows_per_flight = 10
+    all_rows: dict[str, list[object]] = {
+        "raw_timestamp": [],
+        "raw_icao24": [],
+        "raw_callsign": [],
+        "raw_lat_deg": [],
+        "raw_lon_deg": [],
+        "raw_alt_ft": [],
+        "raw_gs_kt": [],
+        "raw_track_deg": [],
+        "raw_vz_ftmin": [],
+        "bds_mcp_sel_alt_ft": [],
+        "era_tas_kt": [],
+        "meta_flight_id": [],
+        "meta_departure": [],
+        "meta_arrival": [],
+        "meta_batch_date": [],
+    }
+    from datetime import UTC, timedelta
+    from datetime import datetime as dt
+
+    base = dt(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
+    for fi in range(n_flights):
+        lats = np.linspace(48.0, 48.1, rows_per_flight)
+        lons = np.linspace(2.0, 2.1, rows_per_flight)
+        for i in range(rows_per_flight):
+            all_rows["raw_timestamp"].append(base + timedelta(seconds=fi * 100 + i))
+            all_rows["raw_icao24"].append(f"abc{fi:03d}")
+            all_rows["raw_callsign"].append(f"TST{fi:02d}")
+            all_rows["raw_lat_deg"].append(float(lats[i]))
+            all_rows["raw_lon_deg"].append(float(lons[i]))
+            all_rows["raw_alt_ft"].append(35000.0)
+            all_rows["raw_gs_kt"].append(440.0)
+            all_rows["raw_track_deg"].append(90.0)
+            all_rows["raw_vz_ftmin"].append(500.0)
+            all_rows["bds_mcp_sel_alt_ft"].append(36000.0)
+            all_rows["era_tas_kt"].append(450.0)
+            all_rows["meta_flight_id"].append(f"abc{fi:03d}_TST{fi:02d}_s0")
+            all_rows["meta_departure"].append("LFPG")
+            all_rows["meta_arrival"].append("EGLL")
+            all_rows["meta_batch_date"].append("20250101")
+
+    df = pl.DataFrame(all_rows)
+    table_path = tmp_path / "flights.delta"
+    from node_fdm_data.delta import write_columns
+
+    write_columns(df, table_path)
+    return table_path
+
+
+class TestDeriveCommand:
+    """Tests for the ``derive`` command (v3 étape 4)."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path, *, data_dir: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        return config
+
+    def test_derive_dry_run(self, tmp_path: Path) -> None:
+        """--dry-run validates config without modifying the Delta Table."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        derive(config=config, dry_run=True)
+
+        result = pl.read_delta(str(table_path))
+        assert "fdm_gamma_rad" not in result.columns
+
+    def test_derive_adds_columns(self, tmp_path: Path) -> None:
+        """derive adds fdm_gamma_rad, fdm_long_wind_kt, fdm_alt_diff_ft, fdm_distance_cum_m."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        derive(config=config, dry_run=False)
+
+        result = pl.read_delta(str(table_path))
+        for col in (
+            "fdm_gamma_rad",
+            "fdm_long_wind_kt",
+            "fdm_alt_diff_ft",
+            "fdm_distance_cum_m",
+            "fdm_adep_dist_nm",
+            "fdm_ades_dist_nm",
+        ):
+            assert col in result.columns, f"Missing column: {col}"
+
+    def test_derive_per_flight_distance(self, tmp_path: Path) -> None:
+        """fdm_distance_cum_m resets to 0 for each meta_flight_id."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir, n_flights=2)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        derive(config=config, dry_run=False)
+
+        result = pl.read_delta(str(table_path))
+        for fid in result["meta_flight_id"].unique().to_list():
+            flight = result.filter(pl.col("meta_flight_id") == fid).sort("raw_timestamp")
+            assert flight["fdm_distance_cum_m"][0] == 0.0
+
+    def test_derive_idempotent(self, tmp_path: Path) -> None:
+        """Running derive twice produces the same result (idempotence)."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        derive(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path))
+
+        derive(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path))
+
+        for col in ("fdm_gamma_rad", "fdm_long_wind_kt", "fdm_alt_diff_ft", "fdm_distance_cum_m"):
+            assert first[col].to_list() == second[col].to_list(), f"{col} changed on re-run"

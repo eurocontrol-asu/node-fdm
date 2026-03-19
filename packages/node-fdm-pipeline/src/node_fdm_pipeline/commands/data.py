@@ -21,6 +21,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "aircraft_list",
+    "derive",
     "download",
     "enrich",
     "flag",
@@ -554,6 +555,85 @@ def enrich(
         rows=len(df),
         era_cols=era_cols,
     )
+
+
+def derive(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Compute derived physics columns (étape 4).
+
+    Reads the Delta Table produced by ``enrich``, computes flight-path
+    angle, longitudinal wind, altitude difference, cumulative distance,
+    and airport distances, then writes the ``fdm_*`` columns back.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.preprocessing.derive import derive_columns
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("derive_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("derive_dry_run", msg="Config valid, would compute derived columns")
+        return
+
+    df = read_delta_table(delta_table)
+
+    # Build airport coordinate lookup (soft dependency on traffic)
+    airport_coords = _build_airport_coords(df)
+
+    df = derive_columns(df, airport_coords=airport_coords)
+
+    write_columns(df, delta_table)
+
+    derived_cols = [
+        c for c in df.columns if c.startswith("fdm_") and not c.startswith("fdm_flag_")
+    ]
+    log.info(
+        "derive_done",
+        rows=len(df),
+        derived_cols=derived_cols,
+    )
+
+
+def _build_airport_coords(df: pl.DataFrame) -> dict[str, tuple[float, float]] | None:
+    """Build ICAO → (lat, lon) mapping from ``traffic.data.airports``.
+
+    Returns ``None`` if the ``traffic`` library is not available or
+    the required columns are missing.
+    """
+    if "meta_departure" not in df.columns or "meta_arrival" not in df.columns:
+        return None
+
+    try:
+        from traffic.data import airports
+    except ImportError:
+        log.warning(
+            "derive_traffic_missing",
+            msg="traffic not installed — airport distance columns will be NaN",
+        )
+        return None
+
+    icao_codes: set[str] = set()
+    for col in ("meta_departure", "meta_arrival"):
+        icao_codes.update(v for v in df[col].drop_nulls().unique().to_list() if v)
+
+    coords: dict[str, tuple[float, float]] = {}
+    for icao in icao_codes:
+        ap = airports[icao]
+        if ap is not None:
+            coords[icao] = (ap.latitude, ap.longitude)
+
+    return coords
 
 
 # ---------------------------------------------------------------------------

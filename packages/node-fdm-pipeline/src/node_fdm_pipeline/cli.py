@@ -247,6 +247,24 @@ def enrich(
 
 
 @app.command
+def derive(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Compute derived physics columns (fdm_gamma_rad, fdm_long_wind_kt, etc.) — étape 4."""
+    from node_fdm_pipeline.commands.data import derive as derive_fn
+
+    derive_fn(config=config, dry_run=dry_run)
+
+
+@app.command
 def flag(
     *,
     config: Annotated[
