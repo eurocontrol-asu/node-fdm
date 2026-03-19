@@ -16,6 +16,7 @@ Create a `config.yaml` at your project root. All `fdm` CLI commands accept this 
 paths:
   data_dir: "/path/to/data"
   download_dir: "downloaded_parquet"
+  delta_table: "flights.delta"
   preprocess_dir: "preprocessed_parquet"
   era5_cache_dir: "era5_cache"
 
@@ -71,6 +72,7 @@ selected_params:
 | Section | Parameter | Type | Description |
 | :--- | :--- | :--- | :--- |
 | **Paths** | `data_dir` | Path | **Crucial:** Keep this path **absolute**. All subfolders are resolved relative to this root |
+| **Paths** | `delta_table` | Path | Delta Table written by `fdm download` (partitioned by `typecode`/`date`) |
 | **Paths** | `era5_cache_dir` | Path | Local cache for meteorological fields. Prevents re-downloading |
 | **Scope** | `typecodes` | List | Adjust aircraft type scope here, not in scripts |
 | **BADA** | `bada_4_2_dir` | Path | Set only if running baseline evaluation |

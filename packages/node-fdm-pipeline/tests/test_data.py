@@ -813,10 +813,127 @@ class TestCLINewCommands:
 
 
 # ---------------------------------------------------------------------------
-# _split_at_gaps tests (requires traffic)
+# Download → Delta Table tests (v3 étape 0)
 # ---------------------------------------------------------------------------
 
-traffic = pytest.importorskip("traffic")
+
+class TestDownloadDelta:
+    """Tests for download → Delta Table (v3 pipeline étape 0)."""
+
+    @staticmethod
+    def _make_raw_df(n: int = 10) -> pl.DataFrame:
+        """Synthetic OpenSky data with raw + BDS columns (pre-rename)."""
+        from datetime import datetime as dt
+
+        return pl.DataFrame(
+            {
+                "timestamp": [dt(2025, 1, 1, 12, 0, i) for i in range(n)],
+                "icao24": ["abc123"] * n,
+                "callsign": ["TEST01"] * n,
+                "latitude": [48.0 + i * 0.001 for i in range(n)],
+                "longitude": [2.0 + i * 0.001 for i in range(n)],
+                "altitude": [35000.0 + i * 10 for i in range(n)],
+                "groundspeed": [440.0 + i * 0.1 for i in range(n)],
+                "track": [90.0] * n,
+                "vertical_rate": [100.0] * n,
+                "selected_mcp": [35000.0] * n,
+                "selected_fms": [35000.0] * n,
+                "IAS": [280.0] * n,
+                "TAS": [450.0] * n,
+                "Mach": [0.78] * n,
+                "heading": [88.0] * n,
+            }
+        )
+
+    def test_download_creates_delta(self, tmp_path: Path) -> None:
+        """Delta Table created with raw_* + bds_* columns."""
+        from node_fdm_data.delta import write_columns
+
+        from node_fdm_pipeline.commands.data import _rename_to_v3
+
+        df = _rename_to_v3(self._make_raw_df(), batch_date="20250101")
+        table_path = tmp_path / "flights.delta"
+        write_columns(df, table_path)
+
+        result = pl.read_delta(str(table_path))
+        raw_cols = {c for c in result.columns if c.startswith("raw_")}
+        bds_cols = {c for c in result.columns if c.startswith("bds_")}
+        assert raw_cols == {
+            "raw_timestamp",
+            "raw_icao24",
+            "raw_callsign",
+            "raw_lat_deg",
+            "raw_lon_deg",
+            "raw_alt_ft",
+            "raw_gs_kt",
+            "raw_track_deg",
+            "raw_vz_ftmin",
+        }
+        assert bds_cols == {
+            "bds_mcp_sel_alt_ft",
+            "bds_fms_sel_alt_ft",
+            "bds_ias_kt",
+            "bds_tas_kt",
+            "bds_mach",
+            "bds_hdg_deg",
+        }
+        assert "meta_batch_date" in result.columns
+
+    def test_download_partition_key(self, tmp_path: Path) -> None:
+        """2 dates → 2 partitions meta_batch_date."""
+        from node_fdm_data.delta import write_columns
+
+        from node_fdm_pipeline.commands.data import _rename_to_v3
+
+        table_path = tmp_path / "flights.delta"
+        df1 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250101")
+        df2 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250102")
+        combined = pl.concat([df1, df2])
+        write_columns(combined, table_path)
+
+        result = pl.read_delta(str(table_path))
+        dates = result["meta_batch_date"].unique().sort().to_list()
+        assert dates == ["20250101", "20250102"]
+
+    def test_download_bds_preserved(self, tmp_path: Path) -> None:
+        """BDS TAS and Mach preserved with correct column names."""
+        from node_fdm_data.delta import write_columns
+
+        from node_fdm_pipeline.commands.data import _rename_to_v3
+
+        df = _rename_to_v3(self._make_raw_df(), batch_date="20250101")
+        table_path = tmp_path / "flights.delta"
+        write_columns(df, table_path)
+
+        result = pl.read_delta(str(table_path))
+        assert "bds_tas_kt" in result.columns
+        assert "bds_mach" in result.columns
+        assert result["bds_tas_kt"].to_list() == [450.0] * 10
+        assert result["bds_mach"].to_list() == [0.78] * 10
+
+    def test_download_idempotent(self, tmp_path: Path) -> None:
+        """Download 2x same date -> partition overwritten, no duplicates."""
+        from node_fdm_data.delta import write_columns
+
+        from node_fdm_pipeline.commands.data import _rename_to_v3
+
+        table_path = tmp_path / "flights.delta"
+
+        # First write
+        df1 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250101")
+        write_columns(df1, table_path)
+
+        # Second write (same date, same schema)
+        df2 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250101")
+        write_columns(df2, table_path)
+
+        result = pl.read_delta(str(table_path))
+        assert len(result) == 5  # overwritten, not appended
+
+
+# ---------------------------------------------------------------------------
+# _split_at_gaps tests (requires traffic)
+# ---------------------------------------------------------------------------
 
 
 def _make_flight(n_points: int, *, gap_at: int | None = None, gap_seconds: int = 60) -> Flight:
@@ -858,6 +975,10 @@ def _make_flight(n_points: int, *, gap_at: int | None = None, gap_seconds: int =
 
 class TestSplitAtGaps:
     """Tests for the ``_split_at_gaps`` helper function."""
+
+    @pytest.fixture(autouse=True)
+    def _require_traffic(self) -> None:
+        pytest.importorskip("traffic")
 
     def test_split_no_gap(self) -> None:
         """Continuous flight → 1 segment with original_flight_id set."""

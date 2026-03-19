@@ -32,6 +32,28 @@ log = structlog.get_logger()
 # ADS-B groundspeed outliers can inflate recomputed TAS → Mach > 1.05.
 MACH_UPPER = 1.05
 
+# v3 pipeline — column rename mappings (OpenSky raw → raw_*/bds_* convention)
+_RAW_RENAME: dict[str, str] = {
+    "timestamp": "raw_timestamp",
+    "icao24": "raw_icao24",
+    "callsign": "raw_callsign",
+    "latitude": "raw_lat_deg",
+    "longitude": "raw_lon_deg",
+    "altitude": "raw_alt_ft",
+    "groundspeed": "raw_gs_kt",
+    "track": "raw_track_deg",
+    "vertical_rate": "raw_vz_ftmin",
+}
+
+_BDS_RENAME: dict[str, str] = {
+    "selected_mcp": "bds_mcp_sel_alt_ft",
+    "selected_fms": "bds_fms_sel_alt_ft",
+    "IAS": "bds_ias_kt",
+    "TAS": "bds_tas_kt",
+    "Mach": "bds_mach",
+    "heading": "bds_hdg_deg",
+}
+
 
 # ---------------------------------------------------------------------------
 # Traffic guard
@@ -116,11 +138,35 @@ def aircraft_list(
 
 
 # ---------------------------------------------------------------------------
-# Command 2 — download  (script 02)
+# Command 2 — download  (script 02 → v3 étape 0)
 # ---------------------------------------------------------------------------
 
 
-def download(
+def _rename_to_v3(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
+    """Rename raw OpenSky columns to v3 ``raw_*`` / ``bds_*`` convention.
+
+    Args:
+        df: DataFrame with original OpenSky column names.
+        batch_date: Batch date string (YYYYMMDD) for partitioning.
+
+    Returns:
+        DataFrame with ``raw_*`` / ``bds_*`` columns and ``meta_batch_date``.
+    """
+    import polars as pl
+
+    rename_map = {
+        old: new for old, new in {**_RAW_RENAME, **_BDS_RENAME}.items() if old in df.columns
+    }
+    df = df.rename(rename_map)
+
+    # Keep only raw_*, bds_* columns
+    keep = [c for c in df.columns if c.startswith(("raw_", "bds_"))]
+    df = df.select(keep)
+
+    return df.with_columns(pl.lit(batch_date).alias("meta_batch_date"))
+
+
+def download(  # noqa: PLR0912, PLR0915
     *,
     config: Path,
     start_date: str,
@@ -128,7 +174,12 @@ def download(
     step_hours: int = 24,
     dry_run: bool = False,
 ) -> None:
-    """Download ADS-B history data from OpenSky by date range.
+    """Download ADS-B history and EHS data, write to Delta Table.
+
+    Fetches ADS-B history and Extended Mode-S (EHS) data from OpenSky,
+    decodes BDS parameters, renames columns to the v3 ``raw_*`` / ``bds_*``
+    convention, and writes the result to a Delta Table partitioned by
+    ``meta_batch_date``.
 
     Args:
         config: Path to the YAML config file.
@@ -156,14 +207,17 @@ def download(
     )
 
     if dry_run:
-        log.info("download_dry_run", msg="Config valid, would download data")
+        log.info("download_dry_run", msg="Config valid, would download to Delta table")
         return
 
     import polars as pl
+    from node_fdm_data.delta import write_columns
 
     _require_traffic()
+    from traffic.core import Traffic
     from traffic.data import opensky
 
+    delta_table = cfg.paths.resolve("delta_table")
     download_dir = cfg.paths.resolve("download_dir")
     download_dir.mkdir(parents=True, exist_ok=True)
 
@@ -173,30 +227,59 @@ def download(
     end = datetime.strptime(end_date, "%Y-%m-%d")
     step = timedelta(hours=step_hours)
 
+    all_frames: list[pl.DataFrame] = []
+
     current = start
     while current < end:
         date_str = current.strftime("%Y%m%d")
         next_day = current + timedelta(hours=24)
 
-        for kind, fetcher in [
-            ("history", lambda s, e: opensky.history(s, e, icao24=icao24_list)),
-            ("flightlist", lambda s, e: opensky.flightlist(s, e, icao24=icao24_list)),
-            ("extended", lambda s, e: opensky.extended(s, e, icao24=icao24_list)),
-        ]:
-            path = download_dir / f"{kind}_{date_str}.parquet"
-            if path.exists():
-                log.info("download_skip", kind=kind, date=date_str, reason="exists")
-                continue
+        log.info("download_fetch", date=date_str)
 
-            log.info("download_fetch", kind=kind, date=date_str)
-            result = fetcher(current, next_day)
-            if result is not None:
-                result.to_parquet(path)
-                log.info("download_saved", kind=kind, path=str(path))
+        # Fetch ADS-B history
+        history = opensky.history(current, next_day, icao24=icao24_list)
+        if history is None:
+            log.warning("download_empty", kind="history", date=date_str)
+            current += step
+            continue
+
+        # Fetch raw EHS messages and decode BDS
+        extended = opensky.extended(current, next_day, icao24=icao24_list)
+        if extended is not None:
+            ext_pd = extended.data if hasattr(extended, "data") else extended
+            decoder = _RawEHSDecoder(ext_pd)
+            decoded_flights: list[Flight] = []
+            for flight in history:
+                decoded = decoder(flight)
+                if decoded is not None:
+                    decoded_flights.append(decoded)
+
+            if decoded_flights:
+                merged = Traffic.from_flights(decoded_flights)
+                df = pl.from_pandas(merged.data)
             else:
-                log.warning("download_empty", kind=kind, date=date_str)
+                df = pl.from_pandas(history.data)
+        else:
+            df = pl.from_pandas(history.data)
+
+        # Rename to v3 schema and collect
+        df = _rename_to_v3(df, batch_date=date_str)
+        all_frames.append(df)
+        log.info("download_processed", date=date_str, rows=len(df))
+
+        # Save flightlist for étape 1 (identify)
+        flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
+        if flightlist is not None:
+            fl_path = download_dir / f"flightlist_{date_str}.parquet"
+            if hasattr(flightlist, "to_parquet"):
+                flightlist.to_parquet(fl_path)
 
         current += step
+
+    if all_frames:
+        combined = pl.concat(all_frames, how="diagonal_relaxed")
+        write_columns(combined, delta_table)
+        log.info("download_done", table=str(delta_table), rows=len(combined))
 
 
 # ---------------------------------------------------------------------------
@@ -262,6 +345,76 @@ class _ExtendedDecoder:
             "vrate_inertial",
             "barometric_setting",
             "selected_fms",
+            "target_source",
+            "df",
+            "frame",
+            "onground",
+        ]
+        return _Flight(result.drop(columns=drop_cols, errors="ignore"))
+
+
+class _RawEHSDecoder:
+    """Decode EHS data for download step — no preprocessing filters.
+
+    Unlike :class:`_ExtendedDecoder`, this decoder does **not** filter by
+    flight duration, preserves ``selected_fms`` (needed for
+    ``bds_fms_sel_alt_ft``), and returns the raw flight on decode failure
+    instead of ``None``.
+    """
+
+    def __init__(self, rawdata: object = None) -> None:
+        self.rawdata = rawdata
+
+    def __call__(self, flight: Flight) -> Flight | None:
+        import pandas as pd
+        from traffic.core import Flight as _Flight
+
+        try:
+            decoded = flight.query_ehs(self.rawdata)
+        except Exception:  # noqa: BLE001
+            return flight
+
+        for bds in ("bds40", "bds50", "bds60"):
+            if bds not in decoded.data.columns:
+                return flight
+
+        exp60 = decoded.data["bds60"].apply(pd.Series)
+        exp50 = (
+            decoded.data["bds50"]
+            .apply(pd.Series)
+            .drop(columns=["groundspeed", "track"], errors="ignore")
+        )
+        exp40 = decoded.data["bds40"].apply(pd.Series)
+        result = pd.concat(
+            [
+                decoded.data.drop(columns=["bds40", "bds50", "bds60"]),
+                exp40,
+                exp50,
+                exp60,
+            ],
+            axis=1,
+        )
+        drop_cols = [
+            "metadata",
+            "squawk",
+            "bds20",
+            "bds17",
+            "bds18",
+            "bds19",
+            "bds21",
+            "bds45",
+            "bds10",
+            "bds44",
+            "bds30",
+            0,
+            "bds",
+            "serials",
+            "alert",
+            "spi",
+            "geoaltitude",
+            "vrate_barometric",
+            "vrate_inertial",
+            "barometric_setting",
             "target_source",
             "df",
             "frame",

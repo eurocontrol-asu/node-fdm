@@ -63,7 +63,7 @@ This reference pipeline processes public ADS-B data using the `fdm` CLI.
     ```bash
     fdm download --config config.yaml
     ```
-    * *Output*: `data/downloaded_parquet/`
+    * *Output*: Delta Table at `data/flights.delta` (partitioned by `typecode` and `date`)
 
     **3. Decode & Resample**
     ```bash
