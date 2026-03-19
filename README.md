@@ -89,19 +89,23 @@ fdm download --config config.yaml         # Download ADS-B parquet from OpenSky
 
 # 2. Preprocessing
 fdm preprocess --config config.yaml       # Clean, filter, unit-convert raw data
+fdm identify --config config.yaml         # Segment flights and attach metadata
 
-# 3. Processing (ERA5, segments, lateral)
+# 3. Quality flagging
+fdm flag --config config.yaml             # Add fdm_flag_* validity columns (no rows deleted)
+
+# 4. Processing (ERA5, segments, lateral)
 fdm process --arch opensky --config config.yaml  # Weather + derived columns + lateral augmentation
 
-# 4. Training
+# 5. Training
 fdm train --config config.yaml            # Train Neural ODE model
 
-# 5. Evaluation
+# 6. Evaluation
 fdm predict --config config.yaml          # Run model predictions
 fdm predict-bada --config config.yaml     # BADA 4.2 physical baseline
 fdm evaluate --config config.yaml         # Compute MAE/MAPE per flight phase
 
-# 6. Visualization
+# 7. Visualization
 fdm visualize --config config.yaml        # Overlay plots (GT vs Model vs BADA)
 fdm dataset-stats --config config.yaml    # Coverage statistics
 fdm plot-performance --config config.yaml # Performance comparison plots
@@ -152,6 +156,7 @@ node-fdm-v2/
 │   │   ├── lateral             # Lateral computations (bearing, turning points)
 │   │   ├── schemas/            # OpenSky, OpenSky V2, QAR column definitions
 │   │   ├── preprocessing/      # Architecture-specific pipelines
+│   │   │   └── flags           # compute_flags / FlagConfig — validity flag columns
 │   │   ├── processor           # FlightProcessor (configurable pipeline)
 │   │   └── split               # Train/val/test by ICAO group
 │   ├── node-fdm/               # Neural ODE models (PyTorch)
@@ -167,7 +172,7 @@ node-fdm-v2/
 │   │   ├── aircraft_mapping    # ICAO → BADA 4.2 identifier (68 types)
 │   │   └── predictor           # pyBADA TCL wrapper
 │   └── node-fdm-pipeline/      # CLI + config + resolver
-│       ├── commands/           # fdm CLI commands (data, train, predict, ...)
+│       ├── commands/           # fdm CLI commands (data incl. flag, train, predict, ...)
 │       ├── config              # PipelineConfig (Pydantic, YAML)
 │       └── resolver            # Architecture dispatcher
 ├── scripts/                    # Development utilities (e.g. validate_01_acquisition.py — acquisition QA)
