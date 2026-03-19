@@ -34,6 +34,7 @@ fdm evaluate --arch opensky --config config.yaml
 | `fdm predict-bada` | BADA 4.2 baseline predictions | Placeholder (AXM-363) |
 | `fdm evaluate` | Compute error metrics by phase | Placeholder (AXM-363) |
 | `fdm process` | Process flight data + split | Placeholder (AXM-362) |
+| `fdm split` | Assign train/val/test split column (`meta_split`) by ICAO group | ✅ Implemented |
 | `fdm dataset-stats` | Dataset split statistics | Placeholder (AXM-364) |
 | `fdm visualize` | Prediction comparison plots | Placeholder (AXM-364) |
 | `fdm version` | Print version | ✅ Implemented |

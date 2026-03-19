@@ -93,9 +93,9 @@ result = processor.process(raw_df)
 ```python
 from node_fdm_data.split import split_by_icao
 
-split_df = split_by_icao("data/opensky/", ratios=(0.7, 0.15, 0.15), seed=42)
-# DataFrame with columns: [file, icao, split]
-# split ∈ {"train", "val", "test"} — deterministic by ICAO group
+split_df = split_by_icao(df, ratios=(0.7, 0.15, 0.15), seed=42)
+# Returns the input DataFrame with an added `meta_split` column.
+# meta_split ∈ {"train", "val", "test"} — deterministic by raw_icao24 hash
 ```
 
 ## Development

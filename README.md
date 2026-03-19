@@ -97,6 +97,9 @@ fdm flag --config config.yaml             # Add fdm_flag_* validity columns (no 
 # 4. Processing (ERA5, segments, lateral)
 fdm process --arch opensky --config config.yaml  # Weather + derived columns + lateral augmentation
 
+# 4b. Split dataset by ICAO group
+fdm split --config config.yaml                   # Assign train/val/test split column (meta_split)
+
 # 5. Training
 fdm train --config config.yaml            # Train Neural ODE model
 
@@ -201,7 +204,7 @@ from node_fdm.trainer import ODETrainer, TrainingConfig
 from node_fdm_data.split import split_by_icao
 
 # 1. Split flights by ICAO type
-split_df = split_by_icao("data/opensky/", ratios=(0.7, 0.15, 0.15), seed=42)
+split_df = split_by_icao(df, ratios=(0.7, 0.15, 0.15), seed=42)
 
 # 2. Load architecture spec
 spec = get("opensky_2025")
