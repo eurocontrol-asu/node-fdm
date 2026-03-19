@@ -177,8 +177,9 @@ def build_selected_params(
     """Build selected-parameter columns from segment detection.
 
     Analyses Mach, CAS, vertical rate, gamma (optional), and
-    altitude (optional) to produce ``mach_sel``, ``cas_sel``,
-    ``vz_sel``, ``gamma_sel``, ``selected_mcp`` columns.
+    altitude (optional) to produce ``fdm_mach_sel``, ``fdm_cas_sel_kt``,
+    ``fdm_vz_sel_ftmin``, ``fdm_gamma_sel_rad``, ``fdm_alt_sel_ft``
+    columns.
 
     Args:
         df: Single-flight DataFrame (sorted by time).
@@ -191,11 +192,11 @@ def build_selected_params(
         DataFrame with selected-parameter columns added.
     """
     # --- Altitude array (shared across detectors) ---
-    alt_col = "altitude_ft" if "altitude_ft" in df.columns else "altitude"
+    alt_col = "raw_alt_ft" if "raw_alt_ft" in df.columns else "altitude"
     alt_arr = df[alt_col].to_numpy()
 
     # --- Mach selected ---
-    mach_col = "mach" if "mach" in df.columns else "Mach"
+    mach_col = "era_mach" if "era_mach" in df.columns else "Mach"
     if mach_col in df.columns:
         mach_cfg = config.get("mach", {})
         mach_segs = detect_constant_segments(
@@ -203,12 +204,12 @@ def build_selected_params(
             alt_values=alt_arr,
             **mach_cfg,
         )
-        df = add_segment_column(df, mach_segs, "mach_sel")
+        df = add_segment_column(df, mach_segs, "fdm_mach_sel")
     else:
         mach_segs = []
 
     # --- CAS selected (mask Mach-constant regions first) ---
-    cas_col = "cas_sel_kt" if "cas_sel_kt" in df.columns else "CAS"
+    cas_col = "bds_ias_kt" if "bds_ias_kt" in df.columns else "CAS"
     if cas_col in df.columns:
         cas_arr = df[cas_col].to_numpy().copy()
         # Null out CAS in Mach-constant regions
@@ -216,28 +217,28 @@ def build_selected_params(
             cas_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
         cas_cfg = config.get("cas", {})
         cas_segs = detect_constant_segments(cas_arr, **cas_cfg)
-        df = add_segment_column(df, cas_segs, "cas_sel")
+        df = add_segment_column(df, cas_segs, "fdm_cas_sel_kt")
 
     # --- Vz selected ---
-    vz_col = "vz_sel_ftmin" if "vz_sel_ftmin" in df.columns else "vertical_rate"
+    vz_col = "raw_vz_ftmin" if "raw_vz_ftmin" in df.columns else "vertical_rate"
     if vz_col in df.columns:
         vz_cfg = config.get("vz", {})
         vz_segs = detect_constant_segments(
             df[vz_col].to_numpy(),
             **vz_cfg,
         )
-        df = add_segment_column(df, vz_segs, "vz_sel")
+        df = add_segment_column(df, vz_segs, "fdm_vz_sel_ftmin")
     else:
         vz_segs = []
 
     # --- Gamma selected (optional, mask Vz-constant regions) ---
     gamma_cfg = config.get("gamma")
-    if gamma_cfg is not None and "gamma_air" in df.columns:
-        gamma_arr = df["gamma_air"].to_numpy().copy()
+    if gamma_cfg is not None and "fdm_gamma_rad" in df.columns:
+        gamma_arr = df["fdm_gamma_rad"].to_numpy().copy()
         for seg in vz_segs:
             gamma_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
         gamma_segs = detect_constant_segments(gamma_arr, **gamma_cfg)
-        df = add_segment_column(df, gamma_segs, "gamma_sel")
+        df = add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
 
     # --- Altitude selected (optional, backfill) ---
     alt_cfg = config.get("alt")
@@ -246,19 +247,23 @@ def build_selected_params(
             alt_arr,
             **alt_cfg,
         )
-        df = add_segment_column(df, alt_segs, "selected_mcp")
+        df = add_segment_column(df, alt_segs, "fdm_alt_sel_ft")
         # Backfill: last point inherits actual altitude, then bfill
-        mcp = df["selected_mcp"].to_list()
+        mcp = df["fdm_alt_sel_ft"].to_list()
         mcp[-1] = float(alt_arr[-1])
         # Backward fill
         for i in range(len(mcp) - 2, -1, -1):
             if np.isnan(mcp[i]):
                 mcp[i] = mcp[i + 1]
-        df = df.with_columns(pl.Series("selected_mcp", mcp))
+        df = df.with_columns(pl.Series("fdm_mcp_alt_sel_ft", mcp))
 
     # --- Fill NaN with 0.0 for segment-detected columns (legacy parity) ---
     # Non-segment timesteps → 0.0 means "no active selection" for the model.
-    sel_cols = [c for c in ("mach_sel", "cas_sel", "vz_sel", "gamma_sel") if c in df.columns]
+    sel_cols = [
+        c
+        for c in ("fdm_mach_sel", "fdm_cas_sel_kt", "fdm_vz_sel_ftmin", "fdm_gamma_sel_rad")
+        if c in df.columns
+    ]
     if sel_cols:
         df = df.with_columns(pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols)
 

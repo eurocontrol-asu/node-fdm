@@ -21,28 +21,28 @@ class TestOpenSkyPreprocessing:
         """Minimal OpenSky flight dataframe."""
         return pl.LazyFrame(
             {
-                "altitude_ft": [5000.0, 10000.0, 15000.0, 20000.0, 25000.0],
-                "alt_sel_ft": [10000.0, 15000.0, 20000.0, 25000.0, 30000.0],
-                "vz_sel_ftmin": [None, 500.0, None, 1000.0, 500.0],
-                "mach": [0.5, None, 0.6, None, 0.7],
-                "cas_sel_kt": [None, None, 200.0, 250.0, 300.0],
+                "raw_alt_ft": [5000.0, 10000.0, 15000.0, 20000.0, 25000.0],
+                "bds_mcp_sel_alt_ft": [10000.0, 15000.0, 20000.0, 25000.0, 30000.0],
+                "raw_vz_ftmin": [None, 500.0, None, 1000.0, 500.0],
+                "era_mach": [0.5, None, 0.6, None, 0.7],
+                "bds_ias_kt": [None, None, 200.0, 250.0, 300.0],
                 "distance_m": [0.0, 500.0, 1200.0, 2000.0, 2800.0],
             }
         )
 
     def test_flight_processing_alt_diff(self, opensky_df: pl.LazyFrame) -> None:
-        """flight_processing adds alt_diff_ft = alt_sel_ft - altitude_ft."""
+        """flight_processing adds fdm_alt_diff_ft = bds_mcp_sel_alt_ft - raw_alt_ft."""
         result = flight_processing(opensky_df).collect()
-        assert "alt_diff_ft" in result.columns
+        assert "fdm_alt_diff_ft" in result.columns
         expected = [5000.0, 5000.0, 5000.0, 5000.0, 5000.0]
-        assert result["alt_diff_ft"].to_list() == expected
+        assert result["fdm_alt_diff_ft"].to_list() == expected
 
     def test_flight_processing_fills_nan(self, opensky_df: pl.LazyFrame) -> None:
         """NaN values in control columns are filled with 0."""
         result = flight_processing(opensky_df).collect()
-        assert result["vz_sel_ftmin"].null_count() == 0
-        assert result["mach"].null_count() == 0
-        assert result["cas_sel_kt"].null_count() == 0
+        assert result["raw_vz_ftmin"].null_count() == 0
+        assert result["era_mach"].null_count() == 0
+        assert result["bds_ias_kt"].null_count() == 0
 
     def test_segment_filtering_valid(self) -> None:
         """Valid segment with diffs within thresholds returns True."""
@@ -79,23 +79,23 @@ class TestOpenSkyPreprocessing:
         assert LOW_THR == 200
         assert UPPER_THR == 3000
 
-    def test_flight_processing_gamma_air(self) -> None:
-        """gamma_air = arcsin(vz / TAS) is computed when both columns exist."""
+    def test_flight_processing_gamma_rad(self) -> None:
+        """fdm_gamma_rad = arcsin(vz / TAS) is computed when both columns exist."""
         import numpy as np
 
         df = pl.LazyFrame(
             {
-                "altitude_ft": [35000.0],
-                "alt_sel_ft": [36000.0],
-                "tas_kt": [450.0],
-                "vz_sel_ftmin": [1000.0],
-                "mach_sel": [0.82],
-                "cas_sel_kt": [280.0],
+                "raw_alt_ft": [35000.0],
+                "bds_mcp_sel_alt_ft": [36000.0],
+                "era_tas_kt": [450.0],
+                "raw_vz_ftmin": [1000.0],
+                "fdm_mach_sel": [0.82],
+                "bds_ias_kt": [280.0],
             }
         )
         result = flight_processing(df).collect()
-        assert "gamma_air" in result.columns
-        gamma = result["gamma_air"][0]
+        assert "fdm_gamma_rad" in result.columns
+        gamma = result["fdm_gamma_rad"][0]
         # Manual: vz_ms = 1000 * FTMIN, tas_ms = 450 * KT
         from node_fdm_data.physics.constants import FTMIN, KT
 
@@ -103,21 +103,21 @@ class TestOpenSkyPreprocessing:
         assert abs(gamma - expected) < 1e-6
 
     def test_flight_processing_long_wind(self) -> None:
-        """long_wind = TAS - GS computed when both columns exist."""
+        """fdm_long_wind_kt = TAS - GS computed when both columns exist."""
         df = pl.LazyFrame(
             {
-                "altitude_ft": [35000.0],
-                "alt_sel_ft": [36000.0],
-                "tas_kt": [450.0],
-                "gs_kt": [430.0],
-                "vz_sel_ftmin": [0.0],
-                "mach_sel": [0.82],
-                "cas_sel_kt": [280.0],
+                "raw_alt_ft": [35000.0],
+                "bds_mcp_sel_alt_ft": [36000.0],
+                "era_tas_kt": [450.0],
+                "raw_gs_kt": [430.0],
+                "raw_vz_ftmin": [0.0],
+                "fdm_mach_sel": [0.82],
+                "bds_ias_kt": [280.0],
             }
         )
         result = flight_processing(df).collect()
-        assert "long_wind" in result.columns
-        assert result["long_wind"][0] == pytest.approx(20.0)
+        assert "fdm_long_wind_kt" in result.columns
+        assert result["fdm_long_wind_kt"][0] == pytest.approx(20.0)
 
     def test_flight_processing_with_traffic_names(self) -> None:
         """Columns with pre-rename names (altitude, TAS, etc) get renamed."""
@@ -134,16 +134,16 @@ class TestOpenSkyPreprocessing:
         )
         result = flight_processing(df).collect()
         # Check renamed columns exist
-        assert "altitude_ft" in result.columns
-        assert "alt_sel_ft" in result.columns
-        assert "vz_sel_ftmin" in result.columns
-        assert "alt_diff_ft" in result.columns
-        # Mach → mach (not mach_sel)
-        assert "mach" in result.columns
-        assert "mach_sel" not in result.columns
+        assert "raw_alt_ft" in result.columns
+        assert "bds_mcp_sel_alt_ft" in result.columns
+        assert "raw_vz_ftmin" in result.columns
+        assert "fdm_alt_diff_ft" in result.columns
+        # Mach → era_mach (not fdm_mach_sel)
+        assert "era_mach" in result.columns
+        assert "fdm_mach_sel" not in result.columns
 
     def test_mach_column_preserved_after_rename(self) -> None:
-        """Mach is renamed to 'mach' (continuous), not consumed into 'mach_sel'."""
+        """Mach is renamed to 'era_mach' (continuous), not consumed into 'fdm_mach_sel'."""
         df = pl.LazyFrame(
             {
                 "altitude": [35000.0, 35000.0],
@@ -156,8 +156,8 @@ class TestOpenSkyPreprocessing:
             }
         )
         result = flight_processing(df).collect()
-        assert "mach" in result.columns
-        assert result["mach"].to_list() == [0.78, 0.80]
+        assert "era_mach" in result.columns
+        assert result["era_mach"].to_list() == [0.78, 0.80]
 
     def test_segment_filtering_empty_segment(self) -> None:
         """Segment of length 1 (empty diffs) returns False."""
@@ -306,14 +306,17 @@ class TestTrainingPreprocessingSI:
         """Flight DataFrame with raw units (ft, kt, ft/min, °C, NM)."""
         return pl.DataFrame(
             {
-                "altitude_ft": [10000.0, 20000.0, 35000.0],
-                "alt_sel_ft": [15000.0, 25000.0, 36000.0],
+                "altitude": [10000.0, 20000.0, 35000.0],
+                "selected_mcp": [15000.0, 25000.0, 36000.0],
                 "TAS": [250.0, 350.0, 450.0],
                 "groundspeed": [240.0, 340.0, 430.0],
                 "vertical_rate": [1000.0, 500.0, 0.0],
                 "Mach": [0.5, 0.7, 0.82],
                 "IAS": [200.0, 250.0, 280.0],
-                "mach_sel": [0.5, 0.7, 0.82],  # from build_selected_params
+                "fdm_mach_sel": [0.5, 0.7, 0.82],  # from build_selected_params
+                "fdm_cas_sel_kt": [200.0, 250.0, 280.0],
+                "fdm_vz_sel_ftmin": [1000.0, 500.0, 0.0],
+                "fdm_mcp_alt_sel_ft": [15000.0, 25000.0, 36000.0],
                 "temperature": [-10.0, -30.0, -50.0],
                 "adep_dist": [0.0, 50.0, 100.0],
                 "ades_dist": [200.0, 150.0, 100.0],
@@ -322,78 +325,79 @@ class TestTrainingPreprocessingSI:
         )
 
     def test_altitude_ft_to_m(self, flight_df: pl.DataFrame) -> None:
-        """altitude_ft -> altitude_m via ft_to_m (x 0.3048)."""
+        """raw_alt_ft -> raw_alt_m via ft_to_m (x 0.3048)."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "altitude_m" in result.columns
-        assert result["altitude_m"][0] == pytest.approx(10000.0 * 0.3048)
-        assert result["altitude_m"][2] == pytest.approx(35000.0 * 0.3048)
+        assert "raw_alt_m" in result.columns
+        assert result["raw_alt_m"][0] == pytest.approx(10000.0 * 0.3048)
+        assert result["raw_alt_m"][2] == pytest.approx(35000.0 * 0.3048)
 
     def test_tas_kt_to_ms(self, flight_df: pl.DataFrame) -> None:
-        """TAS (kt) -> tas_ms via kt_to_ms (x 0.514444)."""
+        """era_tas_kt -> era_tas_ms via kt_to_ms (x 0.514444)."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "tas_ms" in result.columns
-        assert result["tas_ms"][2] == pytest.approx(450.0 * 0.514444, rel=1e-4)
+        assert "era_tas_ms" in result.columns
+        assert result["era_tas_ms"][2] == pytest.approx(450.0 * 0.514444, rel=1e-4)
 
     def test_temperature_c_to_k(self, flight_df: pl.DataFrame) -> None:
-        """temperature (°C) → temperature_K via celsius_to_kelvin (+ 273.15)."""
+        """temperature → era_temp_K (identity, already Kelvin in ERA5)."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "temperature_K" in result.columns
-        assert result["temperature_K"][0] == pytest.approx(263.15)
-        assert result["temperature_K"][2] == pytest.approx(223.15)
+        assert "era_temp_K" in result.columns
+        # temperature column is passed through as-is (identity conversion)
+        assert result["era_temp_K"][0] == pytest.approx(-10.0)
+        assert result["era_temp_K"][2] == pytest.approx(-50.0)
 
     def test_vz_derivative_si(self, flight_df: pl.DataFrame) -> None:
-        """vz_ms is diff of altitude_m (SI derivative) with backward fill."""
+        """fdm_d_vz_ms is diff of raw_alt_m (SI derivative) with backward fill."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "vz_ms" in result.columns
+        assert "fdm_d_vz_ms" in result.columns
         # First row: backward_fill propagates second row value
-        assert result["vz_ms"][0] == pytest.approx(10000.0 * 0.3048)
+        assert result["fdm_d_vz_ms"][0] == pytest.approx(10000.0 * 0.3048)
         # Second row: (20000 - 10000) * 0.3048 = 3048.0
-        assert result["vz_ms"][1] == pytest.approx(10000.0 * 0.3048)
+        assert result["fdm_d_vz_ms"][1] == pytest.approx(10000.0 * 0.3048)
 
     def test_d_gamma_rads_derivative(self, flight_df: pl.DataFrame) -> None:
-        """d_gamma_rads is diff of gamma_rad with backward fill."""
+        """fdm_d_gamma_rads is diff of fdm_gamma_rad with backward fill."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "d_gamma_rads" in result.columns
+        assert "fdm_d_gamma_rads" in result.columns
         # First row = second row (backward fill), not 0.0
-        assert result["d_gamma_rads"][0] == pytest.approx(result["d_gamma_rads"][1])
+        assert result["fdm_d_gamma_rads"][0] == pytest.approx(result["fdm_d_gamma_rads"][1])
 
     def test_d_tas_ms_derivative(self, flight_df: pl.DataFrame) -> None:
-        """d_tas_ms is diff of tas_ms with backward fill."""
+        """fdm_d_tas_ms is diff of era_tas_ms with backward fill."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "d_tas_ms" in result.columns
+        assert "fdm_d_tas_ms" in result.columns
         # First row = backward fill of second row diff
-        assert result["d_tas_ms"][0] == pytest.approx(100.0 * 0.514444, rel=1e-4)
+        assert result["fdm_d_tas_ms"][0] == pytest.approx(100.0 * 0.514444, rel=1e-4)
         # 100 kt difference = 100 * 0.514444 m/s
-        assert result["d_tas_ms"][1] == pytest.approx(100.0 * 0.514444, rel=1e-4)
+        assert result["fdm_d_tas_ms"][1] == pytest.approx(100.0 * 0.514444, rel=1e-4)
 
     def test_distance_nm_to_m(self, flight_df: pl.DataFrame) -> None:
-        """adep_dist (NM) -> adep_dist_m via nm_to_m (x 1852)."""
+        """adep_dist (NM) -> fdm_adep_dist_m via nm_to_m (x 1852)."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "adep_dist_m" in result.columns
-        assert result["adep_dist_m"][1] == pytest.approx(50.0 * 1852.0)
+        assert "fdm_adep_dist_m" in result.columns
+        assert result["fdm_adep_dist_m"][1] == pytest.approx(50.0 * 1852.0)
 
     def test_gamma_rad_unchanged(self, flight_df: pl.DataFrame) -> None:
-        """gamma_air (already radians) is only renamed to gamma_rad, not scaled."""
+        """fdm_gamma_rad (already radians) is produced by flight_processing, not scaled."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(flight_df)
-        assert "gamma_rad" in result.columns
-        # gamma_air was computed from vz and TAS — check it's in valid range
-        gamma = result["gamma_rad"][0]
+        assert "fdm_gamma_rad" in result.columns
+        # fdm_gamma_rad was computed from vz and TAS — check it's in valid range
+        gamma = result["fdm_gamma_rad"][0]
         assert -1.57 < gamma < 1.57  # within ±π/2
 
     def test_derivative_backward_fill_not_zero(self, flight_df: pl.DataFrame) -> None:
@@ -402,7 +406,7 @@ class TestTrainingPreprocessingSI:
 
         result = training_preprocessing(flight_df)
         # With backward_fill, first row should equal second row for all derivatives
-        for col in ("vz_ms", "d_gamma_rads", "d_tas_ms"):
+        for col in ("fdm_d_vz_ms", "fdm_d_gamma_rads", "fdm_d_tas_ms"):
             assert result[col][0] != 0.0, f"{col} first row should not be zero"
             assert result[col][0] == pytest.approx(
                 result[col][1]

@@ -202,11 +202,11 @@ class TestBuildSelectedParams:
 
         df = pl.DataFrame(
             {
-                "altitude_ft": alt,
-                "Mach": mach + rng.normal(0, 0.0001, n),
+                "raw_alt_ft": alt,
+                "era_mach": mach + rng.normal(0, 0.0001, n),
                 "CAS": cas + rng.normal(0, 0.1, n),
-                "vertical_rate": vz + rng.normal(0, 1, n),
-                "gamma_air": gamma,
+                "raw_vz_ftmin": vz + rng.normal(0, 1, n),
+                "fdm_gamma_rad": gamma,
             }
         )
 
@@ -252,28 +252,28 @@ class TestBuildSelectedParams:
 
         result = build_selected_params(df, config)
 
-        assert "mach_sel" in result.columns
-        assert "cas_sel" in result.columns
-        assert "vz_sel" in result.columns
-        assert "gamma_sel" in result.columns
-        assert "selected_mcp" in result.columns
+        assert "fdm_mach_sel" in result.columns
+        assert "fdm_cas_sel_kt" in result.columns
+        assert "fdm_vz_sel_ftmin" in result.columns
+        assert "fdm_gamma_sel_rad" in result.columns
+        assert "fdm_mcp_alt_sel_ft" in result.columns
         assert len(result) == n
 
     def test_missing_columns_handled(self) -> None:
         """Missing optional columns are gracefully skipped."""
         df = pl.DataFrame(
             {
-                "altitude_ft": np.full(50, 30000.0),
-                "Mach": np.full(50, 0.78),
+                "raw_alt_ft": np.full(50, 30000.0),
+                "era_mach": np.full(50, 0.78),
             }
         )
         config = {"mach": {"tol": 0.001, "min_len": 10, "alt_threshold": 15000, "use_alt": True}}
         result = build_selected_params(df, config)
-        assert "mach_sel" in result.columns
-        assert "cas_sel" not in result.columns  # CAS column not provided
+        assert "fdm_mach_sel" in result.columns
+        assert "fdm_cas_sel_kt" not in result.columns  # CAS column not provided
 
     def test_mach_and_mach_sel_coexist(self) -> None:
-        """After flight_processing + build_selected_params, both mach and mach_sel exist."""
+        """Both era_mach and fdm_mach_sel exist after full pipeline."""
         from node_fdm_data.preprocessing.opensky import flight_processing
 
         n = 200
@@ -304,12 +304,12 @@ class TestBuildSelectedParams:
             }
         )
 
-        # Step 1: flight_processing renames Mach → mach
+        # Step 1: flight_processing renames Mach → era_mach
         df = flight_processing(df.lazy()).collect()
-        assert "mach" in df.columns
-        assert "mach_sel" not in df.columns  # not yet created
+        assert "era_mach" in df.columns
+        assert "fdm_mach_sel" not in df.columns  # not yet created
 
-        # Step 2: build_selected_params creates mach_sel from mach
+        # Step 2: build_selected_params creates fdm_mach_sel from era_mach
         config = {
             "mach": {
                 "tol": 0.001,
@@ -331,11 +331,11 @@ class TestBuildSelectedParams:
         df = build_selected_params(df, config)
 
         # Both columns exist
-        assert "mach" in df.columns, "continuous mach column missing"
-        assert "mach_sel" in df.columns, "segment-detected mach_sel column missing"
+        assert "era_mach" in df.columns, "continuous era_mach column missing"
+        assert "fdm_mach_sel" in df.columns, "segment-detected fdm_mach_sel column missing"
 
-        # mach is continuous (no NaN), mach_sel has 0.0 outside segments
-        assert df["mach"].null_count() == 0
-        mach_sel_zeros = (df["mach_sel"] == 0.0).sum()
-        assert mach_sel_zeros > 0, "mach_sel should have 0.0 gaps outside segments"
-        assert df["mach_sel"].is_nan().sum() == 0, "mach_sel should have no NaN after fill"
+        # era_mach is continuous (no NaN), fdm_mach_sel has 0.0 outside segments
+        assert df["era_mach"].null_count() == 0
+        mach_sel_zeros = (df["fdm_mach_sel"] == 0.0).sum()
+        assert mach_sel_zeros > 0, "fdm_mach_sel should have 0.0 gaps outside segments"
+        assert df["fdm_mach_sel"].is_nan().sum() == 0, "fdm_mach_sel should have no NaN after fill"

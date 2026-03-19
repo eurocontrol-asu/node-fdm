@@ -161,9 +161,9 @@ typecodes:
 
         # Verify output has the new derived columns
         result = pl.read_parquet(output)
-        assert "gamma_air" in result.columns
-        assert "long_wind" in result.columns
-        assert "mach_sel" in result.columns
+        assert "fdm_gamma_rad" in result.columns
+        assert "fdm_long_wind_kt" in result.columns
+        assert "fdm_mach_sel" in result.columns
         assert "distance_along_track_m" in result.columns
         # Verify lateral augmentation columns
         assert "track_ortho" in result.columns
@@ -571,7 +571,7 @@ typecodes:
         assert len(result) <= n - n_nulls
         assert len(result) > 0
         # No NaN in mach or distance columns
-        assert result["mach"].is_nan().sum() == 0
+        assert result["era_mach"].is_nan().sum() == 0
         assert result["distance_along_track_m"].is_nan().sum() == 0
 
     def test_process_filters_mach_outliers(self, tmp_path: Path, mocker: Any) -> None:
@@ -659,7 +659,7 @@ typecodes:
 
         result = pl.read_parquet(output)
         # All Mach values must be ≤ 1.05 — outlier rows filtered
-        mach_max: float | None = result["mach"].cast(pl.Float64).max()  # type: ignore[assignment]
+        mach_max: float | None = result["era_mach"].cast(pl.Float64).max()  # type: ignore[assignment]
         assert mach_max is not None and mach_max <= 1.05
         assert len(result) > 0
 

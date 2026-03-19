@@ -66,13 +66,13 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
 
     # --- Rename traffic → schema (skip if already renamed) ---
     col_rename: dict[str, str] = {
-        "altitude": "altitude_ft",
-        "selected_mcp": "alt_sel_ft",
-        "vertical_rate": "vz_sel_ftmin",
-        "Mach": "mach",
-        "IAS": "cas_sel_kt",
-        "TAS": "tas_kt",
-        "groundspeed": "gs_kt",
+        "altitude": "raw_alt_ft",
+        "selected_mcp": "bds_mcp_sel_alt_ft",
+        "vertical_rate": "raw_vz_ftmin",
+        "Mach": "era_mach",
+        "IAS": "bds_ias_kt",
+        "TAS": "era_tas_kt",
+        "groundspeed": "raw_gs_kt",
     }
     schema = df.collect_schema()
     rename = {k: v for k, v in col_rename.items() if k in schema and v not in schema}
@@ -85,33 +85,33 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
     # --- Derived columns ---
     exprs: list[pl.Expr] = []
 
-    # alt_diff_ft
-    if "alt_sel_ft" in schema and "altitude_ft" in schema:
+    # fdm_alt_diff_ft
+    if "bds_mcp_sel_alt_ft" in schema and "raw_alt_ft" in schema:
         exprs.append(
-            (pl.col("alt_sel_ft") - pl.col("altitude_ft")).alias("alt_diff_ft"),
+            (pl.col("bds_mcp_sel_alt_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
         )
 
-    # gamma_air = arcsin(vz[ft/min] * FTMIN / (TAS[kt] * KT))
-    tas_col = "tas_kt" if "tas_kt" in schema else "TAS"
-    vz_col = "vz_sel_ftmin" if "vz_sel_ftmin" in schema else "vertical_rate"
+    # fdm_gamma_rad = arcsin(vz[ft/min] * FTMIN / (TAS[kt] * KT))
+    tas_col = "era_tas_kt" if "era_tas_kt" in schema else "TAS"
+    vz_col = "raw_vz_ftmin" if "raw_vz_ftmin" in schema else "vertical_rate"
     if tas_col in schema and vz_col in schema:
         vz_ms = pl.col(vz_col) * FTMIN  # ft/min → m/s
         tas_ms = pl.col(tas_col) * KT  # kt → m/s
         ratio = (vz_ms / tas_ms.clip(lower_bound=1e-6)).clip(-1.0, 1.0)
-        exprs.append(ratio.arcsin().alias("gamma_air"))
+        exprs.append(ratio.arcsin().alias("fdm_gamma_rad"))
 
-    # long_wind = TAS - GS (knots)
-    gs_col = "gs_kt" if "gs_kt" in schema else "groundspeed"
+    # fdm_long_wind_kt = TAS - GS (knots)
+    gs_col = "raw_gs_kt" if "raw_gs_kt" in schema else "groundspeed"
     if tas_col in schema and gs_col in schema:
         exprs.append(
-            (pl.col(tas_col) - pl.col(gs_col)).alias("long_wind"),
+            (pl.col(tas_col) - pl.col(gs_col)).alias("fdm_long_wind_kt"),
         )
 
     # Fill nulls in control inputs
     fill_cols = {
-        "vz_sel_ftmin": 0.0,
-        "mach": 0.0,
-        "cas_sel_kt": 0.0,
+        "raw_vz_ftmin": 0.0,
+        "era_mach": 0.0,
+        "bds_ias_kt": 0.0,
     }
     for col, val in fill_cols.items():
         if col in schema:
@@ -127,24 +127,27 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
 # SI conversion table: (source_col, conversion_fn, target_col)
 # ---------------------------------------------------------------------------
 _SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
-    ("altitude_ft", ft_to_m, "altitude_m"),
-    ("alt_sel_ft", ft_to_m, "alt_sel_m"),
-    ("tas_kt", kt_to_ms, "tas_ms"),
-    ("cas_sel_kt", kt_to_ms, "cas_sel_ms"),
-    ("gs_kt", kt_to_ms, "gs_ms"),
-    ("long_wind", kt_to_ms, "long_wind_ms"),
-    ("vz_sel_ftmin", ftmin_to_ms, "vz_sel_ms"),
-    ("adep_dist", nm_to_m, "adep_dist_m"),
-    ("ades_dist", nm_to_m, "ades_dist_m"),
+    ("raw_alt_ft", ft_to_m, "raw_alt_m"),
+    ("bds_mcp_sel_alt_ft", ft_to_m, "bds_mcp_sel_alt_m"),
+    ("era_tas_kt", kt_to_ms, "era_tas_ms"),
+    ("bds_ias_kt", kt_to_ms, "bds_ias_ms"),
+    ("raw_gs_kt", kt_to_ms, "raw_gs_ms"),
+    ("fdm_long_wind_kt", kt_to_ms, "fdm_long_wind_ms"),
+    ("raw_vz_ftmin", ftmin_to_ms, "raw_vz_ms"),
+    ("fdm_mcp_alt_sel_ft", ft_to_m, "fdm_mcp_alt_sel_m"),
+    ("fdm_cas_sel_kt", kt_to_ms, "fdm_cas_sel_ms"),
+    ("fdm_vz_sel_ftmin", ftmin_to_ms, "fdm_vz_sel_ms"),
+    ("adep_dist", nm_to_m, "fdm_adep_dist_m"),
+    ("ades_dist", nm_to_m, "fdm_ades_dist_m"),
     # ERA5 temperature is already in Kelvin — just rename, no conversion.
-    ("temperature", lambda col: pl.col(col), "temperature_K"),
+    ("temperature", lambda col: pl.col(col), "era_temp_K"),
 ]
 
 # Derivative table: (source_si_col, target_deriv_col)
 _SI_DERIVATIVES: list[tuple[str, str]] = [
-    ("altitude_m", "vz_ms"),
-    ("gamma_rad", "d_gamma_rads"),
-    ("tas_ms", "d_tas_ms"),
+    ("raw_alt_m", "fdm_d_vz_ms"),
+    ("fdm_gamma_rad", "fdm_d_gamma_rads"),
+    ("era_tas_ms", "fdm_d_tas_ms"),
 ]
 
 
@@ -175,9 +178,9 @@ def training_preprocessing(df: pl.DataFrame) -> pl.DataFrame:
     df = flight_processing(df.lazy()).collect()
 
     # Step 2: rename to schema names (no unit change)
+    # gamma_air is now produced as fdm_gamma_rad by flight_processing — no rename needed
     rename_map: dict[str, str] = {
-        "gamma_air": "gamma_rad",
-        "distance_along_track_m": "distance_m",
+        "distance_along_track_m": "fdm_distance_cum_m",
     }
     rename = {k: v for k, v in rename_map.items() if k in df.columns and v not in df.columns}
     if rename:

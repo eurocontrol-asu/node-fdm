@@ -86,8 +86,8 @@ class TestComputeTas:
         """With zero wind, TAS ≈ groundspeed."""
         df = pl.DataFrame(
             {
-                "groundspeed": [250.0],
-                "track": [90.0],
+                "raw_gs_kt": [250.0],
+                "raw_track_deg": [90.0],
                 "u_component_of_wind": [0.0],
                 "v_component_of_wind": [0.0],
             }
@@ -99,8 +99,8 @@ class TestComputeTas:
         """Headwind reduces TAS vs groundspeed (but here we reconstruct)."""
         df = pl.DataFrame(
             {
-                "groundspeed": [200.0],
-                "track": [0.0],  # heading north
+                "raw_gs_kt": [200.0],
+                "raw_track_deg": [0.0],  # heading north
                 "u_component_of_wind": [0.0],
                 "v_component_of_wind": [-10.0],  # southerly wind (headwind) in m/s
             }

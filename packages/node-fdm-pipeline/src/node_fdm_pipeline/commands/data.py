@@ -503,7 +503,7 @@ def process(  # noqa: PLR0915, PLR0912
     4. Recompute TAS from wind + groundspeed
     5. Recompute Mach / CAS from TAS + altitude + temperature
     6. Per-flight: segment-based selected param estimation
-    7. Derived columns (``gamma_air``, ``long_wind``, distance)
+    7. Derived columns (``fdm_gamma_rad``, ``fdm_long_wind_kt``, distance)
     8. Distance-jump cropping + adep/ades distance validation
     9. Train/val/test split by typecode
 
@@ -655,8 +655,14 @@ def process(  # noqa: PLR0915, PLR0912
 
         log.info("process_era5_done", file=file.name, cols=len(df.columns))
 
-        # Stage 3: Recompute TAS from wind + GS
-        gs_col = "groundspeed" if "groundspeed" in df.columns else "gs_kt"
+        # Stage 3: Preserve BDS TAS/Mach before ERA5 overwrite (AXM-532)
+        if "TAS" in df.columns:
+            df = df.with_columns(pl.col("TAS").alias("bds_tas_kt"))
+        if "Mach" in df.columns:
+            df = df.with_columns(pl.col("Mach").alias("bds_mach"))
+
+        # Stage 4: Recompute TAS from wind + GS (ERA5-derived)
+        gs_col = "groundspeed" if "groundspeed" in df.columns else "raw_gs_kt"
         if "u_component_of_wind" in df.columns and "track" in df.columns:
             df = df.with_columns(
                 compute_tas(gs_col, "track", "u_component_of_wind", "v_component_of_wind").alias(
@@ -664,9 +670,9 @@ def process(  # noqa: PLR0915, PLR0912
                 ),
             )
 
-        # Stage 4: Recompute Mach/CAS from TAS + altitude + temperature
-        tas_col = "TAS" if "TAS" in df.columns else "tas_kt"
-        alt_col = "altitude" if "altitude" in df.columns else "altitude_ft"
+        # Stage 5: Recompute Mach/CAS from TAS + altitude + temperature
+        tas_col = "TAS" if "TAS" in df.columns else "era_tas_kt"
+        alt_col = "altitude" if "altitude" in df.columns else "raw_alt_ft"
         if tas_col in df.columns and "temperature" in df.columns:
             mach_arr, cas_arr = compute_mach_and_cas(
                 df[tas_col].to_numpy(),
@@ -684,13 +690,13 @@ def process(  # noqa: PLR0915, PLR0912
 
         for flight_df in flight_groups:
             try:
-                # Rename + derived columns (gamma_air, long_wind, alt_diff, fill nulls)
-                # Must run BEFORE segment estimation so gamma_air exists for gamma_sel
+                # Rename + derived columns + fill nulls
+                # Must run BEFORE segment estimation (fdm_gamma_rad needed)
                 flight_df = flight_processing(flight_df.lazy()).collect()
 
                 # Filter erroneous ADS-B rows that produce impossible Mach
-                # flight_processing renames "Mach" → "mach"
-                mach_col = "mach" if "mach" in flight_df.columns else "Mach"
+                # flight_processing renames "Mach" → "era_mach"
+                mach_col = "era_mach" if "era_mach" in flight_df.columns else "Mach"
                 if mach_col in flight_df.columns:
                     flight_df = flight_df.filter(pl.col(mach_col) <= MACH_UPPER)
 
@@ -702,7 +708,7 @@ def process(  # noqa: PLR0915, PLR0912
                     flight_df = crop_on_distance_jump(flight_df)
 
                 # Segment-based selected parameter estimation
-                # (runs after flight_processing so gamma_air, vz_sel_ftmin etc. exist)
+                # (runs after flight_processing so fdm_gamma_rad, raw_vz_ftmin etc. exist)
                 flight_df = build_selected_params(flight_df, sel_config)
 
                 # Lateral dynamics augmentation — adds in_turn, track_ortho,

@@ -194,37 +194,50 @@ class TestPredictSIPreprocessing:
 
     @pytest.fixture()
     def sample_flight(self) -> pl.DataFrame:
-        """Raw flight data with non-SI columns, mimicking processed parquet."""
+        """Processed parquet data with schema column names, mimicking pipeline output.
+
+        Reflects the state after ``flight_processing`` + ``build_selected_params``
+        have run (i.e. what is stored in processed_flights/ parquet files).
+        ``training_preprocessing`` then converts these to SI units.
+        """
         n = 20
         return pl.DataFrame(
             {
                 "timestamp": list(range(n)),
                 "latitude": [48.0 + i * 0.01 for i in range(n)],
                 "longitude": [2.0 + i * 0.01 for i in range(n)],
-                "altitude": [35000.0] * n,
-                "selected_mcp": [35000.0] * n,
-                "vertical_rate": [0.0] * n,
-                "Mach": [0.82] * n,
-                "IAS": [280.0] * n,
-                "TAS": [450.0] * n,
-                "groundspeed": [440.0] * n,
+                # Already renamed by flight_processing
+                "raw_alt_ft": [35000.0] * n,
+                "bds_mcp_sel_alt_ft": [35000.0] * n,
+                "raw_vz_ftmin": [0.0] * n,
+                "era_mach": [0.82] * n,
+                "bds_ias_kt": [280.0] * n,
+                "era_tas_kt": [450.0] * n,
+                "raw_gs_kt": [440.0] * n,
                 "track": [90.0] * n,
                 "flight_id": ["F001"] * n,
-                "mach_sel": [0.82] * n,
                 "temperature": [220.0] * n,
                 "adep_dist": [500.0] * n,
                 "ades_dist": [300.0] * n,
                 "distance_along_track_m": [float(i * 1000) for i in range(n)],
+                # Added by build_selected_params (segment detection)
+                "fdm_mach_sel": [0.82] * n,
+                "fdm_cas_sel_kt": [144.0] * n,
+                "fdm_vz_sel_ftmin": [0.0] * n,
+                "fdm_mcp_alt_sel_ft": [35000.0] * n,
+                # Derived columns added by flight_processing
+                "fdm_gamma_rad": [0.0] * n,
+                "fdm_long_wind_kt": [10.0] * n,
             }
         )
 
     def test_predict_produces_si_columns(self, sample_flight: pl.DataFrame) -> None:
-        """Prediction preprocessing outputs SI-unit columns."""
+        """Prediction preprocessing outputs SI-unit columns (new schema names)."""
         from node_fdm_data.preprocessing.opensky import training_preprocessing
 
         result = training_preprocessing(sample_flight)
 
-        si_cols = {"altitude_m", "tas_ms", "gamma_rad", "temperature_K"}
+        si_cols = {"raw_alt_m", "era_tas_ms", "fdm_gamma_rad", "era_temp_K"}
         assert si_cols.issubset(set(result.columns))
 
     def test_predict_preprocessing_matches_training(self, sample_flight: pl.DataFrame) -> None:

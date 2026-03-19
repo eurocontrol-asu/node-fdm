@@ -90,8 +90,8 @@ def compute_mach_and_cas(
 
 
 def compute_tas(
-    gs_col: str = "groundspeed",
-    track_col: str = "track",
+    gs_col: str = "raw_gs_kt",
+    track_col: str = "raw_track_deg",
     u_wind_col: str = "u_component_of_wind",
     v_wind_col: str = "v_component_of_wind",
 ) -> pl.Expr:

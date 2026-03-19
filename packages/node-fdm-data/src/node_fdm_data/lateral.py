@@ -4,7 +4,7 @@ Detects straight-line segments between turning points, then computes
 orthodromic (great-circle) and loxodromic (rhumb-line) reference tracks
 for each segment.  These serve as **lateral control inputs** for the
 flight dynamics model: the Neural ODE learns aircraft response to
-these navigation commands, analogous to how ``mach_sel`` / ``vz_sel``
+these navigation commands, analogous to how ``fdm_mach_sel`` / ``fdm_vz_sel_ftmin``
 serve as longitudinal commands.
 
 Key outputs:
@@ -231,7 +231,7 @@ def augment_lateral(
     Args:
         df: Single-flight eager DataFrame with ``latitude``,
             ``longitude``, ``track``, and optionally ``heading``
-            and a TAS column (``tas_kt`` or ``TAS``).
+            and a TAS column (``era_tas_kt`` or ``TAS``).
         dt: Sampling interval (seconds).
         threshold_deg_per_sec: Turn detection threshold (°/s).
         min_straight_len: Minimum straight segment length (points).
@@ -289,7 +289,7 @@ def augment_lateral(
     # --- Drift angle and lateral wind ---
     hdg_col = "heading" if "heading" in df.columns else None
     tas_col = next(
-        (c for c in ("tas_kt", "TAS") if c in df.columns),
+        (c for c in ("era_tas_kt", "TAS") if c in df.columns),
         None,
     )
 
