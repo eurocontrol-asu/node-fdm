@@ -17,6 +17,7 @@ pip install node-fdm-pipeline[viz]
 ```bash
 fdm --help
 fdm version
+fdm identify --config config.yaml
 fdm train --arch opensky --config config.yaml --typecode A320
 fdm predict --arch opensky --config config.yaml --device cuda:0
 fdm evaluate --arch opensky --config config.yaml
@@ -26,6 +27,7 @@ fdm evaluate --arch opensky --config config.yaml
 
 | Command | Description | Status |
 |---|---|---|
+| `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
 | `fdm train` | Train Neural ODE models | Placeholder (AXM-363) |
 | `fdm predict` | Predict with trained models | Placeholder (AXM-363) |
 | `fdm predict-bada` | BADA 4.2 baseline predictions | Placeholder (AXM-363) |
