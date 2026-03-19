@@ -70,8 +70,8 @@ rho = isa_density(h)     # 0.3836 kg/m³
 ```python
 from node_fdm_data.schemas.opensky import X_COLS, U_COLS, E0_COLS, CONVERSIONS
 
-print(X_COLS)   # ['distance_m', 'altitude_ft', 'gamma_rad', 'tas_kt']
-print(U_COLS)   # ['alt_sel_ft', 'mach_sel', 'cas_sel_kt', 'vz_sel_ftmin']
+print(X_COLS)   # ['fdm_distance_cum_m', 'raw_alt_ft', 'fdm_gamma_rad', 'era_tas_kt']
+print(U_COLS)   # ['fdm_alt_sel_ft', 'fdm_mach_sel', 'fdm_cas_sel_kt', 'fdm_vz_sel_ftmin']
 ```
 
 ### Flight processor pipeline
@@ -82,7 +82,7 @@ from node_fdm_data.processor import FlightProcessor
 from node_fdm_data.conversions import ft_to_m
 
 def add_altitude_m(df: pl.LazyFrame) -> pl.LazyFrame:
-    return df.with_columns(ft_to_m("altitude_ft").alias("altitude_m"))
+    return df.with_columns(ft_to_m("raw_alt_ft").alias("raw_alt_m"))
 
 processor = FlightProcessor([]).add_step(add_altitude_m)
 result = processor.process(raw_df)
