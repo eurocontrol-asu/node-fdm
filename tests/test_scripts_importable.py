@@ -20,31 +20,28 @@ if str(PROJECT_ROOT) not in sys.path:
 
 # Scripts that require optional external packages
 OPTIONAL_DEPS = {
-    "scripts.opensky.01_aircraft_list": "traffic",
-    "scripts.opensky.02_download_data": "traffic",
-    "scripts.opensky.03_preprocess_data": "traffic",
-    "scripts.opensky.11_explore_dataset": "traffic",
-    "scripts.opensky.07_bada_prediction": "pyBADA",
-    "scripts.validate_01_acquisition": "polars",
+    "scripts.bulk_acquisition": "polars",
+    "scripts.create_test_fixtures": "polars",
+    "scripts.generate_golden_outputs": "polars",
+    "scripts.plot_flight_analysis": "altair",
+    "scripts.validate_02_preprocessing": "polars",
+    "scripts.validate_03_processing": "polars",
+    "scripts.validate_04_bis_training_data": "polars",
+    "scripts.validate_05_prediction": "polars",
 }
 
 ALL_SCRIPTS = [
-    "scripts.opensky.01_aircraft_list",
-    "scripts.opensky.02_download_data",
-    "scripts.opensky.03_preprocess_data",
-    "scripts.opensky.04_weather_spd_process_data",
-    "scripts.opensky.05_training",
-    "scripts.opensky.06_flight_prediction",
-    "scripts.opensky.07_bada_prediction",
-    "scripts.opensky.08_visualize_predictions",
-    "scripts.opensky.09_performance_aggregation",
-    "scripts.opensky.10_dataset_stats",
-    "scripts.opensky.11_explore_dataset",
-    "scripts.opensky.12_performance",
-    "scripts.opensky.13_example_flight",
-    "scripts.qar.01_training",
-    "scripts.qar.02_inference",
+    "scripts.bulk_acquisition",
+    "scripts.create_test_fixtures",
+    "scripts.generate_golden_outputs",
+    "scripts.plot_flight_analysis",
+    "scripts.reprocess_with_cache_cleanup",
     "scripts.validate_01_acquisition",
+    "scripts.validate_02_preprocessing",
+    "scripts.validate_03_processing",
+    "scripts.validate_04_bis_training_data",
+    "scripts.validate_04_training",
+    "scripts.validate_05_prediction",
 ]
 
 
@@ -57,7 +54,7 @@ def _has_dependency(dep: str) -> bool:
     return True
 
 
-@pytest.mark.parametrize("module_name", ALL_SCRIPTS)  # type: ignore[misc]
+@pytest.mark.parametrize("module_name", ALL_SCRIPTS)
 def test_script_importable(module_name: str) -> None:
     """Each script can be imported without errors."""
     dep = OPTIONAL_DEPS.get(module_name)
@@ -76,6 +73,7 @@ def test_script_importable(module_name: str) -> None:
             "altair",
             "tqdm",
             "joblib",
+            "polars",
             "click",
             "matplotlib",
         )
