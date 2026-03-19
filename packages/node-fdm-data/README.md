@@ -8,9 +8,9 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 ## Features
 
 - **Unit conversions** — 14 pure Polars expressions (`ft_to_m`, `kt_to_ms`, `celsius_to_kelvin`, `deg_to_rad`, …)
-- **ISA model** — Temperature, pressure, and density as functions of geometric altitude
+- **ISA model** — Temperature, pressure, and density as numpy functions (`isa_temperature`, `isa_pressure`, `isa_density`) plus a Polars expression variant (`isa_pressure_expr`)
 - **Physics constants** — ISA atmosphere parameters, unit conversion factors, QAR discrete-signal lookup tables
-- **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components
+- **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components; Polars expression variants: `haversine_expr`, `compute_mach_expr`, `compute_cas_expr`
 - **Column schemas** — OpenSky 2025 and QAR architectures with typed column lists and conversion registries
 - **Flight processor** — Configurable `FlightProcessor` pipeline with method-chaining API
 - **Preprocessing** — OpenSky (altitude diff, segment filtering) and QAR (Butterworth, smoothing, engine reduction)
