@@ -167,7 +167,7 @@ def _rename_to_v3(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
     return df.with_columns(pl.lit(batch_date).alias("meta_batch_date"))
 
 
-def download(  # noqa: PLR0912, PLR0915
+def download(  # noqa: PLR0915
     *,
     config: Path,
     start_date: str,
@@ -219,10 +219,9 @@ def download(  # noqa: PLR0912, PLR0915
     from traffic.data import opensky
 
     delta_table = cfg.paths.resolve("delta_table")
-    download_dir = cfg.paths.resolve("download_dir")
-    download_dir.mkdir(parents=True, exist_ok=True)
 
-    icao24_list = pl.read_csv(aircraft_csv)["icao24"].to_list()
+    aircraft_db = pl.read_csv(aircraft_csv)
+    icao24_list = aircraft_db["icao24"].to_list()
 
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
@@ -257,7 +256,7 @@ def download(  # noqa: PLR0912, PLR0915
 
             if decoded_flights:
                 merged = Traffic.from_flights(decoded_flights)
-                df = pl.from_pandas(merged.data)
+                df = pl.from_pandas(merged.data)  # type: ignore[union-attr]
             else:
                 df = pl.from_pandas(history.data)
         else:
@@ -265,15 +264,20 @@ def download(  # noqa: PLR0912, PLR0915
 
         # Rename to v3 schema and collect
         df = _rename_to_v3(df, batch_date=date_str)
+
+        # Join flightlist metadata directly into the batch
+        flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
+        df = _join_flightlist_inline(df, flightlist)
+
+        # Fill meta_aircraft_type from aircraft_db (more reliable than flightlist)
+        db_typecode = aircraft_db.select("icao24", "typecode").rename({"typecode": "_db_typecode"})
+        df = df.join(db_typecode, left_on="raw_icao24", right_on="icao24", how="left")
+        df = df.with_columns(
+            pl.coalesce("_db_typecode", "meta_aircraft_type").alias("meta_aircraft_type"),
+        ).drop("_db_typecode")
+
         all_frames.append(df)
         log.info("download_processed", date=date_str, rows=len(df))
-
-        # Save flightlist for étape 1 (identify)
-        flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
-        if flightlist is not None:
-            fl_path = download_dir / f"flightlist_{date_str}.parquet"
-            if hasattr(flightlist, "to_parquet"):
-                flightlist.to_parquet(fl_path)
 
         current += step
 
@@ -333,34 +337,36 @@ def _assign_flight_ids(df: pl.DataFrame, gap_threshold_s: int) -> pl.DataFrame:
     )
 
 
-def _join_flightlist(df: pl.DataFrame, download_dir: Path) -> pl.DataFrame:
-    """Left-join flightlist metadata onto the flight DataFrame.
+def _join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFrame:
+    """Join flightlist metadata directly onto a download batch.
 
-    Reads all ``flightlist_*.parquet`` files from *download_dir*, concatenates
-    them, and joins departure, arrival, and typecode onto *df*.  Missing
-    columns are filled with ``null``.
+    Called during ``download`` to integrate departure, arrival, and typecode
+    columns into the Delta Table in a single pass — no intermediate parquet.
 
     Args:
-        df: DataFrame with _callsign and raw_icao24 columns.
-        download_dir: Directory containing flightlist parquet files.
+        df: Batch DataFrame with ``raw_icao24``, ``raw_callsign`` columns.
+        flightlist: Raw flightlist from ``opensky.flightlist()`` (Traffic or
+            pandas DataFrame), or ``None`` if the API returned nothing.
 
     Returns:
-        DataFrame with meta_departure, meta_arrival, meta_aircraft_type columns.
+        DataFrame with ``meta_departure``, ``meta_arrival``,
+        ``meta_aircraft_type`` columns added.
     """
     import polars as pl
 
-    fl_frames: list[pl.DataFrame] = []
-    if download_dir.exists():
-        for fl_file in sorted(download_dir.glob("flightlist_*.parquet")):
-            fl_frames.append(pl.read_parquet(fl_file))
+    if flightlist is not None:
+        fl_pd = flightlist.data if hasattr(flightlist, "data") else flightlist
+        fl = pl.from_pandas(fl_pd) if not isinstance(fl_pd, pl.DataFrame) else fl_pd
 
-    if fl_frames:
-        fl = pl.concat(fl_frames, how="diagonal_relaxed")
         if len(fl) > 0 and "icao24" in fl.columns:
             if "callsign" in fl.columns:
                 fl = fl.with_columns(
                     pl.col("callsign").fill_null("NOCALL").str.strip_chars().alias("callsign"),
                 )
+            # Normalize raw_callsign for join
+            df = df.with_columns(
+                pl.col("raw_callsign").fill_null("NOCALL").str.strip_chars().alias("_fl_callsign"),
+            )
             fl_cols = [c for c in ("departure", "arrival", "typecode") if c in fl.columns]
             if fl_cols:
                 fl_select = fl.select(["icao24", "callsign", *fl_cols]).unique(
@@ -369,7 +375,7 @@ def _join_flightlist(df: pl.DataFrame, download_dir: Path) -> pl.DataFrame:
                 )
                 df = df.join(
                     fl_select,
-                    left_on=["raw_icao24", "_callsign"],
+                    left_on=["raw_icao24", "_fl_callsign"],
                     right_on=["icao24", "callsign"],
                     how="left",
                 )
@@ -383,6 +389,7 @@ def _join_flightlist(df: pl.DataFrame, download_dir: Path) -> pl.DataFrame:
                     if c in df.columns
                 }
                 df = df.rename(rename)
+            df = df.drop("_fl_callsign")
 
     for col in ("meta_departure", "meta_arrival", "meta_aircraft_type"):
         if col not in df.columns:
@@ -396,12 +403,12 @@ def identify(
     gap_threshold_s: int = 30,
     dry_run: bool = False,
 ) -> None:
-    """Identify flights: segment at gaps, assign flight IDs, join flightlist.
+    """Identify flights: segment at gaps and assign flight IDs.
 
-    Reads the Delta Table produced by ``download``, detects temporal gaps
-    within each (icao24, callsign) group, assigns ``meta_flight_id`` with
-    segment suffixes, and joins flightlist metadata (departure, arrival,
-    aircraft type).
+    Reads the Delta Table produced by ``download`` (which already contains
+    flightlist metadata), detects temporal gaps within each
+    (icao24, callsign) group, and assigns ``meta_flight_id`` with segment
+    suffixes.
 
     Short segments are **not** filtered — they are flagged at étape 2.
 
@@ -424,8 +431,16 @@ def identify(
         return
 
     df = read_delta_table(delta_table)
+
+    # Drop existing identify columns to allow re-identification
+    id_existing = [
+        c for c in df.columns if c in {"meta_original_flight_id", "meta_flight_id", "_callsign"}
+    ]
+    if id_existing:
+        log.info("identify_drop_existing", columns=id_existing)
+        df = df.drop(id_existing)
+
     df = _assign_flight_ids(df, gap_threshold_s)
-    df = _join_flightlist(df, cfg.paths.resolve("download_dir"))
     df = df.drop(["_callsign", "_dt_s", "_seg_global", "_seg_idx"])
 
     write_columns(df, delta_table)
@@ -474,6 +489,13 @@ def flag(
         return
 
     df = read_delta_table(delta_table)
+
+    # Drop existing flag columns to allow re-flagging
+    flag_existing = [c for c in df.columns if c.startswith("fdm_flag_")]
+    if flag_existing:
+        log.info("flag_drop_existing", columns=flag_existing)
+        df = df.drop(flag_existing)
+
     df = compute_flags(
         df,
         min_points=cfg.flag.min_points,
@@ -542,6 +564,13 @@ def enrich(
     arco_grid = ArcoEra5(local_store=str(era5_cache), features=era5_features)
 
     df = read_delta_table(delta_table)
+
+    # Drop existing ERA5 columns to allow re-enrichment
+    era_existing = [c for c in df.columns if c.startswith("era_")]
+    if era_existing:
+        log.info("enrich_drop_existing", columns=era_existing)
+        df = df.drop(era_existing)
+
     df = enrich_era5(df, arco_grid)
 
     write_columns(df, delta_table)
@@ -585,6 +614,14 @@ def derive(
 
     df = read_delta_table(delta_table)
 
+    # Drop existing derived columns to allow re-derivation (preserve fdm_flag_*)
+    derive_existing = [
+        c for c in df.columns if c.startswith("fdm_") and not c.startswith("fdm_flag_")
+    ]
+    if derive_existing:
+        log.info("derive_drop_existing", columns=derive_existing)
+        df = df.drop(derive_existing)
+
     # Build airport coordinate lookup (soft dependency on traffic)
     airport_coords = _build_airport_coords(df)
 
@@ -617,6 +654,7 @@ def segments(
         config: Path to the YAML config file.
         dry_run: Validate config without modifying the Delta Table.
     """
+    import polars as pl
     from node_fdm_data.delta import read_delta_table, write_columns
     from node_fdm_data.segments import build_selected_params
 
@@ -633,6 +671,13 @@ def segments(
         return
 
     df = read_delta_table(delta_table)
+
+    # Drop existing selected-parameter columns to allow re-segmentation
+    # Only fdm_*_sel* — preserve bds_*_sel_* input columns
+    sel_existing = [c for c in df.columns if c.startswith("fdm_") and "_sel" in c]
+    if sel_existing:
+        log.info("segments_drop_existing", columns=sel_existing)
+        df = df.drop(sel_existing)
 
     # Segment detection is per-flight (row-iterative)
     flights = df.partition_by("meta_flight_id", maintain_order=True)
@@ -688,6 +733,16 @@ def convert(
         return
 
     df = read_delta_table(delta_table)
+
+    # Drop existing SI and derivative columns to allow re-conversion
+    from node_fdm_data.preprocessing.convert import SI_CONVERSIONS, SI_DERIVATIVES
+
+    si_targets = {target for _, _, target in SI_CONVERSIONS}
+    deriv_targets = {target for _, target in SI_DERIVATIVES}
+    convert_existing = [c for c in df.columns if c in si_targets or c in deriv_targets]
+    if convert_existing:
+        log.info("convert_drop_existing", columns=convert_existing)
+        df = df.drop(convert_existing)
 
     df = convert_si(df)
     df = compute_derivatives(df)

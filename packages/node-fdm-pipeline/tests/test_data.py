@@ -9,11 +9,15 @@ import polars as pl
 import pytest
 
 from node_fdm_pipeline.commands.data import (
+    _join_flightlist_inline,
     _require_traffic,
     aircraft_list,
+    convert,
     derive,
     download,
+    flag,
     identify,
+    segments,
 )
 
 
@@ -45,7 +49,6 @@ class TestDownloadCommand:
             f"""\
 paths:
   data_dir: "{data_dir}"
-  download_dir: "download"
 
 typecodes:
   - A320
@@ -59,11 +62,6 @@ typecodes:
             dry_run=True,
         )
 
-        # No download dir created in dry-run
-        download_dir = data_dir / "download"
-        if download_dir.exists():
-            assert len(list(download_dir.iterdir())) == 0
-
     def test_download_missing_aircraft_db(self, tmp_path: Path) -> None:
         """Raises SystemExit when aircraft_db.csv is missing."""
         data_dir = tmp_path / "data"
@@ -73,7 +71,6 @@ typecodes:
             f"""\
 paths:
   data_dir: "{data_dir}"
-  download_dir: "download"
 
 typecodes:
   - A320
@@ -266,6 +263,72 @@ class TestDownloadDelta:
 
 
 # ---------------------------------------------------------------------------
+# _join_flightlist_inline tests
+# ---------------------------------------------------------------------------
+
+
+class TestJoinFlightlistInline:
+    """Tests for _join_flightlist_inline (flightlist join during download)."""
+
+    @staticmethod
+    def _make_batch_df(n: int = 5) -> pl.DataFrame:
+        from datetime import datetime as dt
+
+        return pl.DataFrame(
+            {
+                "raw_icao24": ["abc123"] * n,
+                "raw_callsign": ["TEST01"] * n,
+                "raw_lat_deg": [48.0] * n,
+                "raw_timestamp": [dt(2025, 1, 1, 12, 0, i) for i in range(n)],
+                "meta_batch_date": ["20250101"] * n,
+            }
+        )
+
+    def test_join_with_flightlist(self) -> None:
+        """Flightlist metadata joined onto batch DataFrame."""
+        import pandas as pd
+
+        df = self._make_batch_df()
+        fl = pd.DataFrame(
+            {
+                "icao24": ["abc123"],
+                "callsign": ["TEST01"],
+                "departure": ["LFPG"],
+                "arrival": ["EGLL"],
+                "typecode": ["A320"],
+            }
+        )
+        result = _join_flightlist_inline(df, fl)
+        assert result["meta_departure"][0] == "LFPG"
+        assert result["meta_arrival"][0] == "EGLL"
+        assert result["meta_aircraft_type"][0] == "A320"
+
+    def test_join_with_none(self) -> None:
+        """None flightlist → meta columns are null."""
+        df = self._make_batch_df()
+        result = _join_flightlist_inline(df, None)
+        assert "meta_departure" in result.columns
+        assert result["meta_departure"].null_count() == len(result)
+
+    def test_join_no_matching_icao(self) -> None:
+        """Flightlist with different icao24 → meta columns are null."""
+        import pandas as pd
+
+        df = self._make_batch_df()
+        fl = pd.DataFrame(
+            {
+                "icao24": ["zzz999"],
+                "callsign": ["OTHER"],
+                "departure": ["KJFK"],
+                "arrival": ["KLAX"],
+                "typecode": ["B738"],
+            }
+        )
+        result = _join_flightlist_inline(df, fl)
+        assert result["meta_departure"].null_count() == len(result)
+
+
+# ---------------------------------------------------------------------------
 # identify tests (v3 étape 1)
 # ---------------------------------------------------------------------------
 
@@ -319,47 +382,66 @@ def _make_delta_table(
     return table_path
 
 
-def _make_flightlist(
+def _make_delta_table_with_flightlist(  # noqa: PLR0913
     tmp_path: Path,
     *,
-    entries: list[dict[str, str]],
+    icao24s: list[str],
+    callsigns: list[str | None],
+    timestamps_s: list[list[int]],
+    meta_departure: str | None = None,
+    meta_arrival: str | None = None,
+    meta_aircraft_type: str | None = None,
     batch_date: str = "20250101",
 ) -> Path:
-    """Create a synthetic flightlist parquet.
-
-    Each entry: {icao24, callsign, departure, arrival, typecode, firstseen, lastseen}.
-    """
-    from datetime import UTC
+    """Create a Delta Table with raw_* + meta_* columns (as download now produces)."""
+    from datetime import UTC, timedelta
     from datetime import datetime as dt
 
     rows: dict[str, list[object]] = {
-        "icao24": [],
-        "callsign": [],
-        "departure": [],
-        "arrival": [],
-        "typecode": [],
-        "firstseen": [],
-        "lastseen": [],
+        "raw_timestamp": [],
+        "raw_icao24": [],
+        "raw_callsign": [],
+        "raw_lat_deg": [],
+        "raw_lon_deg": [],
+        "raw_alt_ft": [],
+        "raw_gs_kt": [],
+        "raw_track_deg": [],
+        "raw_vz_ftmin": [],
+        "meta_batch_date": [],
+        "meta_departure": [],
+        "meta_arrival": [],
+        "meta_aircraft_type": [],
     }
-    for e in entries:
-        rows["icao24"].append(e["icao24"])
-        rows["callsign"].append(e.get("callsign", ""))
-        rows["departure"].append(e.get("departure"))
-        rows["arrival"].append(e.get("arrival"))
-        rows["typecode"].append(e.get("typecode"))
-        rows["firstseen"].append(
-            dt(2025, 1, 1, 11, 0, 0, tzinfo=UTC),
-        )
-        rows["lastseen"].append(
-            dt(2025, 1, 1, 13, 0, 0, tzinfo=UTC),
-        )
+    base = dt(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
+    for icao24, callsign, ts_offsets in zip(icao24s, callsigns, timestamps_s, strict=False):
+        for offset in ts_offsets:
+            rows["raw_timestamp"].append(base + timedelta(seconds=offset))
+            rows["raw_icao24"].append(icao24)
+            rows["raw_callsign"].append(callsign)
+            rows["raw_lat_deg"].append(48.0)
+            rows["raw_lon_deg"].append(2.0)
+            rows["raw_alt_ft"].append(35000.0)
+            rows["raw_gs_kt"].append(440.0)
+            rows["raw_track_deg"].append(90.0)
+            rows["raw_vz_ftmin"].append(100.0)
+            rows["meta_batch_date"].append(batch_date)
+            rows["meta_departure"].append(meta_departure)
+            rows["meta_arrival"].append(meta_arrival)
+            rows["meta_aircraft_type"].append(meta_aircraft_type)
 
-    df = pl.DataFrame(rows)
-    download_dir = tmp_path / "download"
-    download_dir.mkdir(parents=True, exist_ok=True)
-    fl_path = download_dir / f"flightlist_{batch_date}.parquet"
-    df.write_parquet(fl_path)
-    return download_dir
+    df = pl.DataFrame(rows).cast(
+        {
+            "raw_callsign": pl.Utf8,
+            "meta_departure": pl.Utf8,
+            "meta_arrival": pl.Utf8,
+            "meta_aircraft_type": pl.Utf8,
+        }
+    )
+    table_path = tmp_path / "flights.delta"
+    from node_fdm_data.delta import write_columns
+
+    write_columns(df, table_path)
+    return table_path
 
 
 class TestIdentify:
@@ -372,7 +454,6 @@ class TestIdentify:
             f"""\
 paths:
   data_dir: "{data_dir}"
-  download_dir: "download"
 
 typecodes:
   - A320
@@ -385,18 +466,16 @@ typecodes:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        # Two icao24s, each with a gap → 2 segments each = 4 total segments
         table_path = _make_delta_table(
             data_dir,
             icao24s=["abc123", "abc123", "def456"],
             callsigns=["TEST01", "TEST01", "FLY02"],
             timestamps_s=[
-                list(range(0, 20)),  # abc123 seg 1: 0-19s
-                list(range(60, 80)),  # abc123 seg 2: 60-79s (gap > 30s)
-                list(range(0, 15)),  # def456 seg 1: 0-14s
+                list(range(0, 20)),
+                list(range(60, 80)),
+                list(range(0, 15)),
             ],
         )
-        _make_flightlist(data_dir, entries=[])
         config = self._make_config(tmp_path, data_dir=data_dir)
 
         identify(config=config, dry_run=False)
@@ -406,12 +485,10 @@ typecodes:
         assert "meta_original_flight_id" in result.columns
 
         flight_ids = result["meta_flight_id"].unique().sort().to_list()
-        # abc123_TEST01 → 2 segments (_s0, _s1), def456_FLY02 → 1 segment (_s0)
         assert "abc123_TEST01_s0" in flight_ids
         assert "abc123_TEST01_s1" in flight_ids
         assert "def456_FLY02_s0" in flight_ids
 
-        # original_flight_id has no segment suffix
         orig_ids = result["meta_original_flight_id"].unique().sort().to_list()
         assert orig_ids == ["abc123_TEST01", "def456_FLY02"]
 
@@ -420,50 +497,37 @@ typecodes:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        # 10 points, then gap, then 5 points (short segment)
         table_path = _make_delta_table(
             data_dir,
             icao24s=["abc123", "abc123"],
             callsigns=["TEST01", "TEST01"],
             timestamps_s=[
                 list(range(0, 10)),
-                list(range(60, 65)),  # only 5 points — short segment
+                list(range(60, 65)),
             ],
         )
-        _make_flightlist(data_dir, entries=[])
         config = self._make_config(tmp_path, data_dir=data_dir)
 
         identify(config=config, dry_run=False)
 
         result = pl.read_delta(str(table_path))
-        # All 15 rows kept
         assert len(result) == 15
-        # Both segments have a flight_id
         ids = result["meta_flight_id"].unique().to_list()
         assert len(ids) == 2
 
-    def test_identify_flightlist_join(self, tmp_path: Path) -> None:
-        """Flightlist metadata joined → meta_departure, meta_arrival, meta_aircraft_type."""
+    def test_identify_flightlist_metadata_preserved(self, tmp_path: Path) -> None:
+        """Flightlist metadata from download preserved through identify."""
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        table_path = _make_delta_table(
+        table_path = _make_delta_table_with_flightlist(
             data_dir,
             icao24s=["abc123"],
             callsigns=["TEST01"],
             timestamps_s=[list(range(0, 20))],
-        )
-        _make_flightlist(
-            data_dir,
-            entries=[
-                {
-                    "icao24": "abc123",
-                    "callsign": "TEST01",
-                    "departure": "LFPG",
-                    "arrival": "EGLL",
-                    "typecode": "A320",
-                },
-            ],
+            meta_departure="LFPG",
+            meta_arrival="EGLL",
+            meta_aircraft_type="A320",
         )
         config = self._make_config(tmp_path, data_dir=data_dir)
 
@@ -475,17 +539,16 @@ typecodes:
         assert result["meta_aircraft_type"][0] == "A320"
 
     def test_identify_no_flightlist(self, tmp_path: Path) -> None:
-        """icao24 absent from flightlist → meta_departure/arrival/aircraft_type = null."""
+        """No flightlist data → meta_departure/arrival/aircraft_type = null."""
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        table_path = _make_delta_table(
+        table_path = _make_delta_table_with_flightlist(
             data_dir,
             icao24s=["abc123"],
             callsigns=["TEST01"],
             timestamps_s=[list(range(0, 20))],
         )
-        _make_flightlist(data_dir, entries=[])  # empty flightlist
         config = self._make_config(tmp_path, data_dir=data_dir)
 
         identify(config=config, dry_run=False)
@@ -500,7 +563,6 @@ typecodes:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
 
-        # Points at 0-9s, then 38s (29s gap from t=9)
         timestamps = [*range(0, 10), 38]
         table_path = _make_delta_table(
             data_dir,
@@ -508,14 +570,13 @@ typecodes:
             callsigns=["TEST01"],
             timestamps_s=[timestamps],
         )
-        _make_flightlist(data_dir, entries=[])
         config = self._make_config(tmp_path, data_dir=data_dir)
 
         identify(config=config, dry_run=False)
 
         result = pl.read_delta(str(table_path))
         ids = result["meta_flight_id"].unique().to_list()
-        assert len(ids) == 1  # single segment
+        assert len(ids) == 1
 
     def test_identify_callsign_null(self, tmp_path: Path) -> None:
         """Null callsign → meta_flight_id uses NOCALL placeholder."""
@@ -528,7 +589,6 @@ typecodes:
             callsigns=[None],
             timestamps_s=[list(range(0, 20))],
         )
-        _make_flightlist(data_dir, entries=[])
         config = self._make_config(tmp_path, data_dir=data_dir)
 
         identify(config=config, dry_run=False)
@@ -549,7 +609,6 @@ typecodes:
             callsigns=["TEST01"],
             timestamps_s=[list(range(0, 20))],
         )
-        _make_flightlist(data_dir, entries=[])
         config = self._make_config(tmp_path, data_dir=data_dir)
 
         identify(config=config, dry_run=True)
@@ -694,4 +753,340 @@ typecodes:
         second = pl.read_delta(str(table_path))
 
         for col in ("fdm_gamma_rad", "fdm_long_wind_kt", "fdm_alt_diff_ft", "fdm_distance_cum_m"):
+            assert first[col].to_list() == second[col].to_list(), f"{col} changed on re-run"
+
+    def test_derive_preserves_flag_columns(self, tmp_path: Path) -> None:
+        """derive drops fdm_* but NOT fdm_flag_* columns."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir)
+
+        # Add a fake fdm_flag_* column to the Delta Table
+        df = pl.read_delta(str(table_path))
+        df = df.with_columns(pl.lit(True).alias("fdm_flag_valid"))
+        from node_fdm_data.delta import write_columns
+
+        write_columns(df, table_path)
+
+        config = self._make_config(tmp_path, data_dir=data_dir)
+        derive(config=config, dry_run=False)
+
+        result = pl.read_delta(str(table_path))
+        assert "fdm_flag_valid" in result.columns, "fdm_flag_valid was dropped by derive"
+
+
+# ---------------------------------------------------------------------------
+# Idempotency tests — identify (v3 étape 1)
+# ---------------------------------------------------------------------------
+
+
+class TestIdentifyIdempotent:
+    """Idempotency tests for the ``identify`` command."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path, *, data_dir: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        return config
+
+    def test_identify_idempotent(self, tmp_path: Path) -> None:
+        """Running identify twice produces no error and same flight IDs."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_delta_table(
+            data_dir,
+            icao24s=["abc123", "abc123"],
+            callsigns=["TEST01", "TEST01"],
+            timestamps_s=[list(range(0, 20)), list(range(60, 80))],
+        )
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        identify(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path))
+
+        identify(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path))
+
+        assert (
+            first["meta_flight_id"].sort().to_list() == second["meta_flight_id"].sort().to_list()
+        )
+        assert (
+            first["meta_original_flight_id"].sort().to_list()
+            == second["meta_original_flight_id"].sort().to_list()
+        )
+
+    def test_identify_fresh_vs_rerun(self, tmp_path: Path) -> None:
+        """Re-run produces identical DataFrame to fresh run."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _make_delta_table(
+            data_dir,
+            icao24s=["abc123"],
+            callsigns=["TEST01"],
+            timestamps_s=[list(range(0, 20))],
+        )
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        identify(config=config, dry_run=False)
+        first = pl.read_delta(str(data_dir / "flights.delta"))
+
+        identify(config=config, dry_run=False)
+        second = pl.read_delta(str(data_dir / "flights.delta"))
+
+        # Compare all columns
+        assert first.columns == second.columns
+        for col in first.columns:
+            assert first[col].to_list() == second[col].to_list(), f"{col} differs on re-run"
+
+    def test_identify_partial_columns(self, tmp_path: Path) -> None:
+        """Only meta_flight_id present (interrupted run) → still works."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_delta_table(
+            data_dir,
+            icao24s=["abc123"],
+            callsigns=["TEST01"],
+            timestamps_s=[list(range(0, 20))],
+        )
+        # Manually add only meta_flight_id (simulating partial/interrupted run)
+        df = pl.read_delta(str(table_path))
+        df = df.with_columns(pl.lit("partial_id").alias("meta_flight_id"))
+        from node_fdm_data.delta import write_columns
+
+        write_columns(df, table_path)
+
+        config = self._make_config(tmp_path, data_dir=data_dir)
+        identify(config=config, dry_run=False)
+
+        result = pl.read_delta(str(table_path))
+        assert "meta_flight_id" in result.columns
+        assert result["meta_flight_id"][0] != "partial_id"
+
+
+# ---------------------------------------------------------------------------
+# Idempotency tests — flag (v3 étape 2)
+# ---------------------------------------------------------------------------
+
+
+def _make_identified_delta_table(tmp_path: Path, *, n_points: int = 50) -> Path:
+    """Create a Delta Table with raw + identify columns (ready for flag step)."""
+    from datetime import UTC, timedelta
+    from datetime import datetime as dt
+
+    base = dt(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
+    rows = {
+        "raw_timestamp": [base + timedelta(seconds=i) for i in range(n_points)],
+        "raw_icao24": ["abc123"] * n_points,
+        "raw_callsign": ["TEST01"] * n_points,
+        "raw_lat_deg": [48.0 + i * 0.01 for i in range(n_points)],
+        "raw_lon_deg": [2.0 + i * 0.01 for i in range(n_points)],
+        "raw_alt_ft": [35000.0] * n_points,
+        "raw_gs_kt": [440.0] * n_points,
+        "raw_track_deg": [90.0] * n_points,
+        "raw_vz_ftmin": [100.0] * n_points,
+        "meta_batch_date": ["20250101"] * n_points,
+        "meta_original_flight_id": ["abc123_TEST01"] * n_points,
+        "meta_flight_id": ["abc123_TEST01_s0"] * n_points,
+    }
+    df = pl.DataFrame(rows)
+    table_path = tmp_path / "flights.delta"
+    from node_fdm_data.delta import write_columns
+
+    write_columns(df, table_path)
+    return table_path
+
+
+class TestFlagIdempotent:
+    """Idempotency tests for the ``flag`` command."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path, *, data_dir: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        return config
+
+    def test_flag_idempotent(self, tmp_path: Path) -> None:
+        """Running flag twice produces no error and same flag values."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_identified_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        flag(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path))
+
+        flag(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path))
+
+        flag_cols = [c for c in first.columns if c.startswith("fdm_flag_")]
+        assert len(flag_cols) > 0, "No flag columns produced"
+        for col in flag_cols:
+            assert first[col].to_list() == second[col].to_list(), f"{col} changed on re-run"
+
+    def test_flag_preserves_other_columns(self, tmp_path: Path) -> None:
+        """Re-running flag does not touch era_* columns."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_identified_delta_table(data_dir)
+
+        # Add fake era_* columns (as if enrich already ran)
+        df = pl.read_delta(str(table_path))
+        df = df.with_columns(
+            pl.lit(280.0).alias("era_tas_kt"),
+            pl.lit(0.78).alias("era_mach"),
+        )
+        from node_fdm_data.delta import write_columns
+
+        write_columns(df, table_path)
+
+        config = self._make_config(tmp_path, data_dir=data_dir)
+        flag(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path))
+
+        flag(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path))
+
+        assert first["era_tas_kt"].to_list() == second["era_tas_kt"].to_list()
+        assert first["era_mach"].to_list() == second["era_mach"].to_list()
+
+    def test_flag_no_existing_no_drop(self, tmp_path: Path) -> None:
+        """First run of flag (no existing flag cols) runs normally."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        _make_identified_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        # Should not raise
+        flag(config=config, dry_run=False)
+
+        result = pl.read_delta(str(data_dir / "flights.delta"))
+        assert "fdm_flag_valid" in result.columns
+
+
+# ---------------------------------------------------------------------------
+# Idempotency tests — segments (v3 étape 5)
+# ---------------------------------------------------------------------------
+
+
+class TestSegmentsIdempotent:
+    """Idempotency tests for the ``segments`` command."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path, *, data_dir: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        return config
+
+    def test_segments_idempotent(self, tmp_path: Path) -> None:
+        """Running segments twice produces no error and same sel columns."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir)
+
+        # Derive first to get fdm_* columns needed by segments
+        config = self._make_config(tmp_path, data_dir=data_dir)
+        derive(config=config, dry_run=False)
+
+        segments(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path))
+
+        segments(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path))
+
+        sel_cols = [c for c in first.columns if c.startswith("fdm_") and "_sel" in c]
+        assert len(sel_cols) > 0, "No sel columns produced"
+        for col in sel_cols:
+            # NaN-aware comparison: fill NaN with sentinel then compare
+            a = first[col].fill_nan(-999.0).fill_null(-999.0).to_list()
+            b = second[col].fill_nan(-999.0).fill_null(-999.0).to_list()
+            assert a == b, f"{col} changed on re-run"
+
+    def test_segments_preserves_bds_sel_columns(self, tmp_path: Path) -> None:
+        """Re-running segments does not drop bds_*_sel_* input columns."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir)
+
+        config = self._make_config(tmp_path, data_dir=data_dir)
+        derive(config=config, dry_run=False)
+
+        segments(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path))
+
+        segments(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path))
+
+        # bds_mcp_sel_alt_ft is an input column that contains "_sel" — must be preserved
+        assert "bds_mcp_sel_alt_ft" in first.columns
+        assert "bds_mcp_sel_alt_ft" in second.columns
+        assert first["bds_mcp_sel_alt_ft"].to_list() == second["bds_mcp_sel_alt_ft"].to_list()
+
+
+# ---------------------------------------------------------------------------
+# Idempotency tests — convert (v3 étapes 6-7)
+# ---------------------------------------------------------------------------
+
+
+class TestConvertIdempotent:
+    """Idempotency tests for the ``convert`` command."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path, *, data_dir: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        return config
+
+    def test_convert_idempotent(self, tmp_path: Path) -> None:
+        """Running convert twice produces no error and same SI/derivative values."""
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_derive_delta_table(data_dir)
+
+        # Derive first to get fdm_* columns needed by convert
+        config = self._make_config(tmp_path, data_dir=data_dir)
+        derive(config=config, dry_run=False)
+
+        convert(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path))
+
+        convert(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path))
+
+        si_cols = [c for c in first.columns if c.endswith(("_m", "_ms"))]
+        deriv_cols = [c for c in first.columns if c.startswith("fdm_d_")]
+        check_cols = [*si_cols, *deriv_cols]
+        assert len(check_cols) > 0, "No SI/derivative columns produced"
+        for col in check_cols:
             assert first[col].to_list() == second[col].to_list(), f"{col} changed on re-run"
