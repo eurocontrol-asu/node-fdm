@@ -319,6 +319,45 @@ def flag(
 
 
 @app.command
+def split(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    train_ratio: Annotated[
+        float,
+        cyclopts.Parameter(name="--train-ratio", help="Train split ratio"),
+    ] = 0.7,
+    val_ratio: Annotated[
+        float,
+        cyclopts.Parameter(name="--val-ratio", help="Validation split ratio"),
+    ] = 0.15,
+    test_ratio: Annotated[
+        float,
+        cyclopts.Parameter(name="--test-ratio", help="Test split ratio"),
+    ] = 0.15,
+    seed: Annotated[
+        int,
+        cyclopts.Parameter(help="Hash salt for reproducible splits"),
+    ] = 42,
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Assign train/val/test split to each row by icao24 hash (étape 8)."""
+    from node_fdm_pipeline.commands.data import split as split_fn
+
+    split_fn(
+        config=config,
+        ratios=(train_ratio, val_ratio, test_ratio),
+        seed=seed,
+        dry_run=dry_run,
+    )
+
+
+@app.command
 def identify(
     *,
     config: Annotated[

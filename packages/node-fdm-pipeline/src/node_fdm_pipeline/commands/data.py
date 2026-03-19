@@ -1405,7 +1405,52 @@ def process(  # noqa: PLR0915, PLR0912
                 }
             )
 
-    split_df = pl.DataFrame(split_rows)
-    split_csv = process_dir / "dataset_split.csv"
-    split_df.write_csv(split_csv)
-    log.info("process_split_done", flights=len(split_df), output=str(split_csv))
+    log.info("process_done", flights=len(split_rows))
+
+
+def split(
+    *,
+    config: Path,
+    ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
+    seed: int = 42,
+    dry_run: bool = False,
+) -> None:
+    """Add ``meta_split`` column to the Delta Table (étape 8).
+
+    Assigns each row to train/val/test based on a deterministic hash
+    of ``raw_icao24``.  All segments of the same aircraft land in the
+    same split, preventing data leakage.
+
+    Args:
+        config: Path to the YAML config file.
+        ratios: ``(train, val, test)`` proportions.
+        seed: Hash salt for reproducible splits.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.split import split_by_icao
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("split_start", table=str(delta_table), ratios=ratios, seed=seed)
+
+    if dry_run:
+        log.info("split_dry_run", msg="Config valid, would compute split")
+        return
+
+    df = read_delta_table(delta_table)
+    df = split_by_icao(df, ratios=ratios, seed=seed)
+
+    write_columns(df, delta_table)
+
+    counts = df.group_by("meta_split").len()
+    split_map = dict(zip(counts["meta_split"].to_list(), counts["len"].to_list(), strict=True))
+    log.info(
+        "split_done",
+        rows=len(df),
+        unique_icao24=df["raw_icao24"].n_unique(),
+        **split_map,
+    )

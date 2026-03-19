@@ -1,19 +1,17 @@
-"""Train / val / test splitting by ICAO aircraft type.
+"""Train / val / test splitting by ICAO24 aircraft identifier.
 
-Groups flight files by ICAO code (extracted from the filename) and
-deterministically assigns each group to a split based on the given
-ratios.  This ensures all flights of the same aircraft type end up
-in the same split, preventing data leakage.
+Deterministically assigns each row to a split based on a hash of
+``raw_icao24``.  All segments of the same aircraft always land in the
+same split, preventing data leakage.
 
 Example::
 
-    result = split_by_icao(Path("output/A320"), ratios=(0.7, 0.15, 0.15))
+    result = split_by_icao(df, ratios=(0.7, 0.15, 0.15))
 """
 
 from __future__ import annotations
 
-import random
-from pathlib import Path
+import hashlib
 
 import polars as pl
 
@@ -21,107 +19,52 @@ __all__ = [
     "split_by_icao",
 ]
 
-_MIN_GROUPS_FOR_THREE_WAY = 3
-_MIN_GROUPS_FOR_TWO_WAY = 2
+
+def _hash_bucket(icao24: str, seed: int) -> float:
+    """Return a deterministic float in [0, 1) for an icao24."""
+    h = hashlib.sha256(f"{seed}:{icao24}".encode()).hexdigest()
+    return int(h[:8], 16) / 0xFFFFFFFF
+
+
+def _assign_split(
+    bucket: float,
+    ratios: tuple[float, float, float],
+) -> str:
+    """Map a [0, 1) bucket to train/val/test."""
+    if bucket < ratios[0]:
+        return "train"
+    if bucket < ratios[0] + ratios[1]:
+        return "val"
+    return "test"
 
 
 def split_by_icao(
-    data_dir: Path | str,
+    df: pl.DataFrame,
     *,
     ratios: tuple[float, float, float] = (0.7, 0.15, 0.15),
     seed: int = 42,
 ) -> pl.DataFrame:
-    """Split flight files into train / val / test by ICAO group.
+    """Assign each row a ``meta_split`` column based on ``raw_icao24`` hash.
 
-    File names are expected to contain the ICAO type code as the 4th
-    underscore-separated token (e.g. ``flight_001_002_A320_seg.parquet``).
+    The split is deterministic: the same ``raw_icao24`` always maps to
+    the same split regardless of the rest of the data.  This prevents
+    data leakage across train/val/test.
 
     Args:
-        data_dir: Directory containing per-flight files.
+        df: DataFrame with at least a ``raw_icao24`` column.
         ratios: ``(train, val, test)`` proportions — must sum to ~1.0.
-        seed: Random seed for deterministic shuffling.
+        seed: Hash salt for reproducible but adjustable splits.
 
     Returns:
-        ``pl.DataFrame`` with columns ``filepath``, ``icao``, ``split``.
+        The input DataFrame with an added ``meta_split`` column.
     """
-    data_dir = Path(data_dir)
+    if df.is_empty():
+        return df.with_columns(pl.lit(None).cast(pl.Utf8).alias("meta_split"))
 
-    files = sorted(f.name for f in data_dir.iterdir() if f.is_file() and "_" in f.name)
+    unique_icao24s = df["raw_icao24"].unique().to_list()
+    mapping = {
+        icao24: _assign_split(_hash_bucket(icao24, seed), ratios) for icao24 in unique_icao24s
+    }
 
-    if not files:
-        return pl.DataFrame(
-            {"filepath": [], "icao": [], "split": []},
-            schema={"filepath": pl.Utf8, "icao": pl.Utf8, "split": pl.Utf8},
-        )
-
-    icaos = [f.split("_")[3] for f in files]
-    df = pl.DataFrame(
-        {
-            "filepath": [str(data_dir / f) for f in files],
-            "icao": icaos,
-        }
-    )
-
-    # Count flights per ICAO and shuffle
-    icao_counts: dict[str, int] = {}
-    for ic in icaos:
-        icao_counts[ic] = icao_counts.get(ic, 0) + 1
-
-    rng = random.Random(seed)  # noqa: S311
-    icao_list = list(icao_counts.keys())
-    rng.shuffle(icao_list)
-
-    total_flights = len(files)
-    train_target = int(total_flights * ratios[0])
-
-    # Assign ICAO groups to splits — ensure at least 1 group per split
-    # when there are ≥3 distinct ICAOs.
-    train_icaos: set[str] = set()
-    val_icaos: set[str] = set()
-    test_icaos: set[str] = set()
-
-    n_icaos = len(icao_list)
-
-    if n_icaos >= _MIN_GROUPS_FOR_THREE_WAY:
-        # Reserve last two groups for val and test
-        assignable = icao_list[: n_icaos - _MIN_GROUPS_FOR_TWO_WAY]
-        reserved = icao_list[n_icaos - _MIN_GROUPS_FOR_TWO_WAY :]
-    elif n_icaos == _MIN_GROUPS_FOR_TWO_WAY:
-        assignable = icao_list[:1]
-        reserved = icao_list[1:]
-    else:
-        # Single ICAO — everything goes to train
-        assignable = icao_list
-        reserved = []
-
-    # Fill train from assignable groups
-    running = 0
-    for ic in assignable:
-        if running < train_target:
-            train_icaos.add(ic)
-            running += icao_counts[ic]
-        else:
-            break
-
-    # Remaining assignable groups go to early pool for val/test
-    remaining = [ic for ic in assignable if ic not in train_icaos] + reserved
-    remaining_total = sum(icao_counts[ic] for ic in remaining)
-    val_target = int(remaining_total * ratios[1] / (ratios[1] + ratios[2])) if remaining else 0
-
-    running = 0
-    for ic in remaining:
-        if running < val_target:
-            val_icaos.add(ic)
-            running += icao_counts[ic]
-        else:
-            test_icaos.add(ic)
-
-    def _assign(icao: str) -> str:
-        if icao in train_icaos:
-            return "train"
-        if icao in val_icaos:
-            return "val"
-        return "test"
-
-    splits = [_assign(ic) for ic in df["icao"].to_list()]
-    return df.with_columns(pl.Series("split", splits))
+    splits = [mapping[ic] for ic in df["raw_icao24"].to_list()]
+    return df.with_columns(pl.Series("meta_split", splits))
