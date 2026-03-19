@@ -18,6 +18,7 @@ from node_fdm_data.physics.isa import isa_pressure
 __all__ = [
     "compute_mach_and_cas",
     "compute_tas",
+    "enrich_era5",
     "haversine",
 ]
 
@@ -89,11 +90,91 @@ def compute_mach_and_cas(
     return mach, cas_kt
 
 
+_ERA5_RENAME: dict[str, str] = {
+    "temperature": "era_temp_K",
+    "u_component_of_wind": "era_u_wind_ms",
+    "v_component_of_wind": "era_v_wind_ms",
+}
+
+# fastmeteo expects these column names
+_FASTMETEO_INPUT_RENAME: dict[str, str] = {
+    "raw_lat_deg": "latitude",
+    "raw_lon_deg": "longitude",
+    "raw_alt_ft": "altitude",
+    "raw_timestamp": "timestamp",
+}
+
+_FASTMETEO_INPUT_RESTORE: dict[str, str] = {v: k for k, v in _FASTMETEO_INPUT_RENAME.items()}
+
+
+def enrich_era5(
+    df: pl.DataFrame,
+    arco_grid: Any,
+) -> pl.DataFrame:
+    """Enrich a DataFrame with ERA5 weather data and derived airspeed columns.
+
+    Calls fastmeteo to interpolate ERA5 weather variables, then computes
+    ``era_tas_kt``, ``era_mach``, and ``era_cas_kt`` from the ERA5 wind
+    and temperature fields.
+
+    Existing ``bds_*`` columns are never modified.
+
+    Args:
+        df: DataFrame with ``raw_lat_deg``, ``raw_lon_deg``, ``raw_alt_ft``,
+            ``raw_timestamp``, ``raw_gs_kt``, ``raw_track_deg`` columns.
+        arco_grid: A ``fastmeteo.source.arco_era5.ArcoEra5`` instance
+            (or any object with an ``interpolate(pd.DataFrame)`` method).
+
+    Returns:
+        DataFrame with ``era_temp_K``, ``era_u_wind_ms``, ``era_v_wind_ms``,
+        ``era_tas_kt``, ``era_mach``, ``era_cas_kt`` columns added.
+    """
+    # Rename to fastmeteo convention
+    df_fm = df.rename(_FASTMETEO_INPUT_RENAME)
+
+    # Strip timezone if present (fastmeteo expects naive timestamps)
+    ts_dtype = df_fm.schema["timestamp"]
+    if isinstance(ts_dtype, pl.Datetime) and ts_dtype.time_zone is not None:
+        df_fm = df_fm.with_columns(pl.col("timestamp").dt.replace_time_zone(None))
+
+    # Call fastmeteo via pandas interop
+    pd_df = df_fm.to_pandas()
+    pd_df = arco_grid.interpolate(pd_df)
+    df_fm = pl.from_pandas(pd_df)
+
+    # Restore original column names and rename ERA5 outputs
+    df_fm = df_fm.rename(_FASTMETEO_INPUT_RESTORE)
+    df_fm = df_fm.rename(_ERA5_RENAME)
+
+    # Compute era_tas_kt
+    df_fm = df_fm.with_columns(
+        compute_tas(
+            gs_col="raw_gs_kt",
+            track_col="raw_track_deg",
+            u_wind_col="era_u_wind_ms",
+            v_wind_col="era_v_wind_ms",
+        ).alias("era_tas_kt"),
+    )
+
+    # Compute era_mach and era_cas_kt
+    mach_arr, cas_arr = compute_mach_and_cas(
+        tas_kt=df_fm["era_tas_kt"].to_numpy(),
+        alt_ft=df_fm["raw_alt_ft"].to_numpy(),
+        temp_k=df_fm["era_temp_K"].to_numpy(),
+    )
+    df_fm = df_fm.with_columns(
+        pl.Series("era_mach", mach_arr),
+        pl.Series("era_cas_kt", cas_arr),
+    )
+
+    return df_fm
+
+
 def compute_tas(
     gs_col: str = "raw_gs_kt",
     track_col: str = "raw_track_deg",
-    u_wind_col: str = "u_component_of_wind",
-    v_wind_col: str = "v_component_of_wind",
+    u_wind_col: str = "era_u_wind_ms",
+    v_wind_col: str = "era_v_wind_ms",
 ) -> pl.Expr:
     """Polars expression computing TAS from groundspeed and wind components.
 

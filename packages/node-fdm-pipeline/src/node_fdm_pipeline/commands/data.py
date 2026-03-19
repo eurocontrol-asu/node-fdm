@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 __all__ = [
     "aircraft_list",
     "download",
+    "enrich",
     "flag",
     "identify",
     "preprocess",
@@ -492,6 +493,66 @@ def flag(
         rows=len(df),
         flags=len(flag_cols),
         valid_rows=n_valid,
+    )
+
+
+def enrich(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Enrich the Delta Table with ERA5 weather data (étape 3).
+
+    Interpolates ERA5 temperature and wind components via ``fastmeteo``,
+    then computes ``era_tas_kt``, ``era_mach``, and ``era_cas_kt``.
+    All rows are enriched — including those flagged invalid — because
+    ERA5 API calls are expensive and should not be repeated.
+
+    Existing ``bds_*`` columns are never modified.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.meteo import enrich_era5
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("enrich_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("enrich_dry_run", msg="Config valid, would enrich with ERA5")
+        return
+
+    try:
+        from fastmeteo.source.arco_era5 import ArcoEra5
+    except ImportError:
+        log.error(
+            "fastmeteo_missing",
+            msg="fastmeteo is required for ERA5 enrichment. "
+            "Install with: pip install fastmeteo",
+        )
+        raise SystemExit(1) from None
+
+    era5_cache = cfg.paths.resolve("era5_cache_dir")
+    era5_cache.mkdir(parents=True, exist_ok=True)
+    era5_features = cfg.era5_features or None
+    arco_grid = ArcoEra5(local_store=str(era5_cache), features=era5_features)
+
+    df = read_delta_table(delta_table)
+    df = enrich_era5(df, arco_grid)
+
+    write_columns(df, delta_table)
+
+    era_cols = [c for c in df.columns if c.startswith("era_")]
+    log.info(
+        "enrich_done",
+        rows=len(df),
+        era_cols=era_cols,
     )
 
 

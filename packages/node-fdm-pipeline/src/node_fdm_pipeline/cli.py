@@ -229,6 +229,24 @@ def download(
 
 
 @app.command
+def enrich(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Enrich the Delta Table with ERA5 weather data (étape 3)."""
+    from node_fdm_pipeline.commands.data import enrich as enrich_fn
+
+    enrich_fn(config=config, dry_run=dry_run)
+
+
+@app.command
 def flag(
     *,
     config: Annotated[
