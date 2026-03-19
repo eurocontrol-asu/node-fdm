@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 __all__ = [
     "aircraft_list",
     "download",
+    "flag",
     "identify",
     "preprocess",
     "process",
@@ -435,6 +436,62 @@ def identify(
         flights=df["meta_original_flight_id"].n_unique(),
         segments=df["meta_flight_id"].n_unique(),
         rows=len(df),
+    )
+
+
+# ---------------------------------------------------------------------------
+# Command 2 — flag  (étape 2 — validity flags)
+# ---------------------------------------------------------------------------
+
+
+def flag(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Add validity flag columns (``fdm_flag_*``) to the Delta Table.
+
+    Reads the Delta Table produced by ``identify``, computes boolean
+    quality flags per row, and writes the flag columns back.  No rows
+    are deleted — the consumer filters at read time via
+    ``fdm_flag_valid``.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.preprocessing.flags import compute_flags
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("flag_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("flag_dry_run", msg="Config valid, would compute flags")
+        return
+
+    df = read_delta_table(delta_table)
+    df = compute_flags(
+        df,
+        min_points=cfg.flag.min_points,
+        min_speed_kt=cfg.flag.min_speed_kt,
+        distance_low_thr=cfg.flag.distance_low_thr,
+        distance_upper_thr=cfg.flag.distance_upper_thr,
+    )
+
+    write_columns(df, delta_table)
+
+    flag_cols = [c for c in df.columns if c.startswith("fdm_flag_")]
+    n_valid = df["fdm_flag_valid"].sum()
+    log.info(
+        "flag_done",
+        rows=len(df),
+        flags=len(flag_cols),
+        valid_rows=n_valid,
     )
 
 

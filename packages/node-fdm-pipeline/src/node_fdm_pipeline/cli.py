@@ -229,6 +229,24 @@ def download(
 
 
 @app.command
+def flag(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Add validity flag columns (fdm_flag_*) to the Delta Table."""
+    from node_fdm_pipeline.commands.data import flag as flag_fn
+
+    flag_fn(config=config, dry_run=dry_run)
+
+
+@app.command
 def identify(
     *,
     config: Annotated[

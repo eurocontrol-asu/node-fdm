@@ -12,6 +12,7 @@ __all__ = [
     "BadaConfig",
     "CasFilterConfig",
     "ComputingConfig",
+    "FlagConfig",
     "GammaFilterConfig",
     "MachFilterConfig",
     "PathsConfig",
@@ -120,6 +121,15 @@ class GammaFilterConfig(BaseModel, frozen=True):
     smooth_method: str = "savgol"
 
 
+class FlagConfig(BaseModel, frozen=True):
+    """Validity flag thresholds for pipeline v3 étape 2."""
+
+    min_points: int = 40
+    min_speed_kt: float = 90.0
+    distance_low_thr: float = 200.0
+    distance_upper_thr: float = 3000.0
+
+
 class SelectedParamConfig(BaseModel, frozen=True):
     """Selected-parameter filter configuration.
 
@@ -152,6 +162,7 @@ class PipelineConfig(BaseModel, frozen=True):
     era5_null_threshold: float = 0.05
     computing: ComputingConfig = ComputingConfig()
     bada: BadaConfig = BadaConfig()
+    flag: FlagConfig = FlagConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()
 
     @field_validator("typecodes", mode="before")
