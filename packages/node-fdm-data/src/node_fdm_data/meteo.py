@@ -13,13 +13,16 @@ import numpy as np
 import polars as pl
 
 from node_fdm_data.physics.constants import A0, GAMMA_AIR, R
-from node_fdm_data.physics.isa import isa_pressure
+from node_fdm_data.physics.isa import isa_pressure, isa_pressure_expr
 
 __all__ = [
+    "compute_cas_expr",
     "compute_mach_and_cas",
+    "compute_mach_expr",
     "compute_tas",
     "enrich_era5",
     "haversine",
+    "haversine_expr",
 ]
 
 EARTH_RADIUS_M: float = 6_371_000.0
@@ -52,6 +55,42 @@ def haversine(
         2 * EARTH_RADIUS_M * np.arctan2(np.sqrt(a), np.sqrt(1 - a))
     )
     return result
+
+
+def haversine_expr(
+    lat1: str | pl.Expr,
+    lon1: str | pl.Expr,
+    lat2: str | pl.Expr,
+    lon2: str | pl.Expr,
+) -> pl.Expr:
+    """Great-circle distance as a Polars expression (metres).
+
+    Accepts column names or expressions for each coordinate.  All inputs
+    are in **degrees**.  Null coordinates propagate as null.
+
+    Args:
+        lat1: Latitude of the first point(s).
+        lon1: Longitude of the first point(s).
+        lat2: Latitude of the second point(s).
+        lon2: Longitude of the second point(s).
+
+    Returns:
+        A ``pl.Expr`` evaluating to distance in **metres**.
+    """
+    _lat1 = pl.col(lat1) if isinstance(lat1, str) else lat1
+    _lon1 = pl.col(lon1) if isinstance(lon1, str) else lon1
+    _lat2 = pl.col(lat2) if isinstance(lat2, str) else lat2
+    _lon2 = pl.col(lon2) if isinstance(lon2, str) else lon2
+
+    phi1 = _lat1.radians()
+    phi2 = _lat2.radians()
+    dphi = phi2 - phi1
+    dlambda = (_lon2 - _lon1).radians()
+
+    a = ((dphi / 2).sin().pow(2) + phi1.cos() * phi2.cos() * (dlambda / 2).sin().pow(2)).clip(
+        0.0, 1.0
+    )
+    return pl.lit(2.0 * EARTH_RADIUS_M) * a.sqrt().arcsin()
 
 
 def compute_mach_and_cas(
@@ -88,6 +127,56 @@ def compute_mach_and_cas(
     cas_kt = cas / 0.514444  # m/s → kt
 
     return mach, cas_kt
+
+
+def compute_mach_expr(
+    tas_col: str = "era_tas_kt",
+    alt_col: str = "raw_alt_ft",
+    temp_col: str = "era_temp_K",
+) -> pl.Expr:
+    """Polars expression computing Mach number from TAS, altitude and temperature.
+
+    Args:
+        tas_col: True airspeed column (**knots**).
+        alt_col: Geometric altitude column (**feet**).
+        temp_col: Static air temperature column (**Kelvin**).
+
+    Returns:
+        A ``pl.Expr`` evaluating to Mach number (dimensionless).
+    """
+    tas = pl.col(tas_col) * 0.514444  # kt → m/s
+    a = (GAMMA_AIR * R * pl.col(temp_col)).sqrt()
+    return tas / a
+
+
+def compute_cas_expr(
+    tas_col: str = "era_tas_kt",
+    alt_col: str = "raw_alt_ft",
+    temp_col: str = "era_temp_K",
+) -> pl.Expr:
+    """Polars expression computing CAS from TAS, altitude and temperature.
+
+    Args:
+        tas_col: True airspeed column (**knots**).
+        alt_col: Geometric altitude column (**feet**).
+        temp_col: Static air temperature column (**Kelvin**).
+
+    Returns:
+        A ``pl.Expr`` evaluating to calibrated airspeed in **knots**.
+    """
+    tas = pl.col(tas_col) * 0.514444  # kt → m/s
+    h = pl.col(alt_col) * 0.3048  # ft → m
+    a = (GAMMA_AIR * R * pl.col(temp_col)).sqrt()
+    mach = tas / a
+
+    p = isa_pressure_expr(h)
+
+    # Impact pressure ratio
+    pt_over_p = (1 + (GAMMA_AIR - 1) / 2 * mach.pow(2)).pow(GAMMA_AIR / (GAMMA_AIR - 1))
+    qc_p0 = (p / 101_325.0) * (pt_over_p - 1)
+
+    cas = A0 * ((2 / (GAMMA_AIR - 1)) * ((qc_p0 + 1).pow((GAMMA_AIR - 1) / GAMMA_AIR) - 1)).sqrt()
+    return cas / 0.514444  # m/s → kt
 
 
 _ERA5_RENAME: dict[str, str] = {
@@ -156,15 +245,10 @@ def enrich_era5(
         ).alias("era_tas_kt"),
     )
 
-    # Compute era_mach and era_cas_kt
-    mach_arr, cas_arr = compute_mach_and_cas(
-        tas_kt=df_fm["era_tas_kt"].to_numpy(),
-        alt_ft=df_fm["raw_alt_ft"].to_numpy(),
-        temp_k=df_fm["era_temp_K"].to_numpy(),
-    )
+    # Compute era_mach and era_cas_kt (pure Polars — nulls propagate correctly)
     df_fm = df_fm.with_columns(
-        pl.Series("era_mach", mach_arr),
-        pl.Series("era_cas_kt", cas_arr),
+        compute_mach_expr().alias("era_mach"),
+        compute_cas_expr().alias("era_cas_kt"),
     )
 
     return df_fm

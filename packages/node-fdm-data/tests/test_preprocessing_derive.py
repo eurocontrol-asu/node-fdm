@@ -213,7 +213,7 @@ class TestDeriveAirportDistances:
         assert result["fdm_adep_dist_nm"][0] is None or np.isnan(result["fdm_adep_dist_nm"][0])
 
     def test_airport_distances_no_coords(self) -> None:
-        """No airport_coords → columns filled with NaN."""
+        """No airport_coords → columns filled with null."""
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0],
@@ -231,5 +231,5 @@ class TestDeriveAirportDistances:
         result = derive_columns(df)
         assert "fdm_adep_dist_nm" in result.columns
         assert "fdm_ades_dist_nm" in result.columns
-        assert result["fdm_adep_dist_nm"].is_nan().sum() == 1
-        assert result["fdm_ades_dist_nm"].is_nan().sum() == 1
+        assert result["fdm_adep_dist_nm"].null_count() == 1
+        assert result["fdm_ades_dist_nm"].null_count() == 1

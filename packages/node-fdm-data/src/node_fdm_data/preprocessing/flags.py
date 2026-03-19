@@ -7,10 +7,9 @@ No rows are deleted; the consumer filters at read time via
 
 from __future__ import annotations
 
-import numpy as np
 import polars as pl
 
-from node_fdm_data.meteo import haversine
+from node_fdm_data.meteo import haversine_expr
 
 __all__ = [
     "compute_flags",
@@ -37,45 +36,52 @@ def _annotate_distance_flags(
         DataFrame with distance flag columns and ``_row_idx`` appended.
     """
     n = len(group)
-    row_idx = np.arange(n, dtype=np.int64)
 
     if n < 2:  # noqa: PLR2004
         return group.with_columns(
             pl.lit(False).alias("fdm_flag_distance_ok"),
             pl.lit(0).cast(pl.Int64).alias("fdm_flag_crop_start"),
             pl.lit(0).cast(pl.Int64).alias("fdm_flag_crop_end"),
-            pl.Series("_row_idx", row_idx),
+            pl.Series("_row_idx", range(n), dtype=pl.Int64),
         )
 
-    lat = group["raw_lat_deg"].to_numpy()
-    lon = group["raw_lon_deg"].to_numpy()
-
-    d = haversine(lat[:-1], lon[:-1], lat[1:], lon[1:])
-    dist_diff = np.concatenate(([0.0], d))
+    # Haversine distance between consecutive points (pure Polars)
+    group = group.with_columns(
+        pl.col("raw_lat_deg").shift(1).alias("_prev_lat"),
+        pl.col("raw_lon_deg").shift(1).alias("_prev_lon"),
+        pl.Series("_row_idx", range(n), dtype=pl.Int64),
+    )
+    group = group.with_columns(
+        haversine_expr("_prev_lat", "_prev_lon", "raw_lat_deg", "raw_lon_deg")
+        .fill_null(0.0)
+        .alias("_dist_diff"),
+    )
 
     # fdm_flag_distance_ok: first row = True (no diff), rest = diff in [low, upper]
-    distance_ok = np.empty(n, dtype=bool)
-    distance_ok[0] = True
-    distance_ok[1:] = (dist_diff[1:] >= low_thr) & (dist_diff[1:] <= upper_thr)
+    group = group.with_columns(
+        pl.when(pl.col("_row_idx") == 0)
+        .then(True)
+        .otherwise((pl.col("_dist_diff") >= low_thr) & (pl.col("_dist_diff") <= upper_thr))
+        .alias("fdm_flag_distance_ok"),
+    )
 
     # Crop indices: first/last row with "normal" distance jump
-    jumps = (dist_diff > low_thr) & (dist_diff < upper_thr)
-    jump_indices = np.where(jumps)[0]
+    jumps = group.filter((pl.col("_dist_diff") > low_thr) & (pl.col("_dist_diff") < upper_thr))[
+        "_row_idx"
+    ]
 
-    if len(jump_indices) > 0:
-        crop_start = int(jump_indices[0])
-        crop_end = int(jump_indices[-1])
+    if len(jumps) > 0:
+        crop_start = int(jumps[0])
+        crop_end = int(jumps[-1])
     else:
         # No normal jumps → whole flight valid for crop
         crop_start = 0
         crop_end = n - 1
 
     return group.with_columns(
-        pl.Series("fdm_flag_distance_ok", distance_ok),
         pl.lit(crop_start).cast(pl.Int64).alias("fdm_flag_crop_start"),
         pl.lit(crop_end).cast(pl.Int64).alias("fdm_flag_crop_end"),
-        pl.Series("_row_idx", row_idx),
-    )
+    ).drop("_prev_lat", "_prev_lon", "_dist_diff")
 
 
 def compute_flags(

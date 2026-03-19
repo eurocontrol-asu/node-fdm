@@ -19,7 +19,7 @@ from node_fdm_data.physics.constants import (
     L,
     R,
 )
-from node_fdm_data.physics.isa import isa_density, isa_pressure, isa_temperature
+from node_fdm_data.physics.isa import isa_density, isa_pressure, isa_pressure_expr, isa_temperature
 
 __all__ = [
     "A0",
@@ -39,5 +39,6 @@ __all__ = [
     "R",
     "isa_density",
     "isa_pressure",
+    "isa_pressure_expr",
     "isa_temperature",
 ]

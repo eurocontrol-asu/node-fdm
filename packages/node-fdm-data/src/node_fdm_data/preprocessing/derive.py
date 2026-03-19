@@ -7,10 +7,9 @@ departure/arrival airports.
 
 from __future__ import annotations
 
-import numpy as np
 import polars as pl
 
-from node_fdm_data.meteo import haversine
+from node_fdm_data.meteo import haversine_expr
 from node_fdm_data.physics.constants import FTMIN, KT
 
 __all__ = [
@@ -64,21 +63,18 @@ def derive_columns(
 
 def _cumulative_distance_per_flight(df: pl.DataFrame) -> pl.DataFrame:
     """Add ``fdm_distance_cum_m`` via per-flight haversine accumulation."""
-    parts = df.partition_by("meta_flight_id", maintain_order=True)
-    out: list[pl.DataFrame] = []
-    for part in parts:
-        lat = part["raw_lat_deg"].to_numpy()
-        lon = part["raw_lon_deg"].to_numpy()
-
-        if len(lat) < 2:  # noqa: PLR2004
-            part = part.with_columns(pl.lit(0.0).alias("fdm_distance_cum_m"))
-        else:
-            d = haversine(lat[:-1], lon[:-1], lat[1:], lon[1:])
-            cum_d = np.concatenate(([0.0], np.cumsum(d)))
-            part = part.with_columns(pl.Series("fdm_distance_cum_m", cum_d))
-        out.append(part)
-
-    return pl.concat(out, how="vertical_relaxed")
+    df = df.with_columns(
+        pl.col("raw_lat_deg").shift(1).over("meta_flight_id").alias("_prev_lat"),
+        pl.col("raw_lon_deg").shift(1).over("meta_flight_id").alias("_prev_lon"),
+    )
+    df = df.with_columns(
+        haversine_expr("_prev_lat", "_prev_lon", "raw_lat_deg", "raw_lon_deg")
+        .fill_null(0.0)
+        .cum_sum()
+        .over("meta_flight_id")
+        .alias("fdm_distance_cum_m"),
+    )
+    return df.drop("_prev_lat", "_prev_lon")
 
 
 def _airport_distances(
@@ -88,40 +84,51 @@ def _airport_distances(
     """Add ``fdm_adep_dist_nm`` and ``fdm_ades_dist_nm``.
 
     When *airport_coords* is ``None`` or an airport ICAO code is missing,
-    the corresponding column is filled with ``NaN``.
+    the corresponding column is filled with null.
     """
     has_departure = "meta_departure" in df.columns
     has_arrival = "meta_arrival" in df.columns
 
-    lat = df["raw_lat_deg"].to_numpy()
-    lon = df["raw_lon_deg"].to_numpy()
+    if not airport_coords:
+        return df.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("fdm_adep_dist_nm"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_ades_dist_nm"),
+        )
 
-    adep_dist = np.full(len(df), np.nan)
-    ades_dist = np.full(len(df), np.nan)
-
-    if airport_coords and has_departure:
-        departures = df["meta_departure"].to_list()
-        for icao in set(departures):
-            if icao is None or icao not in airport_coords:
-                continue
-            ap_lat, ap_lon = airport_coords[icao]
-            mask = np.array([d == icao for d in departures])
-            n = mask.sum()
-            d_m = haversine(lat[mask], lon[mask], np.full(n, ap_lat), np.full(n, ap_lon))
-            adep_dist[mask] = d_m / _M_PER_NM
-
-    if airport_coords and has_arrival:
-        arrivals = df["meta_arrival"].to_list()
-        for icao in set(arrivals):
-            if icao is None or icao not in airport_coords:
-                continue
-            ap_lat, ap_lon = airport_coords[icao]
-            mask = np.array([a == icao for a in arrivals])
-            n = mask.sum()
-            d_m = haversine(lat[mask], lon[mask], np.full(n, ap_lat), np.full(n, ap_lon))
-            ades_dist[mask] = d_m / _M_PER_NM
-
-    return df.with_columns(
-        pl.Series("fdm_adep_dist_nm", adep_dist),
-        pl.Series("fdm_ades_dist_nm", ades_dist),
+    ap_df = pl.DataFrame(
+        {
+            "_ap_icao": list(airport_coords.keys()),
+            "_ap_lat": [c[0] for c in airport_coords.values()],
+            "_ap_lon": [c[1] for c in airport_coords.values()],
+        }
     )
+
+    if has_departure:
+        df = (
+            df.cast({"meta_departure": pl.Utf8})
+            .join(ap_df, left_on="meta_departure", right_on="_ap_icao", how="left")
+            .with_columns(
+                (
+                    haversine_expr("raw_lat_deg", "raw_lon_deg", "_ap_lat", "_ap_lon") / _M_PER_NM
+                ).alias("fdm_adep_dist_nm"),
+            )
+            .drop("_ap_lat", "_ap_lon")
+        )
+    else:
+        df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias("fdm_adep_dist_nm"))
+
+    if has_arrival:
+        df = (
+            df.cast({"meta_arrival": pl.Utf8})
+            .join(ap_df, left_on="meta_arrival", right_on="_ap_icao", how="left")
+            .with_columns(
+                (
+                    haversine_expr("raw_lat_deg", "raw_lon_deg", "_ap_lat", "_ap_lon") / _M_PER_NM
+                ).alias("fdm_ades_dist_nm"),
+            )
+            .drop("_ap_lat", "_ap_lon")
+        )
+    else:
+        df = df.with_columns(pl.lit(None, dtype=pl.Float64).alias("fdm_ades_dist_nm"))
+
+    return df

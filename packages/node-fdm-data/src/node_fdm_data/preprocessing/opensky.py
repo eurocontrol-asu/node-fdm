@@ -7,10 +7,9 @@ inputs.
 
 from __future__ import annotations
 
-import numpy as np
 import polars as pl
 
-from node_fdm_data.meteo import haversine
+from node_fdm_data.meteo import haversine_expr
 from node_fdm_data.physics.constants import FTMIN, KT
 
 __all__ = [
@@ -118,13 +117,17 @@ def cumulative_distance(df: pl.DataFrame) -> pl.DataFrame:
     # Defensive guard: drop null-coord rows to prevent NaN in haversine (AXM-511)
     df = df.filter(pl.col(lat_col).is_not_null() & pl.col(lon_col).is_not_null())
 
-    lat = df[lat_col].to_numpy()
-    lon = df[lon_col].to_numpy()
-
-    if len(lat) < 2:  # noqa: PLR2004
+    if len(df) < 2:  # noqa: PLR2004
         return df.with_columns(pl.lit(0.0).alias("distance_along_track_m"))
 
-    d = haversine(lat[:-1], lon[:-1], lat[1:], lon[1:])
-    cum_d = np.concatenate(([0.0], np.cumsum(d)))
-
-    return df.with_columns(pl.Series("distance_along_track_m", cum_d))
+    df = df.with_columns(
+        pl.col(lat_col).shift(1).alias("_prev_lat"),
+        pl.col(lon_col).shift(1).alias("_prev_lon"),
+    )
+    df = df.with_columns(
+        haversine_expr("_prev_lat", "_prev_lon", lat_col, lon_col)
+        .fill_null(0.0)
+        .cum_sum()
+        .alias("distance_along_track_m"),
+    )
+    return df.drop("_prev_lat", "_prev_lon")

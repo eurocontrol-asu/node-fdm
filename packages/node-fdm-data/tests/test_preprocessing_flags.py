@@ -148,6 +148,36 @@ class TestFlagValid:
         assert result["fdm_flag_valid"].any() is False
 
 
+class TestFlagDistancePolarsHaversine:
+    """Regression: Polars haversine produces same flags as numpy version."""
+
+    def test_flags_distance_with_polars_haversine(self) -> None:
+        """Same flags produced with Polars haversine as with prior numpy impl."""
+        # 50 points with ~1111m spacing (0.01° lat) → in [200, 3000] range
+        df = _make_flight("f1", 50)
+        result = compute_flags(df, min_points=1)
+        flags = result.sort("raw_timestamp")
+
+        # First row: distance_ok = True (no diff)
+        assert flags["fdm_flag_distance_ok"][0] is True
+        # Remaining rows: all ~1111m apart → in [200, 3000] → True
+        assert flags["fdm_flag_distance_ok"][1:].all()
+
+    def test_flags_distance_with_null_coords(self) -> None:
+        """Null coordinates don't crash the distance flag computation."""
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["f1"] * 3,
+                "raw_timestamp": [0, 1, 2],
+                "raw_gs_kt": [200.0] * 3,
+                "raw_lat_deg": [48.0, None, 48.02],
+                "raw_lon_deg": [2.0, None, 2.0],
+            }
+        )
+        result = compute_flags(df, min_points=1)
+        assert len(result) == 3
+
+
 class TestEdgeCases:
     """Edge cases from the test specification."""
 
