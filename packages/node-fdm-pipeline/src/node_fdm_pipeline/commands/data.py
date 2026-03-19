@@ -22,6 +22,7 @@ if TYPE_CHECKING:
 __all__ = [
     "aircraft_list",
     "download",
+    "identify",
     "preprocess",
     "process",
 ]
@@ -280,6 +281,161 @@ def download(  # noqa: PLR0912, PLR0915
         combined = pl.concat(all_frames, how="diagonal_relaxed")
         write_columns(combined, delta_table)
         log.info("download_done", table=str(delta_table), rows=len(combined))
+
+
+# ---------------------------------------------------------------------------
+# Command 2b — identify  (v3 étape 1)
+# ---------------------------------------------------------------------------
+
+
+def _assign_flight_ids(df: pl.DataFrame, gap_threshold_s: int) -> pl.DataFrame:
+    """Add meta_original_flight_id and meta_flight_id columns via gap segmentation.
+
+    Args:
+        df: Raw Delta Table DataFrame with raw_icao24, raw_callsign, raw_timestamp.
+        gap_threshold_s: Gap threshold in seconds for segment splitting.
+
+    Returns:
+        DataFrame with _callsign, meta_original_flight_id, meta_flight_id added,
+        and temporary columns _dt_s, _seg_global, _seg_idx included for later drop.
+    """
+    import polars as pl
+
+    df = df.with_columns(
+        pl.col("raw_callsign").fill_null("NOCALL").alias("_callsign"),
+    )
+    df = df.with_columns(
+        (pl.col("raw_icao24") + "_" + pl.col("_callsign")).alias("meta_original_flight_id"),
+    )
+    df = df.sort("raw_icao24", "_callsign", "raw_timestamp")
+    df = df.with_columns(
+        pl.col("raw_timestamp")
+        .diff()
+        .dt.total_seconds()
+        .over("meta_original_flight_id")
+        .alias("_dt_s"),
+    )
+    df = df.with_columns(
+        (pl.col("_dt_s").is_null() | (pl.col("_dt_s") > gap_threshold_s))
+        .cum_sum()
+        .over("meta_original_flight_id")
+        .alias("_seg_global"),
+    )
+    df = df.with_columns(
+        (
+            pl.col("_seg_global") - pl.col("_seg_global").min().over("meta_original_flight_id")
+        ).alias("_seg_idx"),
+    )
+    return df.with_columns(
+        (pl.col("meta_original_flight_id") + "_s" + pl.col("_seg_idx").cast(pl.Utf8)).alias(
+            "meta_flight_id"
+        ),
+    )
+
+
+def _join_flightlist(df: pl.DataFrame, download_dir: Path) -> pl.DataFrame:
+    """Left-join flightlist metadata onto the flight DataFrame.
+
+    Reads all ``flightlist_*.parquet`` files from *download_dir*, concatenates
+    them, and joins departure, arrival, and typecode onto *df*.  Missing
+    columns are filled with ``null``.
+
+    Args:
+        df: DataFrame with _callsign and raw_icao24 columns.
+        download_dir: Directory containing flightlist parquet files.
+
+    Returns:
+        DataFrame with meta_departure, meta_arrival, meta_aircraft_type columns.
+    """
+    import polars as pl
+
+    fl_frames: list[pl.DataFrame] = []
+    if download_dir.exists():
+        for fl_file in sorted(download_dir.glob("flightlist_*.parquet")):
+            fl_frames.append(pl.read_parquet(fl_file))
+
+    if fl_frames:
+        fl = pl.concat(fl_frames, how="diagonal_relaxed")
+        if len(fl) > 0 and "icao24" in fl.columns:
+            if "callsign" in fl.columns:
+                fl = fl.with_columns(
+                    pl.col("callsign").fill_null("NOCALL").str.strip_chars().alias("callsign"),
+                )
+            fl_cols = [c for c in ("departure", "arrival", "typecode") if c in fl.columns]
+            if fl_cols:
+                fl_select = fl.select(["icao24", "callsign", *fl_cols]).unique(
+                    subset=["icao24", "callsign"],
+                    keep="first",
+                )
+                df = df.join(
+                    fl_select,
+                    left_on=["raw_icao24", "_callsign"],
+                    right_on=["icao24", "callsign"],
+                    how="left",
+                )
+                rename = {
+                    c: f"meta_{alias}"
+                    for c, alias in [
+                        ("departure", "departure"),
+                        ("arrival", "arrival"),
+                        ("typecode", "aircraft_type"),
+                    ]
+                    if c in df.columns
+                }
+                df = df.rename(rename)
+
+    for col in ("meta_departure", "meta_arrival", "meta_aircraft_type"):
+        if col not in df.columns:
+            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
+    return df
+
+
+def identify(
+    *,
+    config: Path,
+    gap_threshold_s: int = 30,
+    dry_run: bool = False,
+) -> None:
+    """Identify flights: segment at gaps, assign flight IDs, join flightlist.
+
+    Reads the Delta Table produced by ``download``, detects temporal gaps
+    within each (icao24, callsign) group, assigns ``meta_flight_id`` with
+    segment suffixes, and joins flightlist metadata (departure, arrival,
+    aircraft type).
+
+    Short segments are **not** filtered — they are flagged at étape 2.
+
+    Args:
+        config: Path to the YAML config file.
+        gap_threshold_s: Gap threshold in seconds for segment splitting.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("identify_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("identify_dry_run", msg="Config valid, would identify flights")
+        return
+
+    df = read_delta_table(delta_table)
+    df = _assign_flight_ids(df, gap_threshold_s)
+    df = _join_flightlist(df, cfg.paths.resolve("download_dir"))
+    df = df.drop(["_callsign", "_dt_s", "_seg_global", "_seg_idx"])
+
+    write_columns(df, delta_table)
+
+    log.info(
+        "identify_done",
+        flights=df["meta_original_flight_id"].n_unique(),
+        segments=df["meta_flight_id"].n_unique(),
+        rows=len(df),
+    )
 
 
 # ---------------------------------------------------------------------------

@@ -229,6 +229,35 @@ def download(
 
 
 @app.command
+def identify(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    gap_threshold_s: Annotated[
+        int,
+        cyclopts.Parameter(
+            name="--gap-threshold",
+            help="Gap threshold in seconds for segment splitting",
+        ),
+    ] = 30,
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Identify flights: segment at gaps, assign IDs, join flightlist metadata."""
+    from node_fdm_pipeline.commands.data import identify as identify_fn
+
+    identify_fn(
+        config=config,
+        gap_threshold_s=gap_threshold_s,
+        dry_run=dry_run,
+    )
+
+
+@app.command
 def preprocess(
     *,
     config: Annotated[
