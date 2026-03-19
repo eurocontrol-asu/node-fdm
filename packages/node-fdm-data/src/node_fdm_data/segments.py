@@ -260,6 +260,6 @@ def build_selected_params(
     # Non-segment timesteps → 0.0 means "no active selection" for the model.
     sel_cols = [c for c in ("mach_sel", "cas_sel", "vz_sel", "gamma_sel") if c in df.columns]
     if sel_cols:
-        df = df.with_columns(pl.col(c).fill_null(0.0) for c in sel_cols)
+        df = df.with_columns(pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols)
 
     return df

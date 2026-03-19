@@ -334,7 +334,8 @@ class TestBuildSelectedParams:
         assert "mach" in df.columns, "continuous mach column missing"
         assert "mach_sel" in df.columns, "segment-detected mach_sel column missing"
 
-        # mach is continuous (no NaN), mach_sel has NaN gaps
+        # mach is continuous (no NaN), mach_sel has 0.0 outside segments
         assert df["mach"].null_count() == 0
-        mach_sel_nulls = df["mach_sel"].is_null().sum() + df["mach_sel"].is_nan().sum()
-        assert mach_sel_nulls > 0, "mach_sel should have NaN gaps outside segments"
+        mach_sel_zeros = (df["mach_sel"] == 0.0).sum()
+        assert mach_sel_zeros > 0, "mach_sel should have 0.0 gaps outside segments"
+        assert df["mach_sel"].is_nan().sum() == 0, "mach_sel should have no NaN after fill"
