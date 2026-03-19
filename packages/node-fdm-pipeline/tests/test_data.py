@@ -43,7 +43,7 @@ class TestProcessCommand:
         process(arch="opensky", config=tmp_config, dry_run=True)
         # No files should be created beyond the config dir
 
-    def test_process_empty_preprocess_dir(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_empty_preprocess_dir(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """Warning log and clean return when no parquet files found."""
         # Create a config pointing at an empty preprocess dir
         data_dir = tmp_path / "data"
@@ -64,24 +64,12 @@ typecodes:
 """
         )
 
-        mock_arco_cls = mocker.MagicMock()
-        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
-        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
-        mocker.patch.dict(
-            "sys.modules",
-            {
-                "fastmeteo": mocker.MagicMock(),
-                "fastmeteo.source": mock_source,
-                "fastmeteo.source.arco_era5": mock_source_arco,
-            },
-        )
-
         process(arch="opensky", config=config, dry_run=False)
 
         # No output files — clean return on empty dir
         assert not process_dir.exists() or len(list(process_dir.iterdir())) == 0
 
-    def test_process_single_file(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_single_file(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """Process a synthetic parquet and verify output exists."""
         data_dir = tmp_path / "data"
         preprocess_dir = data_dir / "preprocess"
@@ -138,22 +126,8 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        mock_arco_cls = mocker.MagicMock()
-        mock_arco_instance = mocker.MagicMock()
+        _mock_arco_cls, mock_arco_instance = mock_fastmeteo
         mock_arco_instance.interpolate.side_effect = fake_interpolate
-        mock_arco_cls.return_value = mock_arco_instance
-
-        # Patch the full import chain: fastmeteo.source.arco_era5.ArcoEra5
-        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
-        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
-        mocker.patch.dict(
-            "sys.modules",
-            {
-                "fastmeteo": mocker.MagicMock(),
-                "fastmeteo.source": mock_source,
-                "fastmeteo.source.arco_era5": mock_source_arco,
-            },
-        )
 
         process(arch="opensky", config=config, dry_run=False)
 
@@ -170,7 +144,7 @@ typecodes:
         assert "track_ortho" in result.columns
         assert "drift_angle" in result.columns
 
-    def test_process_skip_existing(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_skip_existing(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """Already-processed files are skipped."""
         data_dir = tmp_path / "data"
         preprocess_dir = data_dir / "preprocess"
@@ -191,18 +165,6 @@ typecodes:
 """
         )
 
-        mock_arco_cls = mocker.MagicMock()
-        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
-        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
-        mocker.patch.dict(
-            "sys.modules",
-            {
-                "fastmeteo": mocker.MagicMock(),
-                "fastmeteo.source": mock_source,
-                "fastmeteo.source.arco_era5": mock_source_arco,
-            },
-        )
-
         # Create input AND output so it should skip
         df = pl.DataFrame({"x": [1, 2, 3]})
         df.write_parquet(preprocess_dir / "file.parquet")
@@ -217,7 +179,7 @@ typecodes:
     def _make_process_env(
         self,
         tmp_path: Path,
-        mocker: Any,
+        mock_fastmeteo: Any,
         *,
         interpolate_fn: Any,
     ) -> tuple[Path, Path]:
@@ -271,37 +233,28 @@ typecodes:
         )
         df.write_parquet(preprocess_dir / "processed_20250101.parquet")
 
-        mock_arco_cls = mocker.MagicMock()
-        mock_arco_instance = mocker.MagicMock()
+        _mock_arco_cls, mock_arco_instance = mock_fastmeteo
         mock_arco_instance.interpolate.side_effect = interpolate_fn
-        mock_arco_cls.return_value = mock_arco_instance
-
-        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
-        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
-        mocker.patch.dict(
-            "sys.modules",
-            {
-                "fastmeteo": mocker.MagicMock(),
-                "fastmeteo.source": mock_source,
-                "fastmeteo.source.arco_era5": mock_source_arco,
-            },
-        )
 
         output = process_dir / "processed_20250101.parquet"
         return config, output
 
-    def test_process_detects_missing_era5_columns(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_detects_missing_era5_columns(
+        self, tmp_path: Path, mock_fastmeteo: Any
+    ) -> None:
         """Interpolate returns df without ERA5 cols → file skipped."""
 
         def fake_interpolate(pdf: Any) -> Any:
             return pdf.copy()  # no ERA5 cols added
 
-        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        config, output = self._make_process_env(
+            tmp_path, mock_fastmeteo, interpolate_fn=fake_interpolate
+        )
         process(arch="opensky", config=config, dry_run=False)
 
         assert not output.exists()
 
-    def test_process_detects_all_null_era5(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_detects_all_null_era5(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """Interpolate returns df with all-null ERA5 cols → file skipped."""
         import numpy as np
 
@@ -312,12 +265,14 @@ typecodes:
             pdf["v_component_of_wind"] = np.nan
             return pdf
 
-        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        config, output = self._make_process_env(
+            tmp_path, mock_fastmeteo, interpolate_fn=fake_interpolate
+        )
         process(arch="opensky", config=config, dry_run=False)
 
         assert not output.exists()
 
-    def test_process_era5_partial_null(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_era5_partial_null(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """ERA5 with 10% null temperature → file skipped (> 5% threshold)."""
         import numpy as np
 
@@ -333,12 +288,14 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        config, output = self._make_process_env(
+            tmp_path, mock_fastmeteo, interpolate_fn=fake_interpolate
+        )
         process(arch="opensky", config=config, dry_run=False)
 
         assert not output.exists()
 
-    def test_process_era5_below_threshold(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_era5_below_threshold(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """ERA5 with 2% null temperature → file processed, null rows dropped."""
         import numpy as np
 
@@ -400,21 +357,8 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        mock_arco_cls = mocker.MagicMock()
-        mock_arco_instance = mocker.MagicMock()
+        _mock_arco_cls, mock_arco_instance = mock_fastmeteo
         mock_arco_instance.interpolate.side_effect = fake_interpolate
-        mock_arco_cls.return_value = mock_arco_instance
-
-        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
-        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
-        mocker.patch.dict(
-            "sys.modules",
-            {
-                "fastmeteo": mocker.MagicMock(),
-                "fastmeteo.source": mock_source,
-                "fastmeteo.source.arco_era5": mock_source_arco,
-            },
-        )
 
         output = process_dir / "processed_20250101.parquet"
         process(arch="opensky", config=config, dry_run=False)
@@ -425,7 +369,7 @@ typecodes:
         assert result["temperature"].null_count() == 0
         assert result["temperature"].is_nan().sum() == 0
 
-    def test_process_era5_nan_values(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_era5_nan_values(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """ERA5 with NaN (not null) temperature above threshold → file skipped."""
 
         def fake_interpolate(pdf: Any) -> Any:
@@ -440,12 +384,16 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        config, output = self._make_process_env(
+            tmp_path, mock_fastmeteo, interpolate_fn=fake_interpolate
+        )
         process(arch="opensky", config=config, dry_run=False)
 
         assert not output.exists()
 
-    def test_process_era5_one_column_above_threshold(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_era5_one_column_above_threshold(
+        self, tmp_path: Path, mock_fastmeteo: Any
+    ) -> None:
         """One ERA5 column at 6% null, others at 0% → file skipped entirely."""
         import numpy as np
 
@@ -461,12 +409,14 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        config, output = self._make_process_env(
+            tmp_path, mock_fastmeteo, interpolate_fn=fake_interpolate
+        )
         process(arch="opensky", config=config, dry_run=False)
 
         assert not output.exists()
 
-    def test_process_era5_happy_path(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_era5_happy_path(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """Interpolate returns df with valid ERA5 cols → file processed."""
 
         def fake_interpolate(pdf: Any) -> Any:
@@ -476,14 +426,16 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        config, output = self._make_process_env(tmp_path, mocker, interpolate_fn=fake_interpolate)
+        config, output = self._make_process_env(
+            tmp_path, mock_fastmeteo, interpolate_fn=fake_interpolate
+        )
         process(arch="opensky", config=config, dry_run=False)
 
         assert output.exists()
         result = pl.read_parquet(output)
         assert "temperature" in result.columns
 
-    def test_process_drops_null_coords(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_drops_null_coords(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """Null lat/lon rows are dropped before ERA5 — no NaN in output (AXM-511)."""
         data_dir = tmp_path / "data"
         preprocess_dir = data_dir / "preprocess"
@@ -546,21 +498,8 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        mock_arco_cls = mocker.MagicMock()
-        mock_arco_instance = mocker.MagicMock()
+        _mock_arco_cls, mock_arco_instance = mock_fastmeteo
         mock_arco_instance.interpolate.side_effect = fake_interpolate
-        mock_arco_cls.return_value = mock_arco_instance
-
-        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
-        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
-        mocker.patch.dict(
-            "sys.modules",
-            {
-                "fastmeteo": mocker.MagicMock(),
-                "fastmeteo.source": mock_source,
-                "fastmeteo.source.arco_era5": mock_source_arco,
-            },
-        )
 
         process(arch="opensky", config=config, dry_run=False)
 
@@ -575,7 +514,7 @@ typecodes:
         assert result["era_mach"].is_nan().sum() == 0
         assert result["distance_along_track_m"].is_nan().sum() == 0
 
-    def test_process_filters_mach_outliers(self, tmp_path: Path, mocker: Any) -> None:
+    def test_process_filters_mach_outliers(self, tmp_path: Path, mock_fastmeteo: Any) -> None:
         """Rows with Mach > 1.05 (ADS-B groundspeed outliers) are filtered out."""
         data_dir = tmp_path / "data"
         preprocess_dir = data_dir / "preprocess"
@@ -637,21 +576,8 @@ typecodes:
             pdf["v_component_of_wind"] = -3.0
             return pdf
 
-        mock_arco_cls = mocker.MagicMock()
-        mock_arco_instance = mocker.MagicMock()
+        _mock_arco_cls, mock_arco_instance = mock_fastmeteo
         mock_arco_instance.interpolate.side_effect = fake_interpolate
-        mock_arco_cls.return_value = mock_arco_instance
-
-        mock_source_arco = mocker.MagicMock(ArcoEra5=mock_arco_cls)
-        mock_source = mocker.MagicMock(arco_era5=mock_source_arco)
-        mocker.patch.dict(
-            "sys.modules",
-            {
-                "fastmeteo": mocker.MagicMock(),
-                "fastmeteo.source": mock_source,
-                "fastmeteo.source.arco_era5": mock_source_arco,
-            },
-        )
 
         process(arch="opensky", config=config, dry_run=False)
 

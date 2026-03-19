@@ -2,13 +2,36 @@
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
-from typing import TYPE_CHECKING
+from unittest.mock import MagicMock
 
 import pytest
 
-if TYPE_CHECKING:
-    pass
+
+@pytest.fixture
+def mock_fastmeteo(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicMock]:
+    """Isolated fastmeteo sys.modules mock with strict per-test cleanup.
+
+    Uses ``monkeypatch.setitem`` instead of ``mocker.patch.dict`` so that
+    each test gets fresh mocks and ``sys.modules`` is fully restored on
+    teardown — preventing cross-test import cache contamination.
+
+    Returns ``(mock_arco_cls, mock_arco_instance)`` so tests can configure
+    ``mock_arco_instance.interpolate.side_effect`` as needed.
+    """
+    mock_arco_cls = MagicMock()
+    mock_arco_instance = MagicMock()
+    mock_arco_cls.return_value = mock_arco_instance
+
+    mock_source_arco = MagicMock(ArcoEra5=mock_arco_cls)
+    mock_source = MagicMock(arco_era5=mock_source_arco)
+
+    monkeypatch.setitem(sys.modules, "fastmeteo", MagicMock())
+    monkeypatch.setitem(sys.modules, "fastmeteo.source", mock_source)
+    monkeypatch.setitem(sys.modules, "fastmeteo.source.arco_era5", mock_source_arco)
+
+    return mock_arco_cls, mock_arco_instance
 
 
 @pytest.fixture
