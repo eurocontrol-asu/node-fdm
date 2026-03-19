@@ -1,6 +1,7 @@
 """Training command — ``fdm train``.
 
-Ports logic from ``scripts/opensky/05_training.py`` into a typed CLI function.
+Reads flight data from the Delta Table, filters on validity flags,
+and trains Neural ODE models per aircraft typecode.
 """
 
 from __future__ import annotations
@@ -50,17 +51,20 @@ def run_training(
     importlib.import_module(info.architecture_import)
 
     typecodes = [typecode] if typecode else cfg.typecodes
-    process_dir = cfg.paths.resolve("process_dir")
+
+    delta_table = cfg.paths.resolve("delta_table")
+    if not delta_table.exists():
+        log.error("train_missing_delta", path=str(delta_table))
+        msg = f"Delta table not found at {delta_table}. Run the pipeline first."
+        raise SystemExit(msg)
+
     models_dir = cfg.paths.resolve("models_dir")
     models_dir.mkdir(parents=True, exist_ok=True)
 
-    split_csv = process_dir / "dataset_split.csv"
-    if not split_csv.exists():
-        log.error("train_missing_split", path=str(split_csv))
-        msg = f"dataset_split.csv not found at {split_csv}. Run 'fdm process' first."
-        raise SystemExit(msg)
+    # Read Delta Table once, filter on fdm_flag_valid (AC2)
+    full_df = pl.read_delta(str(delta_table))
+    full_df = full_df.filter(pl.col("fdm_flag_valid"))
 
-    split_df = pl.read_csv(split_csv)
     dx_col_names = [col for _, col in info.dx_cols]
 
     log.info(
@@ -88,7 +92,7 @@ def run_training(
             num_workers=4,
         )
 
-        data_df = split_df.filter(pl.col("aircraft_type") == acft)
+        data_df = full_df.filter(pl.col("meta_aircraft_type") == acft)
 
         if len(data_df) == 0:
             log.warning("train_empty_dataset", typecode=acft)
@@ -102,8 +106,6 @@ def run_training(
             dx_cols=dx_col_names,
             seq_len=training_config.seq_len,
             shift=training_config.shift,
-            preprocessing_fn=info.preprocessing_fn,
-            segment_filter_fn=info.segment_filter_fn,
             train_limit=5000,
             val_limit=5000,
         )

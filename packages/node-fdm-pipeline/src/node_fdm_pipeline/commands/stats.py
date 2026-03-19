@@ -38,25 +38,31 @@ def run_dataset_stats(
     cfg = PipelineConfig.from_yaml(config)
     info = resolve_architecture(arch)
 
-    process_dir = cfg.paths.resolve("process_dir")
-    split_csv = process_dir / "dataset_split.csv"
-
-    if not split_csv.exists():
-        log.error("stats_missing_split", path=str(split_csv))
-        msg = f"dataset_split.csv not found at {split_csv}. Run 'fdm process' first."
+    delta_table = cfg.paths.resolve("delta_table")
+    if not delta_table.exists():
+        log.error("stats_missing_delta", path=str(delta_table))
+        msg = f"Delta table not found at {delta_table}. Run the pipeline first."
         raise SystemExit(msg)
 
-    split_df = pl.read_csv(split_csv)
+    full_df = pl.read_delta(str(delta_table))
+    full_df = full_df.filter(pl.col("fdm_flag_valid"))
+
     dx_col_names = [col for _, col in info.dx_cols]
 
     log.info("stats_start", arch=arch, typecodes=cfg.typecodes)
 
     for acft in cfg.typecodes:
-        data_df = split_df.filter(pl.col("aircraft_type") == acft)
+        data_df = full_df.filter(pl.col("meta_aircraft_type") == acft)
 
-        train_files = data_df.filter(pl.col("split") == "train")["filepath"].to_list()
-        val_files = data_df.filter(pl.col("split") == "val")["filepath"].to_list()
-        test_files = data_df.filter(pl.col("split") == "test")["filepath"].to_list()
+        train_flights = (
+            data_df.filter(pl.col("meta_split") == "train").get_column("meta_flight_id").n_unique()
+        )
+        val_flights = (
+            data_df.filter(pl.col("meta_split") == "val").get_column("meta_flight_id").n_unique()
+        )
+        test_flights = (
+            data_df.filter(pl.col("meta_split") == "test").get_column("meta_flight_id").n_unique()
+        )
 
         train_ds, val_ds = get_train_val_data(
             data_df=data_df,
@@ -66,8 +72,6 @@ def run_dataset_stats(
             dx_cols=dx_col_names,
             seq_len=_SEQ_LEN,
             shift=_SEQ_LEN,
-            preprocessing_fn=info.preprocessing_fn,
-            segment_filter_fn=info.segment_filter_fn,
             train_limit=None,
             val_limit=None,
         )
@@ -78,11 +82,11 @@ def run_dataset_stats(
         log.info(
             "stats_typecode",
             typecode=acft,
-            train_flights=len(train_files),
+            train_flights=train_flights,
             train_hours=train_hours,
-            val_flights=len(val_files),
+            val_flights=val_flights,
             val_hours=val_hours,
-            test_flights=len(test_files),
+            test_flights=test_flights,
         )
 
     log.info("stats_done", typecodes=cfg.typecodes)

@@ -216,9 +216,9 @@ class TestPredictSIPreprocessing:
                 "raw_gs_kt": [440.0] * n,
                 "track": [90.0] * n,
                 "flight_id": ["F001"] * n,
-                "temperature": [220.0] * n,
-                "adep_dist": [500.0] * n,
-                "ades_dist": [300.0] * n,
+                "era_temp_K": [220.0] * n,
+                "fdm_adep_dist_nm": [270.0] * n,
+                "fdm_ades_dist_nm": [162.0] * n,
                 "distance_along_track_m": [float(i * 1000) for i in range(n)],
                 # Added by build_selected_params (segment detection)
                 "fdm_mach_sel": [0.82] * n,

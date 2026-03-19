@@ -21,8 +21,8 @@ class ArchitectureInfo:
         u_cols: Control column names.
         e0_cols: Environment column names.
         dx_cols: Derivative column specs ``(sign, col_name)``.
-        preprocessing_fn: Flight preprocessing function.
-        segment_filter_fn: Optional segment filter function.
+        preprocessing_fn: Flight preprocessing function (used by predict/stats).
+        segment_filter_fn: Optional segment filter function (used by predict/stats).
         architecture_import: Dotted import path to trigger auto-registration.
     """
 

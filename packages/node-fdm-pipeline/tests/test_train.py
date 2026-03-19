@@ -5,21 +5,46 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import polars as pl
 import pytest
 
 from node_fdm_pipeline.commands.train import run_training
 
 
+def _make_delta_table(path: Path, *, typecodes: list[str] | None = None) -> None:
+    """Create a minimal Delta Table with required columns."""
+    typecodes = typecodes or ["A320"]
+    rng = np.random.default_rng(42)
+    rows = []
+    for acft in typecodes:
+        for i in range(4):
+            split = ["train", "train", "val", "test"][i]
+            fid = f"abc123_{acft}_{i:02d}_s0"
+            for _j in range(20):
+                rows.append(
+                    {
+                        "meta_flight_id": fid,
+                        "meta_split": split,
+                        "meta_aircraft_type": acft,
+                        "fdm_flag_valid": True,
+                        "fdm_flag_distance_ok": True,
+                        "raw_alt_m": float(rng.uniform(300, 10000)),
+                        "era_tas_ms": float(rng.uniform(100, 250)),
+                    }
+                )
+    df = pl.DataFrame(rows)
+    df.write_delta(str(path), mode="overwrite")
+
+
 class TestRunTraining:
     """Tests for ``run_training``."""
 
     def _make_config(self, tmp_path: Path) -> Path:
-        """Create a valid YAML config and split CSV."""
+        """Create a valid YAML config and Delta Table."""
         data_dir = tmp_path / "data"
-        process_dir = data_dir / "processed_flights"
         models_dir = data_dir / "models"
-        process_dir.mkdir(parents=True)
+        data_dir.mkdir(parents=True)
         models_dir.mkdir(parents=True)
 
         config = tmp_path / "config.yaml"
@@ -34,16 +59,8 @@ typecodes:
 """
         )
 
-        # Create a split CSV
-        split_df = pl.DataFrame(
-            {
-                "filepath": ["/fake/flight1.parquet", "/fake/flight2.parquet"],
-                "icao": ["abc123", "def456"],
-                "split": ["train", "val"],
-                "aircraft_type": ["A320", "A320"],
-            }
-        )
-        split_df.write_csv(process_dir / "dataset_split.csv")
+        # Create Delta Table
+        _make_delta_table(data_dir / "flights.delta", typecodes=["A320"])
 
         return config
 
@@ -111,8 +128,8 @@ typecodes:
         # Only one call to trainer (A320, not B738)
         assert mock_trainer_cls.call_count == 1
 
-    def test_train_missing_split(self, tmp_path: Path) -> None:
-        """Raises SystemExit when dataset_split.csv is missing."""
+    def test_train_missing_delta(self, tmp_path: Path) -> None:
+        """Raises SystemExit when Delta Table doesn't exist."""
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         config = tmp_path / "config.yaml"
@@ -144,7 +161,7 @@ typecodes:
         config = self._make_config(tmp_path)
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            # Train for B738 which has no entries in split CSV
+            # Train for B738 which has no entries in Delta Table
             run_training(
                 arch="opensky",
                 config=config,

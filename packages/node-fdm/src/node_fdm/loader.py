@@ -1,13 +1,10 @@
-"""Helper for building train/validation datasets from a split DataFrame.
+"""Helper for building train/validation datasets from a Delta Table DataFrame.
 
-Reads flight parquet files, windows them into sequences, and returns
-typed :class:`FlightDataset` instances.
+Reads flight data grouped by ``meta_flight_id``, windows them into
+sequences, and returns typed :class:`FlightDataset` instances.
 """
 
 from __future__ import annotations
-
-from collections.abc import Callable, Sequence
-from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -23,29 +20,39 @@ __all__ = [
 log = structlog.get_logger("node_fdm.loader")
 
 
+def _fill_nan_sel(df: pl.DataFrame) -> pl.DataFrame:
+    """Fill NaN and null to 0.0 on ``fdm_*_sel*`` columns."""
+    sel_cols = [c for c in df.columns if c.startswith("fdm_") and "_sel" in c]
+    if sel_cols:
+        df = df.with_columns(
+            [pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols],
+        )
+    return df
+
+
 def _load_and_window(
-    flight_paths: Sequence[str | Path],
+    flights_df: pl.DataFrame,
     x_cols: list[str],
     u_cols: list[str],
     e_cols: list[str],
     dx_cols: list[str],
     seq_len: int,
     shift: int,
-    preprocessing_fn: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
-    segment_filter_fn: Callable[[pl.DataFrame, int, int], bool] | None = None,
+    *,
+    flight_limit: int | None = None,
 ) -> list[FlightSample]:
-    """Load flights and slice into fixed-length windows.
+    """Group flights and slice into fixed-length windows.
 
     Args:
-        flight_paths: Paths to parquet files.
+        flights_df: DataFrame with all rows for one split, containing
+            ``meta_flight_id`` and optionally ``fdm_flag_distance_ok``.
         x_cols: State column names.
         u_cols: Control column names.
         e_cols: Environment column names.
         dx_cols: Derivative column names.
         seq_len: Window length.
         shift: Step between windows.
-        preprocessing_fn: Optional preprocessing on the raw DataFrame.
-        segment_filter_fn: Optional filter ``(df, start, seq_len) → bool``.
+        flight_limit: Max number of flights to process.
 
     Returns:
         List of windowed :class:`FlightSample` instances.
@@ -53,17 +60,20 @@ def _load_and_window(
     samples: list[FlightSample] = []
     all_cols = x_cols + u_cols + e_cols + dx_cols
 
-    for path in flight_paths:
-        df = pl.read_parquet(path)
-        if preprocessing_fn is not None:
-            df = preprocessing_fn(df)
+    # Verify all columns exist
+    missing = [c for c in all_cols if c not in flights_df.columns]
+    if missing:
+        log.warning("missing_columns", missing=missing)
+        return samples
 
-        # Verify all columns exist
-        missing = [c for c in all_cols if c not in df.columns]
-        if missing:
-            log.warning("missing_columns", path=str(path), missing=missing)
-            continue
+    has_distance_flag = "fdm_flag_distance_ok" in flights_df.columns
 
+    flight_ids = flights_df.get_column("meta_flight_id").unique().sort().to_list()
+    if flight_limit is not None:
+        flight_ids = flight_ids[:flight_limit]
+
+    for fid in flight_ids:
+        df = flights_df.filter(pl.col("meta_flight_id") == fid)
         n_rows = len(df)
         if n_rows < seq_len:
             continue
@@ -74,10 +84,15 @@ def _load_and_window(
         e_arr = df.select(e_cols).to_numpy().astype(np.float32)
         dx_arr = df.select(dx_cols).to_numpy().astype(np.float32)
 
+        # Distance flag array for segment filtering (AC6)
+        dist_ok: np.ndarray | None = None
+        if has_distance_flag:
+            dist_ok = df.get_column("fdm_flag_distance_ok").to_numpy()
+
         for start in range(0, n_rows - seq_len + 1, shift):
             end = start + seq_len
 
-            # Check for NaN
+            # Check for NaN / inf
             slices = [
                 x_arr[start:end],
                 u_arr[start:end],
@@ -87,8 +102,8 @@ def _load_and_window(
             if not all(np.isfinite(s).all() for s in slices):
                 continue
 
-            # Custom segment filter
-            if segment_filter_fn is not None and not segment_filter_fn(df, start, seq_len):
+            # Segment filter: all rows in window must have distance_ok (AC6)
+            if dist_ok is not None and not dist_ok[start:end].all():
                 continue
 
             samples.append(
@@ -112,60 +127,62 @@ def get_train_val_data(
     *,
     seq_len: int = 60,
     shift: int = 60,
-    preprocessing_fn: Callable[[pl.DataFrame], pl.DataFrame] | None = None,
-    segment_filter_fn: Callable[[pl.DataFrame, int, int], bool] | None = None,
     train_limit: int | None = None,
     val_limit: int | None = None,
 ) -> tuple[FlightDataset, FlightDataset]:
-    """Create training and validation datasets from a labeled file list.
+    """Create training and validation datasets from Delta Table data.
+
+    The input DataFrame must contain ``meta_split`` and ``meta_flight_id``
+    columns. Rows should already be filtered on ``fdm_flag_valid``.
+
+    Fills NaN/null to 0.0 on ``fdm_*_sel*`` columns (U columns) at load
+    time, so no separate preprocessing step is needed.
 
     Args:
-        data_df: DataFrame with ``filepath`` and ``split`` columns.
-        x_cols: State column names.
-        u_cols: Control column names.
-        e_cols: Environment column names.
-        dx_cols: Derivative column names.
+        data_df: DataFrame loaded from the Delta Table, filtered on
+            ``fdm_flag_valid`` and (optionally) ``meta_aircraft_type``.
+        x_cols: State column names (SI units).
+        u_cols: Control column names (SI units).
+        e_cols: Environment column names (SI units).
+        dx_cols: Derivative column names (SI units).
         seq_len: Window length for each sample.
         shift: Step between consecutive windows.
-        preprocessing_fn: Optional flight preprocessing function.
-        segment_filter_fn: Optional segment filter function.
-        train_limit: Max number of training files to load.
-        val_limit: Max number of validation files to load.
+        train_limit: Max number of training flights to load.
+        val_limit: Max number of validation flights to load.
 
     Returns:
         Tuple of ``(train_dataset, val_dataset)``.
     """
-    train_files = data_df.filter(pl.col("split") == "train").get_column("filepath").to_list()
-    val_files = data_df.filter(pl.col("split") == "val").get_column("filepath").to_list()
+    # Fill NaN→0.0 on _sel columns (AC3)
+    data_df = _fill_nan_sel(data_df)
 
-    if train_limit is not None:
-        train_files = train_files[:train_limit]
-    if val_limit is not None:
-        val_files = val_files[:val_limit]
+    # Split by meta_split (AC2)
+    train_df = data_df.filter(pl.col("meta_split") == "train")
+    val_df = data_df.filter(pl.col("meta_split") == "val")
 
-    log.info("loading_data", train_files=len(train_files), val_files=len(val_files))
+    n_train_flights = train_df.get_column("meta_flight_id").n_unique()
+    n_val_flights = val_df.get_column("meta_flight_id").n_unique()
+    log.info("loading_data", train_flights=n_train_flights, val_flights=n_val_flights)
 
     train_samples = _load_and_window(
-        train_files,
+        train_df,
         x_cols,
         u_cols,
         e_cols,
         dx_cols,
         seq_len=seq_len,
         shift=shift,
-        preprocessing_fn=preprocessing_fn,
-        segment_filter_fn=segment_filter_fn,
+        flight_limit=train_limit,
     )
     val_samples = _load_and_window(
-        val_files,
+        val_df,
         x_cols,
         u_cols,
         e_cols,
         dx_cols,
         seq_len=seq_len,
         shift=shift,
-        preprocessing_fn=preprocessing_fn,
-        segment_filter_fn=segment_filter_fn,
+        flight_limit=val_limit,
     )
 
     log.info(

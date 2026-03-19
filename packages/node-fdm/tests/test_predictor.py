@@ -213,9 +213,9 @@ class TestNodeFDMPredictor:
         n_e = len(predictor.spec.e0_cols)
 
         x_init = np.zeros(n_x, dtype=np.float32)
-        x_init[1] = float("nan")  # altitude_m
+        x_init[1] = float("nan")  # raw_alt_m
 
-        with pytest.raises(ValueError, match="altitude_m"):
+        with pytest.raises(ValueError, match="raw_alt_m"):
             predictor.predict_flight(
                 x_init,
                 np.zeros((5, n_u), dtype=np.float32),
