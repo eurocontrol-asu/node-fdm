@@ -8,7 +8,6 @@ from __future__ import annotations
 
 import warnings
 from pathlib import Path
-from typing import Any
 
 import numpy as np
 import polars as pl
@@ -118,49 +117,50 @@ def compute_errors_by_phase(
 def _evaluate_typecode(
     acft: str,
     *,
-    process_dir: Path,
+    acft_df: pl.DataFrame,
     predict_dir: Path,
     bada_dir: Path,
-    processor: Any,
     variables: dict[str, str],
 ) -> list[pl.DataFrame]:
-    """Collect error metrics for a single typecode."""
+    """Collect error metrics for a single typecode.
+
+    Ground truth comes from the Delta Table (``acft_df``).  Prediction
+    and BADA output files are matched by ``meta_flight_id``.
+    """
     acft_bada = bada_dir / acft
     acft_pred = predict_dir / acft
     if not acft_bada.exists() and not acft_pred.exists():
         log.info("evaluate_skip_typecode", typecode=acft, reason="no predictions")
         return []
 
-    source_dir = acft_bada if acft_bada.exists() else acft_pred
-    parquet_files = sorted(source_dir.glob("*.parquet"))
-    if not parquet_files:
-        return []
+    flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
 
-    log.info("evaluate_typecode", typecode=acft, flights=len(parquet_files))
+    log.info("evaluate_typecode", typecode=acft, flights=len(flights))
 
     acft_frames: list[pl.DataFrame] = []
-    for file in parquet_files:
+    for flight_df in flights:
         try:
-            gt_path = process_dir / acft / file.name
-            if not gt_path.exists():
-                continue
-            f = pl.read_parquet(gt_path)
-            processor.process(f).collect()
+            fid = flight_df["meta_flight_id"][0]
+            fname = f"{fid}.parquet"
 
-            pred_path = predict_dir / acft / file.name
+            pred_path = predict_dir / acft / fname
+            bada_path = bada_dir / acft / fname
+            if not pred_path.exists() and not bada_path.exists():
+                continue
+
+            f = flight_df
             if pred_path.exists():
                 f = f.hstack(pl.read_parquet(pred_path))
-
-            bada_path = bada_dir / acft / file.name
             if bada_path.exists():
                 f = f.hstack(pl.read_parquet(bada_path))
 
-            if "altitude" in f.columns:
-                f = f.filter(pl.col("altitude") > _MIN_ALTITUDE_FT)
+            # Filter low-altitude data
+            if "raw_alt_ft" in f.columns:
+                f = f.filter(pl.col("raw_alt_ft") > _MIN_ALTITUDE_FT)
 
             acft_frames.append(f)
         except Exception:  # noqa: BLE001
-            log.debug("evaluate_file_error", file=str(file))
+            log.debug("evaluate_flight_error", flight_id=fid)
             continue
 
     if not acft_frames:
@@ -174,9 +174,14 @@ def _evaluate_typecode(
             pred_col = f"{prefix}{var}"
             if pred_col not in df_acft.columns or var not in df_acft.columns:
                 continue
-            if "vz_ms" not in df_acft.columns:
+            if "raw_vz_ms" not in df_acft.columns:
                 continue
-            metrics = compute_errors_by_phase(df_acft, pred_col=pred_col, target_col=var)
+            metrics = compute_errors_by_phase(
+                df_acft,
+                pred_col=pred_col,
+                target_col=var,
+                vertical_rate_col="raw_vz_ms",
+            )
             metrics = metrics.with_columns(
                 pl.lit(acft).alias("Aircraft"),
                 pl.lit(label).alias("Variable"),
@@ -194,15 +199,14 @@ def run_evaluate(
 ) -> None:
     """Compute prediction error metrics per flight phase.
 
-    Loads ground-truth, Node-FDM predictions, and BADA predictions,
-    then computes MAE/MAPE/ME by phase for each variable and model.
+    Reads ground truth from the Delta Table (v3 pipeline), then loads
+    per-flight predictions and BADA outputs for comparison.
 
     Args:
         arch: Architecture identifier (``"opensky"`` or ``"qar"``).
         config: Path to YAML pipeline config.
     """
-    from node_fdm_data.preprocessing.opensky import flight_processing
-    from node_fdm_data.processor import FlightProcessor
+    from node_fdm_data.delta import read_delta_table
 
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
@@ -210,16 +214,20 @@ def run_evaluate(
     cfg = PipelineConfig.from_yaml(config)
     _info = resolve_architecture(arch)
 
-    process_dir = cfg.paths.resolve("process_dir")
+    delta_table = cfg.paths.resolve("delta_table")
     predict_dir = cfg.paths.resolve("predicted_dir")
     bada_dir = cfg.paths.resolve("bada_dir")
 
-    processor = FlightProcessor(steps=[flight_processing])
+    # Read Delta Table — filter on valid + test split
+    df = read_delta_table(delta_table)
+    df = df.filter(
+        pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"),
+    )
 
     variables = {
-        "alt_std_m": "Altitude [m]",
-        "tas_ms": "True airspeed [m/s]",
-        "gamma_rad": "Flight path angle [deg]",
+        "raw_alt_m": "Altitude [m]",
+        "era_tas_ms": "True airspeed [m/s]",
+        "fdm_gamma_rad": "Flight path angle [deg]",
     }
 
     all_results: list[pl.DataFrame] = []
@@ -227,12 +235,12 @@ def run_evaluate(
     log.info("evaluate_start", arch=arch, typecodes=cfg.typecodes)
 
     for acft in cfg.typecodes:
+        acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
         results = _evaluate_typecode(
             acft,
-            process_dir=process_dir,
+            acft_df=acft_df,
             predict_dir=predict_dir,
             bada_dir=bada_dir,
-            processor=processor,
             variables=variables,
         )
         all_results.extend(results)

@@ -386,59 +386,6 @@ def identify(
     )
 
 
-@app.command
-def preprocess(
-    *,
-    config: Annotated[
-        Path,
-        cyclopts.Parameter(help="Path to YAML config file"),
-    ],
-    history_file: Annotated[
-        Path,
-        cyclopts.Parameter(name="--history-file", help="Path to history_*.parquet"),
-    ],
-    workers: Annotated[
-        int,
-        cyclopts.Parameter(help="Number of parallel workers"),
-    ] = 1,
-    dry_run: Annotated[
-        bool,
-        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
-    ] = False,
-) -> None:
-    """Preprocess a raw ADS-B history file (EHS decode, filter, resample)."""
-    from node_fdm_pipeline.commands.data import preprocess as preprocess_fn
-
-    preprocess_fn(
-        config=config,
-        history_file=history_file,
-        workers=workers,
-        dry_run=dry_run,
-    )
-
-
-@app.command
-def process(
-    *,
-    arch: Annotated[
-        str,
-        cyclopts.Parameter(help="Architecture: opensky or qar"),
-    ],
-    config: Annotated[
-        Path,
-        cyclopts.Parameter(help="Path to YAML config file"),
-    ],
-    dry_run: Annotated[
-        bool,
-        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
-    ] = False,
-) -> None:
-    """Process preprocessed flight data and create train/val/test split."""
-    from node_fdm_pipeline.commands.data import process as process_fn
-
-    process_fn(arch=arch, config=config, dry_run=dry_run)
-
-
 @app.command(name="dataset-stats")
 def dataset_stats(
     *,

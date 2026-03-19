@@ -50,10 +50,6 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
     """
     match arch:
         case "opensky":
-            from node_fdm_data.preprocessing.opensky import (
-                segment_filtering,
-                training_preprocessing,
-            )
             from node_fdm_data.schemas.opensky import DX_COLS, E0_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
@@ -62,15 +58,11 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
                 dx_cols=DX_COLS,
-                preprocessing_fn=training_preprocessing,
-                segment_filter_fn=segment_filtering,
+                preprocessing_fn=None,
+                segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.opensky",
             )
         case "opensky_v2":
-            from node_fdm_data.preprocessing.opensky import (
-                segment_filtering,
-                training_preprocessing,
-            )
             from node_fdm_data.schemas.opensky_v2 import DX_COLS, E0_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
@@ -79,12 +71,11 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
                 dx_cols=DX_COLS,
-                preprocessing_fn=training_preprocessing,
-                segment_filter_fn=segment_filtering,
+                preprocessing_fn=None,
+                segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.opensky_v2",
             )
         case "qar":
-            from node_fdm_data.preprocessing.qar import flight_processing as qar_processing
             from node_fdm_data.schemas.qar import DX_COLS, E0_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
@@ -93,7 +84,7 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
                 dx_cols=DX_COLS,
-                preprocessing_fn=qar_processing,
+                preprocessing_fn=None,
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.qar",
             )

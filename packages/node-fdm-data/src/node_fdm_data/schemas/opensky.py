@@ -1,8 +1,8 @@
 """Column schemas for the OpenSky 2025 architecture.
 
 All column names use SI units (m, m/s, rad, K).  Conversions from
-raw units (ft, kt, ft/min, °C, NM) are applied in
-:func:`~node_fdm_data.preprocessing.opensky.training_preprocessing`.
+raw units (ft, kt, ft/min, °C, NM) are applied by the ``fdm convert``
+pipeline step (:func:`~node_fdm_data.preprocessing.convert.convert_si`).
 """
 
 from __future__ import annotations

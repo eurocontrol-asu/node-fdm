@@ -25,7 +25,7 @@ def _require_viz() -> None:
     """
     try:
         import altair as _alt  # noqa: F401
-        import matplotlib as _mpl  # noqa: F401
+        import matplotlib as _mpl  # type: ignore[import-not-found]  # noqa: F401
     except ImportError:
         msg = (
             "Visualization dependencies not found. "
@@ -43,7 +43,8 @@ def run_visualize(
 ) -> None:
     """Generate 3-panel prediction comparison plots (altitude, TAS, gamma).
 
-    Overlays observed (red), predicted (blue), BADA (green), and selected
+    Reads ground truth from the Delta Table (v3 pipeline).  Overlays
+    observed (red), predicted (blue), BADA (green), and selected
     (dashed black) trajectories.  Saves to ``figure_dir`` as PDF.
 
     Args:
@@ -54,11 +55,10 @@ def run_visualize(
     """
     _require_viz()
 
-    import matplotlib.pyplot as plt
+    import matplotlib.pyplot as plt  # type: ignore[import-not-found]
     import polars as pl
     from node_fdm_bada.utils import cas_to_mach, tas_to_cas
-    from node_fdm_data.preprocessing.opensky import flight_processing
-    from node_fdm_data.processor import FlightProcessor
+    from node_fdm_data.delta import read_delta_table
 
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
@@ -66,36 +66,38 @@ def run_visualize(
     cfg = PipelineConfig.from_yaml(config)
     _info = resolve_architecture(arch)
 
-    process_dir = cfg.paths.resolve("process_dir")
+    delta_table = cfg.paths.resolve("delta_table")
     predict_dir = cfg.paths.resolve("predicted_dir")
     bada_dir = cfg.paths.resolve("bada_dir")
     figure_dir = cfg.paths.resolve("figure_dir")
     figure_dir.mkdir(parents=True, exist_ok=True)
 
-    processor = FlightProcessor(steps=[flight_processing])
-    split_df = pl.read_csv(process_dir / "dataset_split.csv")
     acft = typecode or cfg.typecodes[0]
 
-    data_df = split_df.filter(pl.col("aircraft_type") == acft)
-    test_df = data_df.filter(pl.col("split") == "test")
+    # Read Delta Table — filter on valid + test + typecode
+    df = read_delta_table(delta_table)
+    df = df.filter(
+        pl.col("fdm_flag_valid")
+        & pl.col("meta_split").eq("test")
+        & pl.col("meta_aircraft_type").eq(acft),
+    )
 
-    log.info("visualize_start", arch=arch, typecode=acft)
+    log.info("visualize_start", arch=arch, typecode=acft, flights=df["meta_flight_id"].n_unique())
 
-    for row in test_df.iter_rows(named=True):
-        flight_path = Path(row["filepath"])
-        fname = flight_path.name
-        flight_id = flight_path.stem
+    flights = df.partition_by("meta_flight_id", maintain_order=True)
+    for flight_df in flights:
+        flight_id = flight_df["meta_flight_id"][0]
 
         if flight and flight_id != flight:
             continue
 
+        fname = f"{flight_id}.parquet"
         bada_file = bada_dir / acft / fname
         pred_file = predict_dir / acft / fname
         if not bada_file.exists() or not pred_file.exists():
             continue
 
-        f = pl.read_parquet(flight_path)
-        processor.process(f).collect()
+        f = flight_df
         f = f.hstack(pl.read_parquet(pred_file))
         f = f.hstack(pl.read_parquet(bada_file))
 
@@ -115,22 +117,22 @@ def run_visualize(
         axes = axes.flatten()
 
         # Altitude
-        axes[0].plot(f["alt_std_m"], color="r", label="True")
-        axes[0].plot(f["pred_alt_std_m"], color="b", label="Pred")
+        axes[0].plot(f["raw_alt_m"], color="r", label="True")
+        axes[0].plot(f["pred_raw_alt_m"], color="b", label="Pred")
         axes[0].plot(f["bada_alt_std_m"], color="g", label="Bada")
-        if "alt_sel_m" in f.columns:
-            axes[0].plot(f["alt_sel_m"], "--", color="k", lw=0.5, label="Selected")
+        if "fdm_mcp_alt_sel_m" in f.columns:
+            axes[0].plot(f["fdm_mcp_alt_sel_m"], "--", color="k", lw=0.5, label="Selected")
         axes[0].set_title("Altitude [m]")
 
         # TAS
-        axes[1].plot(f["tas_ms"], color="r", label="True")
-        axes[1].plot(f["pred_tas_ms"], color="b", label="Pred")
+        axes[1].plot(f["era_tas_ms"], color="r", label="True")
+        axes[1].plot(f["pred_era_tas_ms"], color="b", label="Pred")
         axes[1].plot(f["bada_tas_ms"], color="g", label="Bada")
         axes[1].set_title("True Airspeed [m/s]")
 
         # Gamma
-        axes[2].plot(f["gamma_rad"], color="r", label="True")
-        axes[2].plot(f["pred_gamma_rad"], color="b", label="Pred")
+        axes[2].plot(f["fdm_gamma_rad"], color="r", label="True")
+        axes[2].plot(f["pred_fdm_gamma_rad"], color="b", label="Pred")
         axes[2].plot(f["bada_gamma_rad"], color="g", label="Bada")
         axes[2].set_title("Flight path angle gamma [rad]")
 

@@ -19,9 +19,9 @@ class TestResolveArchitecture:
         assert len(info.u_cols) > 0
         assert len(info.e0_cols) > 0
         assert len(info.dx_cols) > 0
-        assert info.segment_filter_fn is not None
+        assert info.segment_filter_fn is None
+        assert info.preprocessing_fn is None
         assert info.architecture_import == "node_fdm.architectures.opensky"
-        assert callable(info.preprocessing_fn)
 
     def test_resolve_qar(self) -> None:
         """Resolving 'qar' returns correct ArchitectureInfo."""
@@ -29,7 +29,8 @@ class TestResolveArchitecture:
         assert isinstance(info, ArchitectureInfo)
         assert info.name == "qar"
         assert len(info.x_cols) > 0
-        assert info.segment_filter_fn is None  # QAR has no segment filter
+        assert info.segment_filter_fn is None
+        assert info.preprocessing_fn is None
         assert info.architecture_import == "node_fdm.architectures.qar"
 
     def test_resolve_unknown_raises(self) -> None:
@@ -47,7 +48,7 @@ class TestResolveArchitecture:
         assert "track_sel" in info.x_cols
         assert len(info.x_cols) > len(resolve_architecture("opensky").x_cols)
         assert info.architecture_import == "node_fdm.architectures.opensky_v2"
-        assert callable(info.preprocessing_fn)
+        assert info.preprocessing_fn is None
 
     def test_opensky_v1_unchanged(self) -> None:
         """opensky v1 resolver still returns same schema (backward compat)."""
@@ -70,7 +71,7 @@ class TestResolveArchitecture:
             assert isinstance(sign, int)
             assert isinstance(col, str)
 
-    def test_qar_preprocessing_fn_callable(self) -> None:
-        """QAR preprocessing function is callable."""
+    def test_qar_preprocessing_fn_none(self) -> None:
+        """QAR preprocessing function is None (v3 pipeline handles preprocessing)."""
         info = resolve_architecture("qar")
-        assert callable(info.preprocessing_fn)
+        assert info.preprocessing_fn is None

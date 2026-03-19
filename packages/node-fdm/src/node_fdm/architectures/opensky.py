@@ -51,7 +51,7 @@ OPENSKY_2025 = ArchitectureSpec(
         ),
     ],
     preprocessing_fn="node_fdm_data.preprocessing.opensky.flight_processing",
-    segment_filter_fn="node_fdm_data.preprocessing.opensky.segment_filtering",
+    segment_filter_fn=None,
 )
 
 register(OPENSKY_2025)

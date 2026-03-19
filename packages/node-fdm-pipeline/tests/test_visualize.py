@@ -6,6 +6,7 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
+import numpy as np
 import polars as pl
 import pytest
 
@@ -36,13 +37,11 @@ class TestRunVisualize:
     """Tests for ``run_visualize``."""
 
     def _make_config_and_data(self, tmp_path: Path) -> Path:
-        """Create config, dirs, and test flight data."""
+        """Create config, dirs, and test flight prediction/bada parquets."""
         data_dir = tmp_path / "data"
-        process_dir = data_dir / "processed_flights"
         predict_dir = data_dir / "predicted_flights" / "A320"
         bada_dir = data_dir / "bada_flights" / "A320"
         figure_dir = data_dir / "figures"
-        process_dir.mkdir(parents=True)
         predict_dir.mkdir(parents=True)
         bada_dir.mkdir(parents=True)
         figure_dir.mkdir(parents=True)
@@ -58,27 +57,14 @@ typecodes:
 """
         )
 
-        # Create dummy flight data
         n = 20
-        flight_data = pl.DataFrame(
-            {
-                "alt_std_m": [10000.0] * n,
-                "tas_ms": [200.0] * n,
-                "gamma_rad": [0.01] * n,
-                "temp_k": [220.0] * n,
-                "alt_sel_m": [10000.0] * n,
-            }
-        )
-        flight_path = process_dir / "A320" / "flight001.parquet"
-        flight_path.parent.mkdir(parents=True, exist_ok=True)
-        flight_data.write_parquet(flight_path)
 
-        # Create pred and bada parquet
+        # Create pred and bada parquet (flight_id = "flight001")
         pred_data = pl.DataFrame(
             {
-                "pred_alt_std_m": [10050.0] * n,
-                "pred_tas_ms": [201.0] * n,
-                "pred_gamma_rad": [0.011] * n,
+                "pred_raw_alt_m": [10050.0] * n,
+                "pred_era_tas_ms": [201.0] * n,
+                "pred_fdm_gamma_rad": [0.011] * n,
             }
         )
         pred_data.write_parquet(predict_dir / "flight001.parquet")
@@ -92,46 +78,44 @@ typecodes:
         )
         bada_data.write_parquet(bada_dir / "flight001.parquet")
 
-        # Create split CSV
-        split_df = pl.DataFrame(
-            {
-                "filepath": [str(flight_path)],
-                "icao": ["abc123"],
-                "split": ["test"],
-                "aircraft_type": ["A320"],
-            }
-        )
-        split_df.write_csv(process_dir / "dataset_split.csv")
-
         return config
 
+    @patch("node_fdm_data.delta.read_delta_table")
     @patch("node_fdm_pipeline.commands.visualize._require_viz")
     @patch("node_fdm_bada.utils.tas_to_cas")
     @patch("node_fdm_bada.utils.cas_to_mach")
-    @patch("node_fdm_data.processor.FlightProcessor")
     def test_visualize_creates_file(
         self,
-        mock_processor_cls: MagicMock,
         mock_cas_to_mach: MagicMock,
         mock_tas_to_cas: MagicMock,
-        mock_require_viz: MagicMock,
+        _mock_require_viz: MagicMock,
+        mock_read_delta: MagicMock,
         tmp_path: Path,
     ) -> None:
         """PDF file created at expected path."""
         import types
 
-        import numpy as np
-
         config = self._make_config_and_data(tmp_path)
+        n = 20
 
-        # Mock processor
-        mock_proc = MagicMock()
-        mock_proc.process.return_value.collect.return_value = None
-        mock_processor_cls.return_value = mock_proc
+        # Build a Delta Table DataFrame for the flight
+        mock_read_delta.return_value = pl.DataFrame(
+            {
+                "meta_flight_id": ["flight001"] * n,
+                "meta_aircraft_type": ["A320"] * n,
+                "meta_split": ["test"] * n,
+                "fdm_flag_valid": [True] * n,
+                "raw_alt_m": [10000.0] * n,
+                "era_tas_ms": [200.0] * n,
+                "fdm_gamma_rad": [0.01] * n,
+                "temp_k": [220.0] * n,
+                "fdm_mcp_alt_sel_m": [10000.0] * n,
+            }
+        )
 
         # Mock conversion functions
-        mock_tas_to_cas.return_value = np.zeros(20)
-        mock_cas_to_mach.return_value = np.zeros(20)
+        mock_tas_to_cas.return_value = np.zeros(n)
+        mock_cas_to_mach.return_value = np.zeros(n)
 
         # Build mock matplotlib.pyplot as a real module type
         mock_fig = MagicMock()

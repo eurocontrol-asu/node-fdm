@@ -71,7 +71,7 @@ def _filter_nan_segments(
     return x_arr[finite_mask][0], u_seq[finite_mask], e_seq[finite_mask]
 
 
-def run_predict(  # noqa: PLR0915
+def run_predict(
     *,
     arch: str,
     config: Path,
@@ -81,6 +81,9 @@ def run_predict(  # noqa: PLR0915
     nan_threshold: float = 0.8,
 ) -> None:
     """Predict flight trajectories using trained Neural ODE models.
+
+    Reads from the Delta Table (v3 pipeline) — data is already in SI
+    units with ``meta_split`` and ``fdm_flag_valid`` columns.
 
     Args:
         arch: Architecture identifier (``"opensky"`` or ``"qar"``).
@@ -95,6 +98,7 @@ def run_predict(  # noqa: PLR0915
     import numpy as np
     import polars as pl
     from node_fdm.predictor import NodeFDMPredictor
+    from node_fdm_data.delta import read_delta_table
 
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
@@ -103,18 +107,21 @@ def run_predict(  # noqa: PLR0915
     info = resolve_architecture(arch)
 
     typecodes = [typecode] if typecode else cfg.typecodes
-    process_dir = cfg.paths.resolve("process_dir")
     models_dir = cfg.paths.resolve("models_dir")
     predict_dir = cfg.paths.resolve("predicted_dir")
     predict_dir.mkdir(parents=True, exist_ok=True)
+    delta_table = cfg.paths.resolve("delta_table")
 
-    split_csv = process_dir / "dataset_split.csv"
-    if not split_csv.exists():
-        log.error("predict_missing_split", path=str(split_csv))
-        msg = f"dataset_split.csv not found at {split_csv}. Run 'fdm process' first."
-        raise SystemExit(msg)
+    # Read Delta Table — filter on valid + test split
+    df = read_delta_table(delta_table)
+    df = df.filter(
+        pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"),
+    )
 
-    split_df = pl.read_csv(split_csv)
+    # Fill NaN→0.0 on selected-parameter columns (match training loader behavior)
+    sel_cols = [c for c in df.columns if c.startswith("fdm_") and "_sel_" in c]
+    if sel_cols:
+        df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])
 
     log.info(
         "predict_start",
@@ -122,6 +129,7 @@ def run_predict(  # noqa: PLR0915
         typecodes=typecodes,
         device=device,
         local_model=local_model,
+        rows=len(df),
     )
 
     for acft in typecodes:
@@ -144,28 +152,23 @@ def run_predict(  # noqa: PLR0915
 
         predictor = NodeFDMPredictor(model_path=model_path, device=device)
 
-        data_df = split_df.filter(pl.col("aircraft_type") == acft)
-        test_df = data_df.filter(pl.col("split") == "test")
-
-        if len(test_df) == 0:
+        acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
+        if len(acft_df) == 0:
             log.warning("predict_empty_test_set", typecode=acft)
             continue
 
         output_dir = predict_dir / acft
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        for row in test_df.iter_rows(named=True):
-            flight_path = Path(row["filepath"])
-            flight_id = flight_path.stem
+        flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
+        for flight_df in flights:
+            flight_id = flight_df["meta_flight_id"][0]
 
-            raw = pl.read_parquet(flight_path)
-            processed = info.preprocessing_fn(raw)
-
-            # Extract arrays for predictor (float32 numpy)
+            # Extract arrays for predictor (float32 numpy) — data already in SI
             arrays = {
-                "x": processed.select(info.x_cols).to_numpy().astype(np.float32),
-                "u": processed.select(info.u_cols).to_numpy().astype(np.float32),
-                "e": processed.select(info.e0_cols).to_numpy().astype(np.float32),
+                "x": flight_df.select(info.x_cols).to_numpy().astype(np.float32),
+                "u": flight_df.select(info.u_cols).to_numpy().astype(np.float32),
+                "e": flight_df.select(info.e0_cols).to_numpy().astype(np.float32),
             }
 
             # --- NaN segment filter (match training behavior) ---
@@ -202,14 +205,21 @@ def run_predict_bada(
 ) -> None:
     """Run BADA 4.2 baseline predictions.
 
+    Reads from the Delta Table (v3 pipeline) — data is already processed.
+    Per-flight parquets are written to a temporary directory for the BADA
+    predictor interface (which expects file paths).
+
     Args:
         config: Path to YAML pipeline config.
         typecode: Single typecode to predict (default: all from config).
         jobs: Number of parallel workers (default: from config computing section).
     """
+    import tempfile
+
     import polars as pl
     from node_fdm_bada.aircraft_mapping import get_bada_identifier
     from node_fdm_bada.predictor import process_single_flight
+    from node_fdm_data.delta import read_delta_table
     from node_fdm_data.preprocessing.opensky import flight_processing
     from node_fdm_data.processor import FlightProcessor
 
@@ -218,18 +228,17 @@ def run_predict_bada(
     cfg = PipelineConfig.from_yaml(config)
 
     typecodes = [typecode] if typecode else cfg.typecodes
-    process_dir = cfg.paths.resolve("process_dir")
+    delta_table = cfg.paths.resolve("delta_table")
     bada_dir = cfg.paths.resolve("bada_dir")
     bada_dir.mkdir(parents=True, exist_ok=True)
     bada_4_2_dir = cfg.bada.bada_4_2_dir
 
-    split_csv = process_dir / "dataset_split.csv"
-    if not split_csv.exists():
-        log.error("predict_bada_missing_split", path=str(split_csv))
-        msg = f"dataset_split.csv not found at {split_csv}. Run 'fdm process' first."
-        raise SystemExit(msg)
+    # Read Delta Table — filter on valid + test split
+    df = read_delta_table(delta_table)
+    df = df.filter(
+        pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"),
+    )
 
-    split_df = pl.read_csv(split_csv)
     processor = FlightProcessor(steps=[flight_processing])
     n_jobs = jobs or cfg.computing.default_cpu_count
 
@@ -251,23 +260,29 @@ def run_predict_bada(
             log.warning("predict_bada_load_failed", typecode=acft, bada_name=bada_name)
             continue
 
-        data_df = split_df.filter(pl.col("aircraft_type") == acft)
-        test_df = data_df.filter(pl.col("split") == "test")
-
-        if len(test_df) == 0:
+        acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
+        if len(acft_df) == 0:
             log.warning("predict_bada_empty_test_set", typecode=acft)
             continue
 
         output_dir = bada_dir / acft
         output_dir.mkdir(parents=True, exist_ok=True)
 
-        filepaths = test_df["filepath"].to_list()
+        # Write per-flight parquets for BADA predictor interface
+        flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
+        with tempfile.TemporaryDirectory() as tmp_dir:
+            filepaths: list[str] = []
+            for flight_df in flights:
+                fid = flight_df["meta_flight_id"][0]
+                fp = Path(tmp_dir) / f"{fid}.parquet"
+                flight_df.write_parquet(fp)
+                filepaths.append(str(fp))
 
-        from joblib import Parallel, delayed
+            from joblib import Parallel, delayed
 
-        Parallel(n_jobs=n_jobs, backend="loky")(
-            delayed(process_single_flight)(fp, ac, processor, output_dir) for fp in filepaths
-        )
+            Parallel(n_jobs=n_jobs, backend="loky")(
+                delayed(process_single_flight)(fp, ac, processor, output_dir) for fp in filepaths
+            )
 
         log.info("predict_bada_typecode_done", typecode=acft)
 
