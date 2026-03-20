@@ -15,7 +15,6 @@ Create a `config.yaml` at your project root. All `fdm` CLI commands accept this 
 ```yaml title="config.yaml"
 paths:
   data_dir: "/path/to/data"
-  download_dir: "downloaded_parquet"
   delta_table: "flights.delta"
   preprocess_dir: "preprocessed_parquet"
   era5_cache_dir: "era5_cache"

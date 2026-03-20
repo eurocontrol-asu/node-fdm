@@ -253,7 +253,7 @@ def run_predict_bada(
             continue
 
         try:
-            from pyBADA.bada4 import Bada4Aircraft
+            from pyBADA.bada4 import Bada4Aircraft  # type: ignore[import-not-found,unused-ignore]
 
             ac = Bada4Aircraft("4.2", filePath=str(bada_4_2_dir), acName=bada_name)
         except Exception:  # noqa: BLE001
@@ -278,7 +278,7 @@ def run_predict_bada(
                 flight_df.write_parquet(fp)
                 filepaths.append(str(fp))
 
-            from joblib import Parallel, delayed
+            from joblib import Parallel, delayed  # type: ignore[import-not-found,unused-ignore]
 
             Parallel(n_jobs=n_jobs, backend="loky")(
                 delayed(process_single_flight)(fp, ac, processor, output_dir) for fp in filepaths

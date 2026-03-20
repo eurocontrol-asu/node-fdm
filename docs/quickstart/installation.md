@@ -61,7 +61,6 @@ This page explains how to install **node-fdm-v2**, configure optional dependenci
 | `paths.data_dir` | Root directory for all data artifacts | **Required** |
 | `paths.era5_cache_dir` | Local cache for meteorological fields | **Required** |
 | `bada.bada_4_2_dir` | Path to BADA 4.2 model files | Optional |
-| `paths.download_dir` | Destination for raw data | Auto-managed |
 | `paths.models_dir` | Directory for trained models | Auto-managed |
 
 ---

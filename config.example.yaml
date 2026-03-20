@@ -4,7 +4,6 @@
 
 paths:
   data_dir: "/path/to/your/data"       # ← CHANGE THIS (absolute path)
-  download_dir: "downloaded_parquet"
   preprocess_dir: "preprocessed_parquet"
   era5_cache_dir: "era5_cache"
 

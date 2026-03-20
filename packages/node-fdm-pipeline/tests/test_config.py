@@ -24,11 +24,6 @@ class TestPathsConfig:
         paths = PathsConfig(data_dir=Path("/data"))
         assert paths.resolve("models_dir") == Path("/data/models")
 
-    def test_resolve_download_dir(self) -> None:
-        """PathsConfig.resolve() works for download_dir."""
-        paths = PathsConfig(data_dir=Path("/data"))
-        assert paths.resolve("download_dir") == Path("/data/downloaded_parquet")
-
     def test_resolve_invalid_name(self) -> None:
         """PathsConfig.resolve() raises for invalid attribute name."""
         paths = PathsConfig(data_dir=Path("/data"))

@@ -25,7 +25,7 @@ def _require_viz() -> None:
     """
     try:
         import altair as _alt  # noqa: F401
-        import matplotlib as _mpl  # type: ignore[import-not-found]  # noqa: F401
+        import matplotlib as _mpl  # noqa: F401
     except ImportError:
         msg = (
             "Visualization dependencies not found. "
@@ -55,7 +55,7 @@ def run_visualize(
     """
     _require_viz()
 
-    import matplotlib.pyplot as plt  # type: ignore[import-not-found]
+    import matplotlib.pyplot as plt
     import polars as pl
     from node_fdm_bada.utils import cas_to_mach, tas_to_cas
     from node_fdm_data.delta import read_delta_table
@@ -281,7 +281,7 @@ def run_plot_performance(
         output = figure_dir / f"performance_{typecode}.pdf"
         chart.save(output)
         log.info("plot_performance_saved", typecode=typecode, path=str(output))
-        return chart
+        return chart  # type: ignore[no-any-return,unused-ignore]
 
     for aircraft in df["Aircraft"].unique().to_list():
         _make_chart(aircraft)

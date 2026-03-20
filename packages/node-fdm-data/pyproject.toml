@@ -103,7 +103,7 @@ disallow_untyped_defs = false
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["scipy.*", "polars.*"]
+module = ["scipy.*", "polars.*", "pandas.*"]
 ignore_missing_imports = true
 
 [tool.coverage.run]

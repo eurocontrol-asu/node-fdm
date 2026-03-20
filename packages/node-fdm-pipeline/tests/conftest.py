@@ -41,7 +41,6 @@ def opensky_config_path(tmp_path: Path) -> Path:
     config.write_text("""\
 paths:
   data_dir: "TODO"
-  download_dir: "downloaded_parquet"
   preprocess_dir: "preprocessed_parquet"
   era5_cache_dir: "era5_cache"
 
