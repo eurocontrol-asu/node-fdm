@@ -478,3 +478,43 @@ class TestEdgeCases:
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
         # Single point excluded → all position is gap
         assert result["pre_gap_position"].all()
+
+
+class TestResamplePreservesStringIdentifiers:
+    """raw_icao24 and raw_callsign must survive resampling."""
+
+    def test_resample_preserves_icao24(self) -> None:
+        """raw_icao24 is carried over with correct value, no nulls."""
+        n = 100
+        df = _make_flight("f1", n)
+        df = df.with_columns(pl.lit("3c6634").alias("raw_icao24"))
+        result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        assert "raw_icao24" in result.columns
+        assert result["raw_icao24"].null_count() == 0
+        assert result["raw_icao24"][0] == "3c6634"
+        assert result["raw_icao24"].n_unique() == 1
+
+    def test_resample_preserves_callsign(self) -> None:
+        """raw_callsign is carried over with correct value, no nulls."""
+        df = _make_flight("f1", 100)
+        df = df.with_columns(pl.lit("DLH123").alias("raw_callsign"))
+        result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        assert "raw_callsign" in result.columns
+        assert result["raw_callsign"].null_count() == 0
+        assert result["raw_callsign"][0] == "DLH123"
+        assert result["raw_callsign"].n_unique() == 1
+
+    def test_resample_absent_icao24(self) -> None:
+        """No raw_icao24 in source → no error, column not in output."""
+        df = _make_flight("f1", 100)
+        assert "raw_icao24" not in df.columns
+        result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        assert "raw_icao24" not in result.columns
+
+    def test_resample_null_icao24(self) -> None:
+        """Null raw_icao24 in source → null preserved in output."""
+        df = _make_flight("f1", 100)
+        df = df.with_columns(pl.lit(None, dtype=pl.Utf8).alias("raw_icao24"))
+        result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        assert "raw_icao24" in result.columns
+        assert result["raw_icao24"].null_count() == len(result)

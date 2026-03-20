@@ -43,6 +43,8 @@ COLUMN_GROUPS: dict[str, tuple[list[str], list[str]]] = {
     "bds": (BDS_COLS, ["bds_mach"]),
 }
 
+_CARRY_OVER: set[str] = {"raw_icao24", "raw_callsign"}
+
 
 def detect_subsegments(
     df: pl.DataFrame,
@@ -291,10 +293,10 @@ def resample_flight(
 
     result = pl.DataFrame({"raw_timestamp": grid_ts})
 
-    # Carry over constant meta columns
-    meta_cols = [c for c in df.columns if c.startswith("meta_")]
-    if meta_cols:
-        result = result.with_columns(pl.lit(df[c][0]).alias(c) for c in meta_cols)
+    # Carry over constant meta columns and per-flight string identifiers
+    carry_cols = [c for c in df.columns if c.startswith("meta_") or c in _CARRY_OVER]
+    if carry_cols:
+        result = result.with_columns(pl.lit(df[c][0]).alias(c) for c in carry_cols)
 
     # Process each column group
     for group_name, (interp_cols, ref_cols) in COLUMN_GROUPS.items():
