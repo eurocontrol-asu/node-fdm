@@ -8,4 +8,5 @@ __all__ = [
     "flags",
     "opensky",
     "qar",
+    "resample",
 ]

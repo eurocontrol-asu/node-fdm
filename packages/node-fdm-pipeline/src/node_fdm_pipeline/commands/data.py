@@ -27,6 +27,7 @@ __all__ = [
     "enrich",
     "flag",
     "identify",
+    "preprocess",
     "segments",
     "split",
 ]
@@ -454,6 +455,78 @@ def identify(
 
 
 # ---------------------------------------------------------------------------
+# Command 1.5 — preprocess  (étape 1.5 — gap-aware resample)
+# ---------------------------------------------------------------------------
+
+
+def preprocess(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Resample to regular grid with gap-aware interpolation (étape 1.5).
+
+    Detects per-column-group sub-segments, interpolates within each,
+    and leaves null values between sub-segments.  Row count changes
+    (irregular → 4 s grid), so the table is overwritten entirely.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("preprocess_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("preprocess_dry_run", msg="Config valid, would preprocess")
+        return
+
+    from node_fdm_data.delta import read_delta_table
+    from node_fdm_data.preprocessing.resample import preprocess_flights
+
+    df = read_delta_table(delta_table)
+    rows_before = len(df)
+    flights_before = df["meta_flight_id"].n_unique()
+
+    # Drop existing preprocess columns to allow re-run
+    pre_existing = [c for c in df.columns if c.startswith("pre_gap_")]
+    if pre_existing:
+        log.info("preprocess_drop_existing", columns=pre_existing)
+        df = df.drop(pre_existing)
+
+    result = preprocess_flights(
+        df,
+        rate_s=cfg.preprocess.rate_s,
+        max_gap_s=cfg.preprocess.max_gap_s,
+        min_duration_s=cfg.preprocess.min_duration_s,
+        smooth=cfg.preprocess.smooth,
+    )
+
+    # Overwrite entire table (row count changes with resampling)
+    delta_write_options: dict[str, object] = {"schema_mode": "merge"}
+    if "meta_batch_date" in result.columns:
+        delta_write_options["partition_by"] = ["meta_batch_date"]
+
+    result.write_delta(
+        str(delta_table),
+        mode="overwrite",
+        delta_write_options=delta_write_options,
+    )
+
+    log.info(
+        "preprocess_done",
+        rows_before=rows_before,
+        rows_after=len(result),
+        flights_before=flights_before,
+        flights_after=result["meta_flight_id"].n_unique(),
+    )
+
+
+# ---------------------------------------------------------------------------
 # Command 2 — flag  (étape 2 — validity flags)
 # ---------------------------------------------------------------------------
 
@@ -783,7 +856,11 @@ def _build_airport_coords(df: pl.DataFrame) -> dict[str, tuple[float, float]] | 
 
     coords: dict[str, tuple[float, float]] = {}
     for icao in icao_codes:
-        ap = airports[icao]
+        try:
+            ap = airports[icao]
+        except ValueError:
+            log.warning("derive_unknown_airport", icao=icao)
+            continue
         if ap is not None:
             coords[icao] = (ap.latitude, ap.longitude)
 

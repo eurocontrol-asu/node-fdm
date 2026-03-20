@@ -301,6 +301,24 @@ def convert(
 
 
 @app.command
+def preprocess(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Resample to regular grid with gap-aware interpolation (étape 1.5)."""
+    from node_fdm_pipeline.commands.data import preprocess as preprocess_fn
+
+    preprocess_fn(config=config, dry_run=dry_run)
+
+
+@app.command
 def flag(
     *,
     config: Annotated[

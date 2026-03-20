@@ -17,6 +17,7 @@ __all__ = [
     "MachFilterConfig",
     "PathsConfig",
     "PipelineConfig",
+    "PreprocessConfig",
     "SelectedParamConfig",
     "VzFilterConfig",
 ]
@@ -26,7 +27,6 @@ class PathsConfig(BaseModel, frozen=True):
     """Directory layout for pipeline data."""
 
     data_dir: Path
-    download_dir: str = "downloaded_parquet"
     preprocess_dir: str = "preprocessed_parquet"
     process_dir: str = "processed_flights"
     predicted_dir: str = "predicted_flights"
@@ -121,6 +121,15 @@ class GammaFilterConfig(BaseModel, frozen=True):
     smooth_method: str = "savgol"
 
 
+class PreprocessConfig(BaseModel, frozen=True):
+    """Resampling and interpolation configuration for étape 1.5."""
+
+    rate_s: int = 4
+    max_gap_s: float = 30.0
+    min_duration_s: int = 240
+    smooth: bool = True
+
+
 class FlagConfig(BaseModel, frozen=True):
     """Validity flag thresholds for pipeline v3 étape 2."""
 
@@ -162,6 +171,7 @@ class PipelineConfig(BaseModel, frozen=True):
     era5_null_threshold: float = 0.05
     computing: ComputingConfig = ComputingConfig()
     bada: BadaConfig = BadaConfig()
+    preprocess: PreprocessConfig = PreprocessConfig()
     flag: FlagConfig = FlagConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()
 
