@@ -17,6 +17,7 @@ pip install node-fdm-pipeline[viz]
 ```bash
 fdm --help
 fdm version
+fdm preprocess --config config.yaml
 fdm identify --config config.yaml
 fdm train --arch opensky --config config.yaml --typecode A320
 fdm predict --arch opensky --config config.yaml --device cuda:0
@@ -27,6 +28,7 @@ fdm evaluate --arch opensky --config config.yaml
 
 | Command | Description | Status |
 |---|---|---|
+| `fdm preprocess` | Resample flights: subsegment detection, position smoothing, fixed-rate resampling | ✅ Implemented |
 | `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
 | `fdm derive` | Compute derived physics columns (gamma, wind, distance) — étape 4 | ✅ Implemented |
 | `fdm train` | Train Neural ODE models | Placeholder (AXM-363) |
@@ -38,3 +40,12 @@ fdm evaluate --arch opensky --config config.yaml
 | `fdm dataset-stats` | Dataset split statistics | Placeholder (AXM-364) |
 | `fdm visualize` | Prediction comparison plots | Placeholder (AXM-364) |
 | `fdm version` | Print version | ✅ Implemented |
+
+## Development
+
+<!-- 102 tests -->
+```bash
+uv run pytest packages/node-fdm-pipeline/ -q
+uv run ruff check packages/node-fdm-pipeline/
+uv run mypy packages/node-fdm-pipeline/src/
+```
