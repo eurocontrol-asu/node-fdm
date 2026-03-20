@@ -38,6 +38,9 @@ SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
     ("raw_vz_ftmin", ftmin_to_ms, "raw_vz_ms"),
     ("fdm_adep_dist_nm", nm_to_m, "fdm_adep_dist_m"),
     ("fdm_ades_dist_nm", nm_to_m, "fdm_ades_dist_m"),
+    ("fdm_alt_target_ft", ft_to_m, "fdm_alt_target_m"),
+    ("fdm_cas_sel_kt", kt_to_ms, "fdm_cas_sel_ms"),
+    ("fdm_vz_sel_ftmin", ftmin_to_ms, "fdm_vz_sel_ms"),
 ]
 
 # Derivative table: (source_si_col, target_deriv_col)

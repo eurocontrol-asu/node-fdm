@@ -72,6 +72,33 @@ class TestConvertSI:
         assert "fdm_adep_dist_m" in result.columns
         assert result["fdm_adep_dist_m"][1] == pytest.approx(50.0 * 1852.0)
 
+    def test_convert_si_target_alt(self) -> None:
+        """fdm_alt_target_ft -> fdm_alt_target_m via ft_to_m."""
+        df = pl.DataFrame({"fdm_alt_target_ft": [10000.0]})
+        result = convert_si(df)
+        assert "fdm_alt_target_m" in result.columns
+        assert result["fdm_alt_target_m"][0] == pytest.approx(3048.0)
+
+    def test_convert_si_cas_sel(self) -> None:
+        """fdm_cas_sel_kt -> fdm_cas_sel_ms via kt_to_ms."""
+        df = pl.DataFrame({"fdm_cas_sel_kt": [250.0]})
+        result = convert_si(df)
+        assert "fdm_cas_sel_ms" in result.columns
+        assert result["fdm_cas_sel_ms"][0] == pytest.approx(250.0 * 0.514444, rel=1e-4)
+
+    def test_convert_si_vz_sel(self) -> None:
+        """fdm_vz_sel_ftmin -> fdm_vz_sel_ms via ftmin_to_ms."""
+        df = pl.DataFrame({"fdm_vz_sel_ftmin": [1000.0]})
+        result = convert_si(df)
+        assert "fdm_vz_sel_ms" in result.columns
+        assert result["fdm_vz_sel_ms"][0] == pytest.approx(1000.0 * 0.3048 / 60.0, rel=1e-4)
+
+    def test_convert_si_nan_preserved(self) -> None:
+        """NaN values in source column are preserved in target column."""
+        df = pl.DataFrame({"fdm_cas_sel_kt": [250.0, float("nan"), 300.0]})
+        result = convert_si(df)
+        assert result["fdm_cas_sel_ms"][1] is None or result["fdm_cas_sel_ms"].is_nan()[1]
+
     def test_convert_missing_source_skipped(self) -> None:
         """Conversion is skipped when source column does not exist."""
         df = pl.DataFrame({"unrelated_col": [1.0, 2.0]})
