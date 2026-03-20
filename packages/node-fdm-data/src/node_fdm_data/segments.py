@@ -170,7 +170,7 @@ def add_segment_column(
     return df.with_columns(pl.Series(col_name, arr))
 
 
-def build_selected_params(
+def build_selected_params(  # noqa: PLR0915
     df: pl.DataFrame,
     config: dict[str, Any],
 ) -> pl.DataFrame:
@@ -240,23 +240,20 @@ def build_selected_params(
         gamma_segs = detect_constant_segments(gamma_arr, **gamma_cfg)
         df = add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
 
-    # --- Altitude selected (optional, detect on bds_mcp_sel_alt_ft) ---
+    # --- Altitude selected (detect level segments on raw_alt_ft) ---
     alt_cfg = config.get("alt")
-    mcp_col = "bds_mcp_sel_alt_ft"
-    if alt_cfg is not None and mcp_col in df.columns:
-        mcp_arr = df[mcp_col].to_numpy()
-        alt_segs = detect_constant_segments(
-            mcp_arr,
-            **alt_cfg,
-        )
+    if alt_cfg is not None and alt_col in df.columns:
+        alt_segs = detect_constant_segments(alt_arr, **alt_cfg)
         df = add_segment_column(df, alt_segs, "fdm_alt_sel_ft")
-        # MCP backfill: forward-fill then backward-fill → never NaN
+
+    # --- MCP altitude backfill (independent of alt segments) ---
+    mcp_col = "bds_mcp_sel_alt_ft"
+    if mcp_col in df.columns:
         df = df.with_columns(
-            pl.col("fdm_alt_sel_ft")
+            pl.col(mcp_col)
             .fill_nan(None)
             .forward_fill()
             .backward_fill()
-            .fill_nan(None)
             .fill_null(pl.lit(float("nan")))
             .alias("fdm_mcp_alt_sel_ft")
         )
@@ -272,5 +269,35 @@ def build_selected_params(
             .fill_null(pl.lit(float("nan")))
             .alias("fdm_fms_alt_sel_ft")
         )
+
+    # --- Target columns (bfill with last-point anchor) ---
+    # fdm_alt_target_ft: "which altitude is the aircraft heading towards?"
+    # Anchor last row to actual altitude, then backward-fill from segments.
+    if "fdm_alt_sel_ft" in df.columns and alt_col in df.columns:
+        last_alt = df[alt_col][-1]
+        df = df.with_columns(
+            pl.col("fdm_alt_sel_ft").fill_nan(None).alias("_alt_target_tmp"),
+        )
+        # Set last row to actual altitude, then bfill
+        n = len(df)
+        target = df["_alt_target_tmp"].to_list()
+        target[n - 1] = last_alt
+        df = df.with_columns(
+            pl.Series("_alt_target_tmp", target).backward_fill().alias("fdm_alt_target_ft"),
+        ).drop("_alt_target_tmp")
+
+    # fdm_cas_target_kt: "which CAS is the aircraft heading towards?"
+    cas_src = "era_cas_kt" if "era_cas_kt" in df.columns else "bds_ias_kt"
+    if "fdm_cas_sel_kt" in df.columns and cas_src in df.columns:
+        last_cas = df[cas_src][-1]
+        df = df.with_columns(
+            pl.col("fdm_cas_sel_kt").fill_nan(None).alias("_cas_target_tmp"),
+        )
+        n = len(df)
+        target = df["_cas_target_tmp"].to_list()
+        target[n - 1] = last_cas
+        df = df.with_columns(
+            pl.Series("_cas_target_tmp", target).backward_fill().alias("fdm_cas_target_kt"),
+        ).drop("_cas_target_tmp")
 
     return df

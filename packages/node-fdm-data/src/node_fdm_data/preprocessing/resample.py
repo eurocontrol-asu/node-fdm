@@ -222,7 +222,7 @@ def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
     lats = df["raw_lat_deg"].to_list()
     lons = df["raw_lon_deg"].to_list()
 
-    for run_id in run_ids.filter(has_pos).unique().sort().to_list():
+    for run_id in run_ids.filter(has_pos).unique().drop_nulls().sort().to_list():
         mask = (run_ids == run_id) & has_pos
         indices = mask.arg_true().to_list()
 

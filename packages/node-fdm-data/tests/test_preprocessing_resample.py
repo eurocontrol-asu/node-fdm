@@ -278,6 +278,149 @@ class TestPreprocessIdempotent:
                 assert diff is None or float(diff) < 1e-6  # type: ignore[arg-type]
 
 
+class TestDetectSubsegmentsNoCols:
+    """Reference columns missing from DataFrame → all -1."""
+
+    def test_missing_ref_cols(self) -> None:
+        """If ref_cols not in DataFrame → all seg_ids are -1."""
+        df = _make_flight("f1", 20)
+        seg_ids = detect_subsegments(df, ["nonexistent_col"], max_gap_s=30)
+        assert set(seg_ids.to_list()) == {-1}
+
+
+class TestDetectSubsegmentsAllNull:
+    """All reference column values are null → all -1."""
+
+    def test_all_null_ref(self) -> None:
+        ts_start = datetime(2025, 1, 1)
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["f1"] * 10,
+                "raw_timestamp": [ts_start + timedelta(seconds=i) for i in range(10)],
+                "raw_lat_deg": [None] * 10,
+                "raw_lon_deg": [None] * 10,
+            }
+        )
+        seg_ids = detect_subsegments(df, ["raw_lat_deg", "raw_lon_deg"], max_gap_s=30)
+        assert set(seg_ids.to_list()) == {-1}
+
+
+class TestInterpolateNoSegments:
+    """No valid sub-segments → all null, all gap."""
+
+    def test_all_gap_when_no_segments(self) -> None:
+        ts_start = datetime(2025, 1, 1)
+        df = pl.DataFrame(
+            {
+                "raw_timestamp": [ts_start + timedelta(seconds=i) for i in range(10)],
+                "raw_lat_deg": [None] * 10,
+            }
+        )
+        grid_ts = pl.Series(
+            "raw_timestamp",
+            [ts_start + timedelta(seconds=i * 4) for i in range(3)],
+        )
+        seg_ids = pl.Series("seg_id", [-1] * 10, dtype=pl.Int32)
+        col_values, gap_flag = interpolate_group_by_subsegments(
+            df,
+            grid_ts,
+            ["raw_lat_deg"],
+            seg_ids,
+        )
+        assert all(v is None for v in col_values["raw_lat_deg"])
+        assert gap_flag.all()
+
+
+class TestResampleWithBDSColumns:
+    """BDS columns are interpolated and get their own gap flag."""
+
+    def test_bds_group_interpolated(self) -> None:
+        """Flight with BDS data → bds columns present, pre_gap_bds flag exists."""
+        df = _make_flight("f1", 600, _FlightSpec(with_bds=True))
+        result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        assert "pre_gap_bds" in result.columns
+        assert "bds_mach" in result.columns
+        # BDS data is dense → almost no gap
+        assert result["pre_gap_bds"].sum() / len(result) < 0.05
+
+    def test_bds_sparse_has_gaps(self) -> None:
+        """BDS data with big gap → pre_gap_bds True in the middle."""
+        ts_start = datetime(2025, 1, 1)
+        n = 600
+        timestamps = [ts_start + timedelta(seconds=i) for i in range(n)]
+        bds_mach: list[float | None] = [None] * n
+        # Only first 30 and last 30 have BDS
+        for i in range(30):
+            bds_mach[i] = 0.78
+        for i in range(n - 30, n):
+            bds_mach[i] = 0.79
+
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["f1"] * n,
+                "raw_timestamp": timestamps,
+                "raw_alt_ft": [35000.0] * n,
+                "raw_gs_kt": [450.0] * n,
+                "raw_track_deg": [90.0] * n,
+                "raw_vz_ftmin": [0.0] * n,
+                "bds_mach": bds_mach,
+                "bds_tas_kt": bds_mach,  # reuse pattern
+                "bds_ias_kt": [None] * n,
+                "bds_hdg_deg": [None] * n,
+                "bds_mcp_sel_alt_ft": [None] * n,
+                "bds_fms_sel_alt_ft": [None] * n,
+            }
+        )
+        result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        # Big gap in the middle → pre_gap_bds should have True values
+        assert result["pre_gap_bds"].sum() > 0
+
+
+class TestResampleMetaColumnsCarried:
+    """Meta columns are carried over to resampled result."""
+
+    def test_meta_preserved(self) -> None:
+        df = _make_flight("f1", 600)
+        df = df.with_columns(
+            pl.lit("LFPG").alias("meta_departure"),
+            pl.lit("EGLL").alias("meta_arrival"),
+        )
+        result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        assert "meta_departure" in result.columns
+        assert result["meta_departure"][0] == "LFPG"
+        assert result["meta_arrival"][0] == "EGLL"
+        # All rows have the same meta value
+        assert result["meta_departure"].n_unique() == 1
+
+
+class TestPreprocessEmptyResult:
+    """All flights too short → empty DataFrame returned."""
+
+    def test_all_flights_too_short(self) -> None:
+        short1 = _make_flight("s1", 60)  # 59s
+        short2 = _make_flight("s2", 100, _FlightSpec(lat_start=49.0))  # 99s
+        df = pl.concat([short1, short2], how="diagonal_relaxed")
+        result = preprocess_flights(df, min_duration_s=240, smooth=False)
+        assert len(result) == 0
+
+
+class TestPreprocessMultipleFlights:
+    """Multiple flights are independently resampled."""
+
+    def test_two_flights(self) -> None:
+        f1 = _make_flight("f1", 600)
+        f2 = _make_flight("f2", 800, _FlightSpec(lat_start=49.0))
+        df = pl.concat([f1, f2], how="diagonal_relaxed")
+        result = preprocess_flights(df, min_duration_s=240, smooth=False)
+        flights = result["meta_flight_id"].unique().sort().to_list()
+        assert flights == ["f1", "f2"]
+        # Each flight should have regular 4s grid
+        for fid in flights:
+            sub = result.filter(pl.col("meta_flight_id") == fid)
+            diffs = sub["raw_timestamp"].diff().dt.total_seconds().drop_nulls()
+            assert (diffs == 4.0).all()
+
+
 class TestEdgeCases:
     """Edge cases from the test specification."""
 

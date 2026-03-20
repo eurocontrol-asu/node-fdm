@@ -575,7 +575,11 @@ class TestBuildSelectedParamsV3:
         assert result["fdm_mach_sel"].is_nan().sum() == n
 
     def test_bds40_all_null(self) -> None:
-        """When bds_mcp_sel_alt_ft is entirely null, backfill columns are all NaN."""
+        """When bds_mcp_sel_alt_ft is all NaN, alt segments detect on raw_alt_ft.
+
+        raw_alt_ft constant at 35000 → level segment detected → fdm_alt_sel_ft
+        is NOT all NaN.  MCP/FMS backfill columns remain all NaN.
+        """
         n = 50
         df = pl.DataFrame(
             {
@@ -591,8 +595,95 @@ class TestBuildSelectedParamsV3:
         }
         result = build_selected_params(df, config)
         assert "fdm_alt_sel_ft" in result.columns
-        assert result["fdm_alt_sel_ft"].is_nan().sum() == n
+        # raw_alt_ft constant → level segment detected → not all NaN
+        assert (~result["fdm_alt_sel_ft"].is_nan()).sum() > 0
         assert "fdm_mcp_alt_sel_ft" in result.columns
         assert result["fdm_mcp_alt_sel_ft"].is_nan().sum() == n
         assert "fdm_fms_alt_sel_ft" in result.columns
         assert result["fdm_fms_alt_sel_ft"].is_nan().sum() == n
+
+
+class TestTargetColumns:
+    """fdm_alt_target_ft and fdm_cas_target_kt — bfill with last-point anchor."""
+
+    def _make_climb_df(self, n: int = 100) -> pl.DataFrame:
+        """Build a synthetic climb flight: altitude increasing, CAS varying."""
+        alt = np.linspace(5000, 35000, n)
+        mach = np.linspace(0.4, 0.78, n)
+        cas = np.linspace(250, 290, n)
+        return pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "era_mach": mach,
+                "era_cas_kt": cas,
+                "bds_ias_kt": cas + np.random.default_rng(42).normal(0, 0.5, n),
+            }
+        )
+
+    def test_alt_target_exists_and_no_null(self) -> None:
+        """fdm_alt_target_ft has no nulls (bfill fills everything)."""
+        df = self._make_climb_df()
+        config = {
+            "mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True},
+            "cas": {"tol": 0.75, "min_len": 5, "use_alt": False},
+            "alt": {"tol": 25, "min_len": 5, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_alt_target_ft" in result.columns
+        # bfill + last-point anchor → no nulls, no NaN
+        assert result["fdm_alt_target_ft"].is_null().sum() == 0
+        assert result["fdm_alt_target_ft"].is_nan().sum() == 0
+
+    def test_alt_target_last_row_equals_actual(self) -> None:
+        """Last row of fdm_alt_target_ft equals the actual altitude."""
+        n = 100
+        df = pl.DataFrame({"raw_alt_ft": np.linspace(5000, 35000, n)})
+        config = {
+            "alt": {"tol": 25, "min_len": 5, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        last_target = result["fdm_alt_target_ft"][-1]
+        last_actual = result["raw_alt_ft"][-1]
+        assert abs(last_target - last_actual) < 1e-6
+
+    def test_alt_target_is_bfill_of_segments(self) -> None:
+        """Between segments, fdm_alt_target_ft equals the NEXT segment value."""
+        alt = np.concatenate(
+            [
+                np.full(30, 10000.0),  # level at 10000
+                np.linspace(10000, 35000, 40),  # climb
+                np.full(30, 35000.0),  # level at 35000
+            ]
+        )
+        config = {
+            "alt": {"tol": 25, "min_len": 5, "use_alt": False},
+        }
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, config)
+        # During climb (rows ~30-69), target should be 35000 (next plateau)
+        mid = result["fdm_alt_target_ft"][50]
+        assert abs(mid - 35000.0) < 100  # bfilled from next segment
+
+    def test_cas_target_exists_and_no_null(self) -> None:
+        """fdm_cas_target_kt has no nulls."""
+        df = self._make_climb_df()
+        config = {
+            "mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True},
+            "cas": {"tol": 0.75, "min_len": 5, "use_alt": False},
+            "alt": {"tol": 25, "min_len": 5, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_cas_target_kt" in result.columns
+        assert result["fdm_cas_target_kt"].is_null().sum() == 0
+        assert result["fdm_cas_target_kt"].is_nan().sum() == 0
+
+    def test_cas_target_last_row_equals_actual(self) -> None:
+        """Last row of fdm_cas_target_kt equals actual CAS."""
+        df = self._make_climb_df()
+        config = {
+            "cas": {"tol": 0.75, "min_len": 5, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        last_target = result["fdm_cas_target_kt"][-1]
+        last_actual = result["era_cas_kt"][-1]
+        assert abs(last_target - last_actual) < 1e-6

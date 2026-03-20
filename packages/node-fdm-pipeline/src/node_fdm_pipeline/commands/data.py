@@ -485,6 +485,7 @@ def preprocess(
         log.info("preprocess_dry_run", msg="Config valid, would preprocess")
         return
 
+    import polars as pl
     from node_fdm_data.delta import read_delta_table
     from node_fdm_data.preprocessing.resample import preprocess_flights
 
@@ -505,6 +506,14 @@ def preprocess(
         min_duration_s=cfg.preprocess.min_duration_s,
         smooth=cfg.preprocess.smooth,
     )
+
+    # Cast Null-typed columns (all-null after resample) to Float64 for Delta Lake
+    null_cols = [c for c in result.columns if result[c].dtype == pl.Null]
+    if null_cols:
+        log.info("preprocess_cast_null_cols", columns=null_cols)
+        result = result.with_columns(
+            [pl.col(c).cast(pl.Float64) for c in null_cols],
+        )
 
     # Overwrite entire table (row count changes with resampling)
     delta_write_options: dict[str, object] = {"schema_mode": "merge"}

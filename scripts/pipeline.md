@@ -18,7 +18,6 @@ Cree `data/aircraft_db.csv` — liste des icao24 a traiter.
 uv run fdm aircraft-list --config config.yaml --sample-size 1 --query-date 2025-09-01
 ```
 
-
 ---
 
 ## 2. download
@@ -41,9 +40,13 @@ uv run fdm identify --config config.yaml
 
 ---
 
-## 3.5. preprocess
+## 4. preprocess
 
-Resample et lisse les vols : detection des sous-segments, interpolation par sous-segment, lissage de position, et resampling a frequence fixe.
+Resample et lisse les vols : detection des sous-segments par groupe de colonnes (position, altitude, BDS), interpolation lineaire par sous-segment, lissage Savitzky-Golay de la position, et resampling a grille reguliere 4s.
+
+Ajoute 3 flags de gap : `pre_gap_position`, `pre_gap_altitude`, `pre_gap_bds`.
+
+> **Note** : cette etape fait un overwrite de la Delta Table (le nombre de rows change). Toutes les etapes suivantes (flag → split) doivent etre relancees.
 
 ```bash
 uv run fdm preprocess --config config.yaml
@@ -51,7 +54,7 @@ uv run fdm preprocess --config config.yaml
 
 ---
 
-## 4. flag
+## 5. flag
 
 Ajoute les colonnes de validite (`fdm_flag_*`) sur chaque vol.
 
@@ -61,9 +64,9 @@ uv run fdm flag --config config.yaml
 
 ---
 
-## 5. enrich
+## 6. enrich
 
-Enrichit la Delta Table avec les données météo ERA5.
+Enrichit la Delta Table avec les donnees meteo ERA5.
 
 ```bash
 uv run fdm enrich --config config.yaml
@@ -71,7 +74,7 @@ uv run fdm enrich --config config.yaml
 
 ---
 
-## 6. derive
+## 7. derive
 
 Calcule les colonnes physiques derivees (`fdm_gamma_rad`, `fdm_long_wind_ms`, distances aeroports, etc.).
 
@@ -81,7 +84,7 @@ uv run fdm derive --config config.yaml
 
 ---
 
-## 7. segments
+## 8. segments
 
 Detecte les segments constants et construit les colonnes `fdm_*_sel` (mach, cas, vz, alt, gamma).
 
@@ -91,7 +94,7 @@ uv run fdm segments --config config.yaml
 
 ---
 
-## 8. convert
+## 9. convert
 
 Convertit en unites SI et calcule les derivees temporelles (`fdm_d_*`).
 
@@ -101,7 +104,7 @@ uv run fdm convert --config config.yaml
 
 ---
 
-## 9. split
+## 10. split
 
 Assigne le split train/val/test par hash icao24.
 
