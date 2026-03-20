@@ -1,19 +1,52 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
-*.egg-info/
-dist/
-build/
-.eggs/
-*.egg
-.venv/
-.mypy_cache/
-.pytest_cache/
-.ruff_cache/
 *.so
+# Generated version file
+_version.py
+.Python
+build/
+dist/
+*.egg-info/
+*.egg
+.eggs/
+
+# Virtual environments
+.venv/
+.uv/
+venv/
+ENV/
+
+# Testing & Coverage
+.pytest_cache/
 .coverage
+coverage.xml
+coverage.json
 htmlcov/
+coverage_html/
+.tox/
+
+# Type checking & Linting
+.mypy_cache/
+.ruff_cache/
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Environment
+.env
+.envrc
+
+# Documentation
 site/
+
+# OS
+.DS_Store
+Thumbs.db
 
 # Flight data (parquet, models, figures — too large for git)
 data/
