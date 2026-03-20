@@ -75,3 +75,39 @@ class TestResolveArchitecture:
         """QAR preprocessing function is None (v3 pipeline handles preprocessing)."""
         info = resolve_architecture("qar")
         assert info.preprocessing_fn is None
+
+    def test_resolve_adsb(self) -> None:
+        """Resolving 'adsb' returns correct ArchitectureInfo."""
+        info = resolve_architecture("adsb")
+        assert isinstance(info, ArchitectureInfo)
+        assert info.name == "node_adsb_v1"
+        assert len(info.x_cols) == 3
+        assert len(info.u_cols) == 4
+        assert len(info.e0_cols) == 2
+        assert len(info.dx_cols) == 3
+        assert info.segment_filter_fn is None
+        assert info.preprocessing_fn is None
+
+    def test_resolve_adsb_cols(self) -> None:
+        """Resolving 'adsb' returns correct column lists from schemas.adsb."""
+        info = resolve_architecture("adsb")
+        assert info.x_cols == ["raw_alt_m", "fdm_gamma_rad", "era_tas_ms"]
+        assert info.u_cols[0] == "fdm_alt_target_m"
+        assert info.e0_cols == ["fdm_long_wind_ms", "era_temp_K"]
+
+    def test_resolve_adsb_import(self) -> None:
+        """Resolving 'adsb' sets correct architecture_import path."""
+        info = resolve_architecture("adsb")
+        assert info.architecture_import == "node_fdm.architectures.adsb"
+
+    def test_resolve_unknown_mentions_adsb(self) -> None:
+        """Unknown architecture error message includes 'adsb' in supported list."""
+        with pytest.raises(ValueError, match="adsb"):
+            resolve_architecture("unknown")
+
+    def test_resolve_opensky_and_adsb_coexist(self) -> None:
+        """Both opensky and adsb architectures can be resolved without conflict."""
+        opensky = resolve_architecture("opensky")
+        adsb = resolve_architecture("adsb")
+        assert opensky.name != adsb.name
+        assert opensky.x_cols != adsb.x_cols

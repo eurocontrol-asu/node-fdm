@@ -40,7 +40,7 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
     """Resolve an architecture name to its schema and preprocessing components.
 
     Args:
-        arch: Architecture identifier — ``"opensky"``, ``"opensky_v2"``, or ``"qar"``.
+        arch: Architecture identifier — ``"opensky"``, ``"opensky_v2"``, ``"qar"``, or ``"adsb"``.
 
     Returns:
         Fully resolved ``ArchitectureInfo``.
@@ -88,6 +88,22 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.qar",
             )
+        case "adsb":
+            from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, U_COLS, X_COLS
+
+            return ArchitectureInfo(
+                name="node_adsb_v1",
+                x_cols=X_COLS,
+                u_cols=U_COLS,
+                e0_cols=E0_COLS,
+                dx_cols=DX_COLS,
+                preprocessing_fn=None,
+                segment_filter_fn=None,
+                architecture_import="node_fdm.architectures.adsb",
+            )
         case _:
-            msg = f"Unknown architecture: {arch!r}. Supported: 'opensky', 'opensky_v2', 'qar'."
+            msg = (
+                f"Unknown architecture: {arch!r}. "
+                "Supported: 'opensky', 'opensky_v2', 'qar', 'adsb'."
+            )
             raise ValueError(msg)
