@@ -12,6 +12,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `architectures.registry` | Typed architecture registry with `ArchitectureSpec` and `LayerSpec` (Pydantic) |
 | `architectures.opensky` | OpenSky 2025 architecture (auto-registered) |
 | `architectures.qar` | QAR architecture (auto-registered) |
+| `architectures.adsb` | ADS-B v1 architecture (auto-registered) |
 | `models.fdm` | `FlightDynamicsModel` — layered state derivative computation |
 | `models.batch_neural_ode` | `BatchNeuralODE` — ODE wrapper with input interpolation |
 | `models.fdm_prod` | `FlightDynamicsModelProd` — load pretrained weights for inference |
@@ -50,7 +51,7 @@ print(spec.x_cols)   # ['distance_m', 'altitude_ft', 'gamma_rad', 'tas_kt']
 print(spec.layers)   # [LayerSpec(name='structured', ...), LayerSpec(name='trajectory', ...)]
 
 # List all registered architectures
-print(list(REGISTRY.keys()))  # ['opensky_2025', 'qar']
+print(list(REGISTRY.keys()))  # ['opensky_2025', 'qar', 'node_adsb_v1']
 ```
 
 ### Training

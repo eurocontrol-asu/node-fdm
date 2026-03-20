@@ -11,7 +11,7 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 - **ISA model** — Temperature, pressure, and density as numpy functions (`isa_temperature`, `isa_pressure`, `isa_density`) plus a Polars expression variant (`isa_pressure_expr`)
 - **Physics constants** — ISA atmosphere parameters, unit conversion factors, QAR discrete-signal lookup tables
 - **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components; Polars expression variants: `haversine_expr`, `compute_mach_expr`, `compute_cas_expr`
-- **Column schemas** — OpenSky 2025 and QAR architectures with typed column lists and conversion registries
+- **Column schemas** — OpenSky 2025, QAR, and ADS-B architectures with typed column lists and conversion registries
 - **Flight processor** — Configurable `FlightProcessor` pipeline with method-chaining API
 - **Preprocessing** — OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction)
 - **Dataset splitting** — `split_by_icao` for deterministic train/val/test split (prevents data leakage)
@@ -100,7 +100,7 @@ split_df = split_by_icao(df, ratios=(0.7, 0.15, 0.15), seed=42)
 
 ## Development
 
-<!-- 224 tests -->
+<!-- 249 tests -->
 ```bash
 uv run pytest packages/node-fdm-data/ -q
 uv run ruff check packages/node-fdm-data/
