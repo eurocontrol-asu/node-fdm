@@ -42,6 +42,7 @@ graph LR
 | :--- | :--- | :--- |
 | **`X_COLS`** | **State** | Flight variables integrated by the ODE (e.g., altitude, speed) |
 | **`U_COLS`** | **Control** | Pilot inputs, FMS selections, or active controls |
+| **`U_ODE_COLS`** | **Control (ODE)** | Subset of `U_COLS` fed to the ODE layer (excludes trajectory-only controls like `fdm_alt_target_m`) |
 | **`E0_COLS`** | **Environmental** | Exogenous inputs like wind, temperature, or static distances |
 | **`E1_COLS`** | **Derived** | Intermediate features calculated by physics layers (e.g., Mach number) |
 | **`DX_COLS`** | **Derivatives** | Target outputs predicted by the ODE layer (e.g., `dalt`, `dvz`) |

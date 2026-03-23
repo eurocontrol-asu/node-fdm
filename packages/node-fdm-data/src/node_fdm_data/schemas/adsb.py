@@ -20,6 +20,7 @@ __all__ = [
     "E0_COLS",
     "E1_COLS",
     "U_COLS",
+    "U_ODE_COLS",
     "X_COLS",
 ]
 
@@ -37,6 +38,14 @@ X_COLS: list[str] = [
 # ---------------------------------------------------------------------------
 U_COLS: list[str] = [
     "fdm_alt_target_m",
+    "fdm_mach_sel",
+    "fdm_cas_sel_ms",
+    "fdm_vz_sel_ms",
+]
+
+# Subset of U_COLS fed to the ODE layer (excludes fdm_alt_target_m,
+# which is consumed only by the trajectory layer).
+U_ODE_COLS: list[str] = [
     "fdm_mach_sel",
     "fdm_cas_sel_ms",
     "fdm_vz_sel_ms",

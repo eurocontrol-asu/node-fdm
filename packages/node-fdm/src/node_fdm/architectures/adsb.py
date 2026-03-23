@@ -5,8 +5,8 @@ data.  Compared to ``opensky_2025``:
 
 * Smaller state vector (no cumulative distance).
 * Robust altitude control (``fdm_alt_target_m``, never NaN) kept in
-  ``U_COLS`` for the ``TrajectoryLayer``; the ``StructuredLayer`` uses
-  ``fdm_alt_diff_m`` (derived by ``TrajectoryLayer``) instead.
+  ``U_COLS`` for the ``TrajectoryLayer``; the ``StructuredLayer`` receives
+  only ``U_ODE_COLS`` (``U_COLS`` minus ``fdm_alt_target_m``).
 * Leaner environment (no airport distances).
 * Fewer derivatives (no ground-speed derivative).
 
@@ -16,7 +16,7 @@ Auto-registers at import time.
 from __future__ import annotations
 
 from node_fdm.architectures.registry import ArchitectureSpec, LayerSpec, register
-from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
+from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, U_ODE_COLS, X_COLS
 
 __all__ = [
     "NODE_ADSB_V1",
@@ -54,7 +54,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
         LayerSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
-            input_cols=X_COLS + E0_COLS + E1_COLS,
+            input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS,
             output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms"],
             trainable=True,
         ),

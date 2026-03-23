@@ -63,6 +63,18 @@ class TestNodeAdsbV1Architecture:
         assert spec.u_cols[0] == "fdm_mcp_alt_sel_m"
 
 
+class TestAdsbStructuredInputCols:
+    """Tests for data_ode layer input column composition."""
+
+    def test_adsb_structured_input_cols(self) -> None:
+        """data_ode layer input_cols == X_COLS + U_ODE_COLS + E0_COLS + E1_COLS."""
+        from node_fdm_data.schemas.adsb import E0_COLS, E1_COLS, U_ODE_COLS, X_COLS
+
+        spec = get("node_adsb_v1")
+        expected = X_COLS + U_ODE_COLS + E0_COLS + E1_COLS
+        assert spec.layers[1].input_cols == expected
+
+
 class TestBothArchitecturesCoexist:
     """Both architectures loaded without conflict."""
 

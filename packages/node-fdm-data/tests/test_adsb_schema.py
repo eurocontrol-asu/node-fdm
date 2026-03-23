@@ -45,6 +45,18 @@ class TestAdsbSchema:
         ]
 
 
+class TestUOdeCols:
+    """Tests for the U_ODE_COLS subset used by the ODE layer."""
+
+    def test_u_ode_cols_subset_of_u_cols(self) -> None:
+        """U_ODE_COLS is a strict subset of U_COLS."""
+        assert set(adsb.U_ODE_COLS).issubset(set(adsb.U_COLS))
+
+    def test_u_ode_cols_no_alt_target(self) -> None:
+        """U_ODE_COLS excludes fdm_alt_target_m (trajectory-only control)."""
+        assert "fdm_alt_target_m" not in adsb.U_ODE_COLS
+
+
 class TestBothSchemasCoexist:
     """Both schemas can be loaded without conflict."""
 
