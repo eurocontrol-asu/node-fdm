@@ -75,11 +75,12 @@ class TrajectoryLayer(nn.Module):
         Args:
             col_map: Mapping from canonical names (``"tas"``, ``"gamma"``,
                 ``"alt"``, ``"wind"``, ``"alt_sel"``, ``"vz"``, ``"gs"``,
-                ``"mach"``, ``"cas"``, ``"alt_diff"``) to actual column names
-                in the input dict.  Defaults to OpenSky naming.
+                ``"mach"``, ``"cas"``, ``"alt_diff"``, ``"tas_sel"``,
+                ``"tas_diff"``) to actual column names in the input dict.
+                Missing keys fall back to ``DEFAULT_COL_MAP`` (OpenSky naming).
         """
         super().__init__()
-        self.col_map = col_map or DEFAULT_COL_MAP
+        self.col_map = {**DEFAULT_COL_MAP, **(col_map or {})}
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Compute derived trajectory quantities from input mapping.
@@ -142,5 +143,11 @@ class TrajectoryLayer(nn.Module):
         if alt_sel_col and alt_sel_col in x:
             alt_diff = x[alt_sel_col] - alt
             output[c["alt_diff"]] = torch.nan_to_num(alt_diff, nan=0.0)
+
+        # TAS difference from selected TAS target
+        tas_sel_col = c.get("tas_sel", "")
+        if tas_sel_col and tas_sel_col in x:
+            tas_target = torch.nan_to_num(x[tas_sel_col], nan=0.0)
+            output[c["tas_diff"]] = tas_target - tas
 
         return output

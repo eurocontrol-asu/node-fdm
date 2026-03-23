@@ -48,6 +48,8 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "mach": "era_mach",
                     "cas": "bds_ias_ms",
                     "alt_diff": "fdm_alt_diff_m",
+                    "tas_sel": "fdm_tas_target_ms",
+                    "tas_diff": "fdm_tas_diff_ms",
                 },
             },
         ),
