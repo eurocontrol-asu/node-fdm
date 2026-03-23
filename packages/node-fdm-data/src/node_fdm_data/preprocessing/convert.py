@@ -18,6 +18,7 @@ from node_fdm_data.conversions import (
 )
 
 __all__ = [
+    "DERIVATIVE_BOUNDS",
     "SI_CONVERSIONS",
     "SI_DERIVATIVES",
     "compute_derivatives",
@@ -50,6 +51,12 @@ SI_DERIVATIVES: list[tuple[str, str]] = [
     ("era_tas_ms", "fdm_d_tas_ms"),
 ]
 
+DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
+    "fdm_d_vz_ms": (-75.0, 75.0),
+    "fdm_d_gamma_rads": (-0.025, 0.025),
+    "fdm_d_tas_ms": (-12.5, 12.5),
+}
+
 
 def convert_si(df: pl.DataFrame) -> pl.DataFrame:
     """Add SI-unit columns to the DataFrame (étape 6).
@@ -74,16 +81,18 @@ def compute_derivatives(
     df: pl.DataFrame,
     *,
     flight_id_col: str = "meta_flight_id",
+    dt: float = 4.0,
 ) -> pl.DataFrame:
     """Add temporal derivative columns grouped by flight (étape 7).
 
     For each entry in :data:`SI_DERIVATIVES` whose source column exists,
-    computes ``diff().backward_fill().fill_null(0.0)`` within each
-    *flight_id_col* group.
+    computes ``(diff() / dt).backward_fill().fill_null(0.0)`` within each
+    *flight_id_col* group, then clips to :data:`DERIVATIVE_BOUNDS`.
 
     Args:
         df: DataFrame with SI columns from :func:`convert_si`.
         flight_id_col: Column used to partition flights.
+        dt: Time step in seconds between consecutive rows.
 
     Returns:
         DataFrame with ``fdm_d_*`` derivative columns appended.
@@ -93,9 +102,14 @@ def compute_derivatives(
     if not entries:
         return df
 
-    deriv_exprs = [
-        pl.col(src).diff().backward_fill().fill_null(0.0).alias(tgt) for src, tgt in entries
-    ]
+    deriv_exprs = []
+    for src, tgt in entries:
+        expr = (pl.col(src).diff() / dt).backward_fill().fill_null(0.0)
+        if tgt in DERIVATIVE_BOUNDS:
+            lo, hi = DERIVATIVE_BOUNDS[tgt]
+            expr = expr.clip(lo, hi)
+        deriv_exprs.append(expr.alias(tgt))
+
     df = df.with_columns(
         *[expr.over(flight_id_col) for expr in deriv_exprs],
     )

@@ -12,6 +12,11 @@ from node_fdm_data.preprocessing.convert import (
     convert_si,
 )
 
+try:
+    from node_fdm_data.preprocessing.convert import DERIVATIVE_BOUNDS
+except ImportError:
+    DERIVATIVE_BOUNDS = {"fdm_d_vz_ms": (-75.0, 75.0)}
+
 
 class TestConvertSI:
     """SI unit conversion tests (étape 6)."""
@@ -121,25 +126,51 @@ class TestComputeDerivatives:
             }
         )
 
+    def test_derivatives_divided_by_dt(self, two_flights_df: pl.DataFrame) -> None:
+        """Derivatives are divided by dt to produce SI units."""
+        result = compute_derivatives(two_flights_df, dt=4.0)
+        a = result.filter(pl.col("meta_flight_id") == "A")
+        # raw_alt_m = [0, 100, 300] → diff = [null, 100, 200] → /4 = [null, 25, 50]
+        # backward_fill → [25, 25, 50]
+        assert a["fdm_d_vz_ms"][0] == pytest.approx(25.0)
+        assert a["fdm_d_vz_ms"][1] == pytest.approx(25.0)
+        assert a["fdm_d_vz_ms"][2] == pytest.approx(50.0)
+
+    def test_derivatives_clipped(self) -> None:
+        """Aberrant derivatives are clipped to physical bounds."""
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["A", "A", "A"],
+                "raw_alt_m": [0.0, 0.0, 50000.0],  # 50km jump → aberrant
+                "fdm_gamma_rad": [0.0, 0.0, 0.0],
+                "era_tas_ms": [200.0, 200.0, 200.0],
+            }
+        )
+        result = compute_derivatives(df, dt=4.0)
+        _, hi = DERIVATIVE_BOUNDS["fdm_d_vz_ms"]
+        assert result["fdm_d_vz_ms"][2] == pytest.approx(hi)  # 75.0
+
     def test_derivatives_per_flight(self, two_flights_df: pl.DataFrame) -> None:
         """Derivatives restart for each meta_flight_id (no cross-flight bleed)."""
-        result = compute_derivatives(two_flights_df)
+        result = compute_derivatives(two_flights_df, dt=4.0)
 
-        # Flight A: diff(raw_alt_m) = [null, 100, 200] → backward_fill → [100, 100, 200]
+        # Flight A: diff(raw_alt_m) = [null, 100, 200] → /4 → [null, 25, 50]
+        # backward_fill → [25, 25, 50]
         a = result.filter(pl.col("meta_flight_id") == "A")
-        assert a["fdm_d_vz_ms"][0] == pytest.approx(100.0)  # backward fill
-        assert a["fdm_d_vz_ms"][1] == pytest.approx(100.0)
-        assert a["fdm_d_vz_ms"][2] == pytest.approx(200.0)
+        assert a["fdm_d_vz_ms"][0] == pytest.approx(25.0)  # backward fill
+        assert a["fdm_d_vz_ms"][1] == pytest.approx(25.0)
+        assert a["fdm_d_vz_ms"][2] == pytest.approx(50.0)
 
-        # Flight B: diff(raw_alt_m) = [null, 200, 300] → backward_fill → [200, 200, 300]
+        # Flight B: diff(raw_alt_m) = [null, 200, 300] → /4 → [null, 50, 75]
+        # backward_fill → [50, 50, 75]
         b = result.filter(pl.col("meta_flight_id") == "B")
-        assert b["fdm_d_vz_ms"][0] == pytest.approx(200.0)  # backward fill
-        assert b["fdm_d_vz_ms"][1] == pytest.approx(200.0)
-        assert b["fdm_d_vz_ms"][2] == pytest.approx(300.0)
+        assert b["fdm_d_vz_ms"][0] == pytest.approx(50.0)  # backward fill
+        assert b["fdm_d_vz_ms"][1] == pytest.approx(50.0)
+        assert b["fdm_d_vz_ms"][2] == pytest.approx(75.0)
 
     def test_derivatives_first_value(self, two_flights_df: pl.DataFrame) -> None:
         """First value of each derivative uses backward_fill + fill_null(0.0)."""
-        result = compute_derivatives(two_flights_df)
+        result = compute_derivatives(two_flights_df, dt=4.0)
         # First row should NOT be 0.0 — it's backward_fill of second row
         for col in ("fdm_d_vz_ms", "fdm_d_gamma_rads", "fdm_d_tas_ms"):
             assert col in result.columns
