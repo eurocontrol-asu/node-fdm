@@ -172,6 +172,7 @@ class ODETrainer:
             "lr": self.config.lr,
             "seq_len": self.config.seq_len,
             "batch_size": self.config.batch_size,
+            "method": self.config.method,
             "stats_dict": self.stats_dict,
         }
         meta_path = self.model_dir / "meta.json"

@@ -24,6 +24,7 @@ def run_training(
     epochs: int | None = None,
     batch_size: int | None = None,
     lr: float | None = None,
+    method: str = "euler",
     device: str = "cpu",
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
@@ -35,6 +36,7 @@ def run_training(
         epochs: Override number of training epochs.
         batch_size: Override batch size.
         lr: Override learning rate.
+        method: ODE integration method (``"euler"`` or ``"rk4"``).
         device: PyTorch device string (e.g. ``"cpu"``, ``"cuda:0"``).
     """
     import polars as pl
@@ -88,7 +90,7 @@ def run_training(
             seq_len=60,
             batch_size=batch_size or 512,
             epochs=epochs or 800,
-            method="euler",
+            method=method,
             num_workers=4,
         )
 

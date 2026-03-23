@@ -64,6 +64,7 @@ class ModelMeta(BaseModel):
     lr: float
     seq_len: int
     batch_size: int
+    method: str = "euler"
     stats_dict: dict[str, ColumnStats]
 
     @classmethod
@@ -166,14 +167,63 @@ class NodeFDMPredictor:
                     device=self.device,
                 ).unsqueeze(0)
 
-                self.model.reset_history()
-                dx = self.model(x_t, u_t, e_t)
-
-                # Euler step
-                for j, (coeff, _col) in enumerate(self.spec.dx_cols):
-                    x_t[0, j] = x_t[0, j] + coeff * self.meta.step * dx[0, j]
+                if self.meta.method == "rk4":
+                    x_t = self._rk4_step(x_t, u_t, e_t)
+                else:
+                    x_t = self._euler_step(x_t, u_t, e_t)
 
                 for j, col in enumerate(self.spec.x_cols):
                     results[col].append(x_t[0, j].item())
 
         return {col: np.array(vals) for col, vals in results.items()}
+
+    def _euler_step(
+        self,
+        x_t: torch.Tensor,
+        u_t: torch.Tensor,
+        e_t: torch.Tensor,
+    ) -> torch.Tensor:
+        """Advance state by one Euler step."""
+        self.model.reset_history()
+        dx = self.model(x_t, u_t, e_t)
+        x_next = x_t.clone()
+        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
+            x_next[0, j] = x_t[0, j] + coeff * self.meta.step * dx[0, j]
+        return x_next
+
+    def _rk4_step(
+        self,
+        x_t: torch.Tensor,
+        u_t: torch.Tensor,
+        e_t: torch.Tensor,
+    ) -> torch.Tensor:
+        """Advance state by one classical RK4 step."""
+        dt = self.meta.step
+
+        self.model.reset_history()
+        k1 = self.model(x_t, u_t, e_t)
+
+        x2 = x_t.clone()
+        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
+            x2[0, j] = x_t[0, j] + 0.5 * coeff * dt * k1[0, j]
+        self.model.reset_history()
+        k2 = self.model(x2, u_t, e_t)
+
+        x3 = x_t.clone()
+        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
+            x3[0, j] = x_t[0, j] + 0.5 * coeff * dt * k2[0, j]
+        self.model.reset_history()
+        k3 = self.model(x3, u_t, e_t)
+
+        x4 = x_t.clone()
+        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
+            x4[0, j] = x_t[0, j] + coeff * dt * k3[0, j]
+        self.model.reset_history()
+        k4 = self.model(x4, u_t, e_t)
+
+        x_next = x_t.clone()
+        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
+            x_next[0, j] = (
+                x_t[0, j] + coeff * dt * (k1[0, j] + 2 * k2[0, j] + 2 * k3[0, j] + k4[0, j]) / 6
+            )
+        return x_next

@@ -31,6 +31,47 @@ class TestColumnStats:
 class TestModelMeta:
     """Unit tests for ModelMeta Pydantic model."""
 
+    def test_meta_method_field(self, tmp_path: Path) -> None:
+        """ModelMeta persists method='rk4' through JSON roundtrip."""
+        meta_data = {
+            "architecture_name": "opensky_2025",
+            "model_params": [2, 1, 48],
+            "step": 1.0,
+            "shift": 60,
+            "lr": 0.001,
+            "seq_len": 60,
+            "batch_size": 512,
+            "method": "rk4",
+            "stats_dict": {
+                "col1": {"mean": 0.0, "std": 1.0, "max": 3.0},
+            },
+        }
+        meta_path = tmp_path / "meta.json"
+        meta_path.write_text(json.dumps(meta_data))
+
+        meta = ModelMeta.from_json(meta_path)
+        assert meta.method == "rk4"
+
+    def test_meta_method_default(self, tmp_path: Path) -> None:
+        """ModelMeta defaults to method='euler' when field is absent."""
+        meta_data = {
+            "architecture_name": "opensky_2025",
+            "model_params": [2, 1, 48],
+            "step": 1.0,
+            "shift": 60,
+            "lr": 0.001,
+            "seq_len": 60,
+            "batch_size": 512,
+            "stats_dict": {
+                "col1": {"mean": 0.0, "std": 1.0, "max": 3.0},
+            },
+        }
+        meta_path = tmp_path / "meta.json"
+        meta_path.write_text(json.dumps(meta_data))
+
+        meta = ModelMeta.from_json(meta_path)
+        assert meta.method == "euler"
+
     def test_roundtrip(self) -> None:
         """Full roundtrip preserves all fields."""
         meta = ModelMeta(
@@ -204,6 +245,96 @@ class TestNodeFDMPredictor:
         }
         (model_dir / "meta.json").write_text(json.dumps(meta_data))
         return NodeFDMPredictor(model_path=model_dir, device="cpu")
+
+    def _make_predictor_with_method(
+        self, tmp_path: Path, method: str = "euler"
+    ) -> NodeFDMPredictor:
+        """Create a minimal predictor with a given integration method in meta."""
+        from node_fdm.architectures.registry import get
+        from node_fdm.dataset import FlightSample, compute_stats
+        from node_fdm.models.fdm import FlightDynamicsModel
+
+        spec = get("opensky_2025")
+        n_x = len(spec.x_cols)
+        n_u = len(spec.u_cols)
+        n_e = len(spec.e0_cols)
+
+        samples = [
+            FlightSample(
+                x=torch.randn(10, n_x),
+                u=torch.randn(10, n_u),
+                e=torch.randn(10, n_e),
+                dx=torch.randn(10, n_x),
+            )
+        ]
+        dx_col_names = [col for _, col in spec.dx_cols]
+        stats = compute_stats(samples, spec.x_cols, spec.u_cols, spec.e0_cols, dx_col_names)
+
+        model = FlightDynamicsModel(spec, stats)
+        model_dir = tmp_path / f"model_{method}"
+        model_dir.mkdir()
+        for layer_spec in spec.layers:
+            if layer_spec.trainable:
+                layer = model.layers_dict[layer_spec.name]
+                save_dict = {"layer_state": layer.state_dict(), "best_val_loss": 0.1, "epoch": 1}
+                torch.save(save_dict, model_dir / f"{layer_spec.name}.pt")
+        meta_data = {
+            "architecture_name": "opensky_2025",
+            "model_params": [2, 1, 48],
+            "step": 1.0,
+            "shift": 60,
+            "lr": 0.001,
+            "seq_len": 60,
+            "batch_size": 512,
+            "method": method,
+            "stats_dict": stats,
+        }
+        (model_dir / "meta.json").write_text(json.dumps(meta_data))
+        return NodeFDMPredictor(model_path=model_dir, device="cpu")
+
+    def test_predict_euler_regression(self, tmp_path: Path) -> None:
+        """Euler predictor produces finite results identical across two runs."""
+        predictor = self._make_predictor_with_method(tmp_path, method="euler")
+        spec = predictor.spec
+        n_x = len(spec.x_cols)
+        n_u = len(spec.u_cols)
+        n_e = len(spec.e0_cols)
+
+        rng = np.random.default_rng(42)
+        n_steps = 10
+        x_init = rng.standard_normal(n_x).astype(np.float32)
+        u_seq = rng.standard_normal((n_steps, n_u)).astype(np.float32)
+        e_seq = rng.standard_normal((n_steps, n_e)).astype(np.float32)
+
+        result_a = predictor.predict_flight(x_init, u_seq, e_seq)
+        result_b = predictor.predict_flight(x_init, u_seq, e_seq)
+
+        for col in spec.x_cols:
+            assert result_a[col].shape == (n_steps,)
+            assert np.isfinite(result_a[col]).all(), f"{col} has non-finite values"
+            np.testing.assert_array_equal(result_a[col], result_b[col])
+
+    def test_predict_rk4(self, tmp_path: Path) -> None:
+        """RK4 predictor runs without crash and produces finite results."""
+        predictor = self._make_predictor_with_method(tmp_path, method="rk4")
+        spec = predictor.spec
+        n_x = len(spec.x_cols)
+        n_u = len(spec.u_cols)
+        n_e = len(spec.e0_cols)
+
+        rng = np.random.default_rng(99)
+        n_steps = 10
+        x_init = rng.standard_normal(n_x).astype(np.float32)
+        u_seq = rng.standard_normal((n_steps, n_u)).astype(np.float32)
+        e_seq = rng.standard_normal((n_steps, n_e)).astype(np.float32)
+
+        result = predictor.predict_flight(x_init, u_seq, e_seq)
+
+        assert isinstance(result, dict)
+        assert len(result) == n_x
+        for col in spec.x_cols:
+            assert result[col].shape == (n_steps,)
+            assert np.isfinite(result[col]).all(), f"{col} has non-finite values"
 
     def test_predict_flight_raises_on_nan_x_init(self, tmp_path: Path) -> None:
         """ValueError raised when x_init contains NaN, message includes column name."""

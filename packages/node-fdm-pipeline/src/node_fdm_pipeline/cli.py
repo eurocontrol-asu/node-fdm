@@ -62,6 +62,10 @@ def train(
         float | None,
         cyclopts.Parameter(help="Override learning rate"),
     ] = None,
+    method: Annotated[
+        str,
+        cyclopts.Parameter(help="ODE integration method: euler or rk4"),
+    ] = "euler",
     device: Annotated[
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
@@ -77,6 +81,7 @@ def train(
         epochs=epochs,
         batch_size=batch_size,
         lr=lr,
+        method=method,
         device=device,
     )
 
