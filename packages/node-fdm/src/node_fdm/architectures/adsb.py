@@ -4,7 +4,9 @@ Simplified two-layer architecture (trajectory + data_ode) for ADS-B
 data.  Compared to ``opensky_2025``:
 
 * Smaller state vector (no cumulative distance).
-* Robust altitude control (``fdm_alt_target_m``, never NaN).
+* Robust altitude control (``fdm_alt_target_m``, never NaN) kept in
+  ``U_COLS`` for the ``TrajectoryLayer``; the ``StructuredLayer`` uses
+  ``fdm_alt_diff_m`` (derived by ``TrajectoryLayer``) instead.
 * Leaner environment (no airport distances).
 * Fewer derivatives (no ground-speed derivative).
 
@@ -52,7 +54,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
         LayerSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
-            input_cols=X_COLS + U_COLS + E0_COLS + E1_COLS,
+            input_cols=X_COLS + E0_COLS + E1_COLS,
             output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms"],
             trainable=True,
         ),
