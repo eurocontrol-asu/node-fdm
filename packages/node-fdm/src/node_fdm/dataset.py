@@ -98,12 +98,9 @@ def compute_stats(
     stats: dict[str, dict[str, float]] = {}
     for i, col in enumerate(all_cols):
         vals = data[:, i]
-        q1 = torch.quantile(vals, 0.25).item()
-        q3 = torch.quantile(vals, 0.75).item()
-        iqr_std = (q3 - q1) / 1.3489  # IQR-based robust std estimate
         stats[col] = {
-            "mean": vals.median().item(),
-            "std": iqr_std + 1e-6,
-            "max": torch.quantile(vals.abs(), 0.995).item(),
+            "mean": vals.mean().item(),
+            "std": vals.std().item() + 1e-6,
+            "max": vals.abs().max().item(),
         }
     return stats

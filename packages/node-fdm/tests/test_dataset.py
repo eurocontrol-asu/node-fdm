@@ -107,8 +107,8 @@ class TestComputeStats:
                 assert not (v != v), f"NaN in stats: {col_stats}"  # NaN check
 
 
-class TestComputeStatsRobust:
-    """Tests for robust median/IQR statistics in compute_stats (AXM-741)."""
+class TestComputeStatsExtended:
+    """Extended tests for compute_stats (mean/std, reverted from IQR in AXM-745)."""
 
     _x_cols: ClassVar[list[str]] = ["x1", "x2", "x3", "x4"]
     _u_cols: ClassVar[list[str]] = ["u1", "u2", "u3"]
@@ -127,7 +127,7 @@ class TestComputeStatsRobust:
             assert "max" in stats[col], f"missing 'max' for {col}"
 
     def test_compute_stats_values_constant(self) -> None:
-        """Constant data — median == constant value, std ≈ 1e-6."""
+        """Constant data — mean == constant value, std ≈ 1e-6."""
         val = 42.0
         samples = [
             FlightSample(
@@ -142,44 +142,10 @@ class TestComputeStatsRobust:
         for col in self._x_cols + self._u_cols + self._e_cols + self._dx_cols:
             assert stats[col]["mean"] == pytest.approx(
                 val, abs=1e-4
-            ), f"{col}: median should be {val}, got {stats[col]['mean']}"
+            ), f"{col}: mean should be {val}, got {stats[col]['mean']}"
             assert stats[col]["std"] == pytest.approx(
                 1e-6, abs=1e-7
             ), f"{col}: std should be ~1e-6 for constant data, got {stats[col]['std']}"
-
-    def test_outlier_extreme_robust_mean(self) -> None:
-        """99 samples at ~100, 1 sample at 50000 — 'mean' ≈ 100 (robust, not ~600)."""
-        normal_val = 100.0
-        outlier_val = 50000.0
-        seq_len = 10
-        # 99 normal samples
-        normal_samples = [
-            FlightSample(
-                x=torch.full((seq_len, len(self._x_cols)), normal_val),
-                u=torch.full((seq_len, len(self._u_cols)), normal_val),
-                e=torch.full((seq_len, len(self._e_cols)), normal_val),
-                dx=torch.full((seq_len, len(self._dx_cols)), normal_val),
-            )
-            for _ in range(99)
-        ]
-        # 1 outlier sample
-        outlier_sample = FlightSample(
-            x=torch.full((seq_len, len(self._x_cols)), outlier_val),
-            u=torch.full((seq_len, len(self._u_cols)), outlier_val),
-            e=torch.full((seq_len, len(self._e_cols)), outlier_val),
-            dx=torch.full((seq_len, len(self._dx_cols)), outlier_val),
-        )
-        samples = [*normal_samples, outlier_sample]
-        stats = compute_stats(samples, self._x_cols, self._u_cols, self._e_cols, self._dx_cols)
-        for col in self._x_cols + self._u_cols + self._e_cols + self._dx_cols:
-            # Robust mean (median) should be ~100, not pulled up to ~600 by outlier
-            assert stats[col]["mean"] == pytest.approx(
-                normal_val, rel=0.05
-            ), f"{col}: robust mean should be ~{normal_val}, got {stats[col]['mean']}"
-            # Std should reflect the healthy distribution, not be inflated by outlier
-            assert (
-                stats[col]["std"] < 500
-            ), f"{col}: std should reflect sane distribution, got {stats[col]['std']}"
 
     def test_constant_column_std_epsilon(self) -> None:
         """All identical values — std = 1e-6 (not 0)."""
@@ -199,6 +165,48 @@ class TestComputeStatsRobust:
             assert stats[col]["std"] == pytest.approx(
                 1e-6, abs=1e-7
             ), f"{col}: std should be epsilon (1e-6), got {stats[col]['std']}"
+
+    def test_compute_stats_zero_inflated(self) -> None:
+        """90% zeros + 10% nonzero — std must NOT collapse to ~1e-6 (AXM-745).
+
+        IQR-based std collapses for zero-inflated distributions because Q1=Q3=0.
+        After reverting to mean/std, the standard deviation should reflect the
+        actual spread of the data.
+        """
+        seq_len = 100
+        n_samples = 10
+        all_cols = self._x_cols + self._u_cols + self._e_cols + self._dx_cols
+        samples: list[FlightSample] = []
+        gen = torch.Generator().manual_seed(42)
+        for _ in range(n_samples):
+            # Build a row of mostly zeros with 10% nonzero values
+            tensors: dict[str, torch.Tensor] = {}
+            for name, cols in [
+                ("x", self._x_cols),
+                ("u", self._u_cols),
+                ("e", self._e_cols),
+                ("dx", self._dx_cols),
+            ]:
+                t = torch.zeros(seq_len, len(cols))
+                # Set ~10% of rows to nonzero (value=5.0)
+                mask = torch.rand(seq_len, generator=gen) < 0.1
+                t[mask] = 5.0
+                tensors[name] = t
+            samples.append(
+                FlightSample(
+                    x=tensors["x"],
+                    u=tensors["u"],
+                    e=tensors["e"],
+                    dx=tensors["dx"],
+                )
+            )
+        stats = compute_stats(samples, self._x_cols, self._u_cols, self._e_cols, self._dx_cols)
+        for col in all_cols:
+            # With mean/std, std should be well above epsilon (~1.5 for this distribution)
+            assert stats[col]["std"] > 0.1, (
+                f"{col}: std={stats[col]['std']:.6f} collapsed to near-zero; "
+                f"zero-inflated distribution needs real std, not IQR-based"
+            )
 
     def test_single_sample(self) -> None:
         """1 sample with seq_len=60 — no crash, stats calculated."""
