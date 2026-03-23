@@ -23,6 +23,8 @@ import numpy as np
 import polars as pl
 from scipy.signal import savgol_filter
 
+from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas
+
 __all__ = [
     "add_segment_column",
     "build_selected_params",
@@ -184,6 +186,13 @@ def build_selected_params(  # noqa: PLR0915
     TAS plateaus are masked in regions where Mach or CAS plateaus have
     already been detected, avoiding double-counting.
 
+    Target columns (backward-filled with last-point anchor):
+
+    * ``fdm_alt_target_ft`` — from altitude segments
+    * ``fdm_cas_target_kt`` — from CAS segments
+    * ``fdm_tas_target_kt`` — unified TAS target built from
+      Mach→TAS (highest priority), CAS→TAS, and TAS_sel segments.
+
     Args:
         df: Single-flight DataFrame (sorted by time).
         config: Selected-parameter config dict with keys
@@ -316,5 +325,46 @@ def build_selected_params(  # noqa: PLR0915
         df = df.with_columns(
             pl.Series("_cas_target_tmp", target).backward_fill().alias("fdm_cas_target_kt"),
         ).drop("_cas_target_tmp")
+
+    # fdm_tas_target_kt: "which TAS is the aircraft heading towards?"
+    # Combines Mach→TAS (priority), CAS→TAS, TAS_sel, then bfill.
+    tas_src = "era_tas_kt"
+    if tas_src in df.columns:
+        n = len(df)
+        tas_target = np.full(n, np.nan)
+        alt_m = alt_arr * 0.3048  # ft → m
+        _ms_to_kt = 1.0 / 0.514444
+
+        # Layer 1 (lowest priority): TAS_sel segments
+        if "fdm_tas_sel_kt" in df.columns:
+            sel = df["fdm_tas_sel_kt"].to_numpy()
+            mask = ~np.isnan(sel)
+            tas_target[mask] = sel[mask]
+
+        # Layer 2: CAS→TAS (overrides TAS_sel)
+        if "fdm_cas_sel_kt" in df.columns:
+            cas_sel = df["fdm_cas_sel_kt"].to_numpy()
+            mask = ~np.isnan(cas_sel)
+            if mask.any():
+                cas_ms = cas_sel[mask] * 0.514444
+                tas_ms = cas_to_tas(cas_ms, alt_m[mask])
+                tas_target[mask] = np.asarray(tas_ms) * _ms_to_kt
+
+        # Layer 3 (highest priority): Mach→TAS
+        if "fdm_mach_sel" in df.columns:
+            mach_sel = df["fdm_mach_sel"].to_numpy()
+            mask = ~np.isnan(mach_sel)
+            if mask.any():
+                tas_ms = mach_to_tas(mach_sel[mask], alt_m[mask])
+                tas_target[mask] = np.asarray(tas_ms) * _ms_to_kt
+
+        # Anchor last row to actual TAS, then backward-fill
+        tas_target[n - 1] = df[tas_src][-1]
+        df = df.with_columns(
+            pl.Series("fdm_tas_target_kt", tas_target)
+            .fill_nan(None)
+            .backward_fill()
+            .alias("fdm_tas_target_kt"),
+        )
 
     return df
