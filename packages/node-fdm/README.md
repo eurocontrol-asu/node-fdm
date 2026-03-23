@@ -22,7 +22,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed |
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
 | `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting |
-| `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata) |
+| `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
 | `dataset` | `FlightDataset` → `FlightSample` (typed tensors) |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame |
 | `losses` | `get_loss` factory |
@@ -95,8 +95,9 @@ from node_fdm.predictor import NodeFDMPredictor, ModelMeta
 # Load model metadata
 meta = ModelMeta.from_json(Path("models/my_model/meta.json"))
 print(meta.architecture_name)  # 'opensky_2025'
+print(meta.method)             # 'euler' or 'rk4'
 
-# Run predictions
+# Run predictions (integration method is read from meta.json)
 predictor = NodeFDMPredictor(
     model_path=Path("models/my_model"),
     device="cpu",

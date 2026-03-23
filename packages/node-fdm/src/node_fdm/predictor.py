@@ -54,6 +54,7 @@ class ModelMeta(BaseModel):
         lr: Learning rate used during training.
         seq_len: Sequence length used during training.
         batch_size: Batch size used during training.
+        method: ODE integration method (``"euler"`` or ``"rk4"``).
         stats_dict: Per-column normalization statistics.
     """
 
