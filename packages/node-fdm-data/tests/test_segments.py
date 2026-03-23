@@ -603,6 +603,195 @@ class TestBuildSelectedParamsV3:
         assert result["fdm_fms_alt_sel_ft"].is_nan().sum() == n
 
 
+class TestTasSelected:
+    """Tests for TAS plateau detection (fdm_tas_sel_kt)."""
+
+    def test_tas_sel_column_created(self) -> None:
+        """Config with 'tas' key produces fdm_tas_sel_kt column."""
+        n = 200
+        rng = np.random.default_rng(42)
+        alt = np.full(n, 35000.0)
+        mach = np.concatenate(
+            [
+                np.linspace(0.3, 0.78, 50),
+                np.full(100, 0.78),
+                np.linspace(0.78, 0.3, 50),
+            ]
+        )
+        # Constant TAS region in climb/descent (outside Mach plateau)
+        tas = np.concatenate(
+            [
+                np.full(50, 450.0) + rng.normal(0, 0.1, 50),  # constant TAS
+                np.linspace(450, 500, 100),  # varying
+                np.full(50, 500.0) + rng.normal(0, 0.1, 50),  # constant TAS
+            ]
+        )
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "era_mach": mach,
+                "era_tas_kt": tas,
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 10, "alt_threshold": 15000, "use_alt": True},
+            "tas": {
+                "tol": 1.0,
+                "min_len": 10,
+                "use_alt": False,
+                "smooth_window": 10,
+                "smooth_method": "savgol",
+            },
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_tas_sel_kt" in result.columns
+        # Should have some detected segments (not all NaN)
+        assert (~result["fdm_tas_sel_kt"].is_nan()).sum() > 0
+
+    def test_tas_sel_masks_mach_zones(self) -> None:
+        """TAS segments are NOT detected inside Mach-constant regions."""
+        n = 200
+        alt = np.full(n, 35000.0)
+        # Mach plateau in the middle
+        mach = np.concatenate(
+            [
+                np.linspace(0.3, 0.78, 50),
+                np.full(100, 0.78),  # Mach plateau
+                np.linspace(0.78, 0.3, 50),
+            ]
+        )
+        # TAS is also constant in the same Mach-plateau region
+        tas = np.full(n, 460.0)
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "era_mach": mach,
+                "era_tas_kt": tas,
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 10, "alt_threshold": 15000, "use_alt": True},
+            "tas": {"tol": 1.0, "min_len": 10, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_tas_sel_kt" in result.columns
+        # Inside the Mach plateau (rows 50-149), TAS should be NaN (masked)
+        mach_zone = result["fdm_tas_sel_kt"][50:150]
+        assert mach_zone.is_nan().sum() == len(
+            mach_zone
+        ), "TAS segments must not be detected inside Mach-constant zones"
+
+    def test_tas_sel_masks_cas_zones(self) -> None:
+        """TAS segments are NOT detected inside CAS-constant regions."""
+        n = 200
+        alt = np.full(n, 35000.0)
+        # No Mach plateau (varying Mach)
+        mach = np.linspace(0.3, 0.78, n)
+        # CAS plateau in the first half
+        cas = np.concatenate(
+            [
+                np.full(100, 280.0),  # CAS plateau
+                np.linspace(280, 250, 100),
+            ]
+        )
+        # TAS constant everywhere
+        tas = np.full(n, 460.0)
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "era_mach": mach,
+                "bds_ias_kt": cas,
+                "era_tas_kt": tas,
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 10, "alt_threshold": 15000, "use_alt": True},
+            "cas": {
+                "tol": 0.75,
+                "min_len": 10,
+                "use_alt": False,
+                "smooth_window": 10,
+                "smooth_method": "savgol",
+            },
+            "tas": {"tol": 1.0, "min_len": 10, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_tas_sel_kt" in result.columns
+        # Inside the CAS plateau (rows 0-99), TAS should be NaN (masked)
+        cas_zone = result["fdm_tas_sel_kt"][:100]
+        assert cas_zone.is_nan().sum() == len(
+            cas_zone
+        ), "TAS segments must not be detected inside CAS-constant zones"
+
+    def test_tas_sel_no_config(self) -> None:
+        """Without 'tas' key in config, fdm_tas_sel_kt is not created (backward compat)."""
+        n = 100
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": np.full(n, 35000.0),
+                "era_mach": np.full(n, 0.78),
+                "era_tas_kt": np.full(n, 460.0),
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_tas_sel_kt" not in result.columns
+
+    def test_tas_sel_all_nan(self) -> None:
+        """All-NaN era_tas_kt produces no crash and no TAS segments."""
+        n = 50
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": np.full(n, 35000.0),
+                "era_mach": np.full(n, 0.78),
+                "era_tas_kt": np.full(n, np.nan),
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True},
+            "tas": {"tol": 1.0, "min_len": 10, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_tas_sel_kt" in result.columns
+        assert result["fdm_tas_sel_kt"].is_nan().sum() == n
+
+    def test_tas_sel_short_flight(self) -> None:
+        """Flight with fewer points than min_len produces no TAS segments."""
+        n = 5  # fewer than min_len=10
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": np.full(n, 35000.0),
+                "era_mach": np.full(n, 0.78),
+                "era_tas_kt": np.full(n, 460.0),
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 3, "alt_threshold": 15000, "use_alt": True},
+            "tas": {"tol": 1.0, "min_len": 10, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_tas_sel_kt" in result.columns
+        assert result["fdm_tas_sel_kt"].is_nan().sum() == n
+
+    def test_tas_sel_no_column(self) -> None:
+        """Missing era_tas_kt column is gracefully skipped."""
+        n = 50
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": np.full(n, 35000.0),
+                "era_mach": np.full(n, 0.78),
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True},
+            "tas": {"tol": 1.0, "min_len": 10, "use_alt": False},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_tas_sel_kt" not in result.columns
+
+
 class TestTargetColumns:
     """fdm_alt_target_ft and fdm_cas_target_kt — bfill with last-point anchor."""
 

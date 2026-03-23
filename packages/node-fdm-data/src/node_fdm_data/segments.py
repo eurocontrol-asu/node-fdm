@@ -176,17 +176,20 @@ def build_selected_params(  # noqa: PLR0915
 ) -> pl.DataFrame:
     """Build selected-parameter columns from segment detection.
 
-    Analyses Mach, CAS, vertical rate, gamma (optional), and
-    altitude (optional) to produce ``fdm_mach_sel``, ``fdm_cas_sel_kt``,
-    ``fdm_vz_sel_ftmin``, ``fdm_gamma_sel_rad``, ``fdm_alt_sel_ft``
-    columns.
+    Analyses Mach, CAS, TAS (optional), vertical rate, gamma (optional),
+    and altitude (optional) to produce ``fdm_mach_sel``,
+    ``fdm_cas_sel_kt``, ``fdm_tas_sel_kt``, ``fdm_vz_sel_ftmin``,
+    ``fdm_gamma_sel_rad``, ``fdm_alt_sel_ft`` columns.
+
+    TAS plateaus are masked in regions where Mach or CAS plateaus have
+    already been detected, avoiding double-counting.
 
     Args:
         df: Single-flight DataFrame (sorted by time).
         config: Selected-parameter config dict with keys
-            ``mach``, ``cas``, ``vz``, and optionally ``gamma``,
-            ``alt``.  Each value is a dict of kwargs for
-            :func:`detect_constant_segments`.
+            ``mach``, ``cas``, ``vz``, and optionally ``tas``,
+            ``gamma``, ``alt``.  Each value is a dict of kwargs
+            for :func:`detect_constant_segments`.
 
     Returns:
         DataFrame with selected-parameter columns added.
@@ -218,6 +221,20 @@ def build_selected_params(  # noqa: PLR0915
         cas_cfg = config.get("cas", {})
         cas_segs = detect_constant_segments(cas_arr, **cas_cfg)
         df = add_segment_column(df, cas_segs, "fdm_cas_sel_kt")
+    else:
+        cas_segs = []
+
+    # --- TAS selected (optional, mask Mach- and CAS-constant regions) ---
+    tas_cfg = config.get("tas")
+    tas_col = "era_tas_kt"
+    if tas_cfg is not None and tas_col in df.columns:
+        tas_arr = df[tas_col].to_numpy().copy()
+        for seg in mach_segs:
+            tas_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
+        for seg in cas_segs:
+            tas_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
+        tas_segs = detect_constant_segments(tas_arr, **tas_cfg)
+        df = add_segment_column(df, tas_segs, "fdm_tas_sel_kt")
 
     # --- Vz selected ---
     vz_col = "raw_vz_ftmin" if "raw_vz_ftmin" in df.columns else "vertical_rate"

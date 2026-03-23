@@ -89,6 +89,16 @@ class CasFilterConfig(BaseModel, frozen=True):
     smooth_method: str = "savgol"
 
 
+class TasFilterConfig(BaseModel, frozen=True):
+    """TAS selected-parameter filter."""
+
+    tol: float = 1.0
+    min_len: int = 20
+    use_alt: bool = False
+    smooth_window: int = 20
+    smooth_method: str = "savgol"
+
+
 class VzFilterConfig(BaseModel, frozen=True):
     """Vertical-speed selected-parameter filter."""
 
@@ -151,6 +161,7 @@ class SelectedParamConfig(BaseModel, frozen=True):
 
     mach: MachFilterConfig = MachFilterConfig()
     cas: CasFilterConfig = CasFilterConfig()
+    tas: TasFilterConfig = TasFilterConfig()
     vz: VzFilterConfig = VzFilterConfig()
     alt: AltFilterConfig = AltFilterConfig()
     gamma: GammaFilterConfig = GammaFilterConfig()
