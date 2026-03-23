@@ -9,6 +9,7 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 
 - **Unit conversions** — 14 pure Polars expressions (`ft_to_m`, `kt_to_ms`, `celsius_to_kelvin`, `deg_to_rad`, …)
 - **ISA model** — Temperature, pressure, and density as numpy functions (`isa_temperature`, `isa_pressure`, `isa_density`) plus a Polars expression variant (`isa_pressure_expr`)
+- **Speed conversions** — `mach_to_tas` and `cas_to_tas` using ISA model and isentropic compressible-flow relations
 - **Physics constants** — ISA atmosphere parameters, unit conversion factors, QAR discrete-signal lookup tables
 - **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components; Polars expression variants: `haversine_expr`, `compute_mach_expr`, `compute_cas_expr`
 - **Column schemas** — OpenSky 2025, QAR, and ADS-B architectures with typed column lists and conversion registries
@@ -63,6 +64,15 @@ h = 10668.0  # cruise altitude in metres
 T = isa_temperature(h)   # 216.65 K
 P = isa_pressure(h)      # 23842 Pa
 rho = isa_density(h)     # 0.3836 kg/m³
+```
+
+### Speed conversions (Mach/CAS to TAS)
+
+```python
+from node_fdm_data.physics.speed import mach_to_tas, cas_to_tas
+
+tas = mach_to_tas(0.78, 10_000.0)   # Mach 0.78 at 10 km → ~233 m/s
+tas = cas_to_tas(128.6, 10_000.0)   # 250 kt CAS at 10 km → ~212 m/s
 ```
 
 ### Column schemas
