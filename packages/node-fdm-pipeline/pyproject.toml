@@ -80,6 +80,7 @@ ignore = ["S101"]
 "src/**/commands/train.py" = ["PLR0913"]
 "src/**/commands/predict.py" = ["PLR0913"]
 "src/**/commands/evaluate.py" = ["PLR0913", "PLR0912"]
+"src/**/commands/resume.py" = ["PLR0913"]
 "src/**/commands/visualize.py" = ["PLR0913", "PLR0915"]
 
 [tool.ruff.lint.isort]

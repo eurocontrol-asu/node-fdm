@@ -96,12 +96,39 @@ history = trainer.train()
 ```text
 models/opensky_A320/
 ├── meta.json                # ⚠️ Contains scaling stats & hyperparams
+├── optimizer.pt             # Optimizer state (for `fdm resume`)
 ├── trajectory.pt            # Checkpoint for physics/trajectory layers
 └── data_ode.pt              # Checkpoint for neural/data layers
 ```
 
 !!! warning "Do not delete meta.json"
     The inference engine (`NodeFDMPredictor`) requires `meta.json` to normalize new data exactly as the model expects.
+
+---
+
+## 🔄 Resume Training from Checkpoint
+
+Use `fdm resume` to continue training from a saved model checkpoint.
+The architecture is inferred from `meta.json` — no `--arch` needed.
+
+```bash
+# Resume with default settings (200 more epochs)
+fdm resume --model models/opensky_2025_A320 --config config.yaml
+
+# Override learning rate and epochs
+fdm resume --model models/opensky_2025_A320 --config config.yaml --lr 1e-4 --epochs 500
+
+# Overwrite in place (saves back to same directory)
+fdm resume --model models/opensky_2025_A320 --config config.yaml --overwrite
+
+# Change sequence length on resume
+fdm resume --model models/opensky_2025_A320 --config config.yaml --seq-len 120
+```
+
+CLI overrides (`--lr`, `--epochs`, `--batch-size`, `--seq-len`, `--shift`)
+take precedence over values stored in the checkpoint's `meta.json`.
+If no `optimizer.pt` exists (legacy checkpoint), training resumes with a
+fresh optimizer.
 
 ---
 

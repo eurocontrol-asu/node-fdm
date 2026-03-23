@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from typing import Any
 
 __all__ = [
+    "ARCH_BY_NAME",
     "ArchitectureInfo",
     "resolve_architecture",
 ]
@@ -34,6 +35,15 @@ class ArchitectureInfo:
     preprocessing_fn: Any
     segment_filter_fn: Any
     architecture_import: str
+
+
+#: Reverse mapping from architecture registry name to CLI arch key.
+ARCH_BY_NAME: dict[str, str] = {
+    "opensky_2025": "opensky",
+    "opensky_v2": "opensky_v2",
+    "qar": "qar",
+    "node_adsb_v1": "adsb",
+}
 
 
 def resolve_architecture(arch: str) -> ArchitectureInfo:

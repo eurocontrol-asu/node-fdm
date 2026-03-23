@@ -20,6 +20,7 @@ fdm version
 fdm preprocess --config config.yaml
 fdm identify --config config.yaml
 fdm train --arch opensky --config config.yaml --typecode A320 --method rk4 --seq-len 200
+fdm resume --model models/opensky_2025_A320 --config config.yaml --epochs 200 --lr 1e-4
 fdm predict --arch opensky --config config.yaml --device cuda:0
 fdm evaluate --arch opensky --config config.yaml
 ```
@@ -32,6 +33,7 @@ fdm evaluate --arch opensky --config config.yaml
 | `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
 | `fdm derive` | Compute derived physics columns (gamma, wind, distance) — étape 4 | ✅ Implemented |
 | `fdm train` | Train Neural ODE models (`--method euler\|rk4`) | Placeholder (AXM-363) |
+| `fdm resume` | Resume training from checkpoint (`--model`, `--overwrite`) | ✅ Implemented |
 | `fdm predict` | Predict with trained models | Placeholder (AXM-363) |
 | `fdm predict-bada` | BADA 4.2 baseline predictions | Placeholder (AXM-363) |
 | `fdm evaluate` | Compute error metrics by phase | Placeholder (AXM-363) |

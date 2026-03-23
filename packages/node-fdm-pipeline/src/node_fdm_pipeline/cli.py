@@ -97,6 +97,62 @@ def train(
 
 
 @app.command
+def resume(
+    *,
+    model: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to model directory containing meta.json"),
+    ],
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    epochs: Annotated[
+        int | None,
+        cyclopts.Parameter(help="Override number of training epochs"),
+    ] = None,
+    batch_size: Annotated[
+        int | None,
+        cyclopts.Parameter(name="--batch-size", help="Override batch size"),
+    ] = None,
+    lr: Annotated[
+        float | None,
+        cyclopts.Parameter(help="Override learning rate"),
+    ] = None,
+    seq_len: Annotated[
+        int | None,
+        cyclopts.Parameter(help="Override sequence length for training windows"),
+    ] = None,
+    shift: Annotated[
+        int | None,
+        cyclopts.Parameter(help="Override shift between windows"),
+    ] = None,
+    overwrite: Annotated[
+        bool,
+        cyclopts.Parameter(help="Save back into the same model directory"),
+    ] = False,
+    device: Annotated[
+        str,
+        cyclopts.Parameter(help="PyTorch device for training"),
+    ] = "cpu",
+) -> None:
+    """Resume training from an existing model checkpoint."""
+    from node_fdm_pipeline.commands.resume import run_resume
+
+    run_resume(
+        model=model,
+        config=config,
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        seq_len=seq_len,
+        shift=shift,
+        overwrite=overwrite,
+        device=device,
+    )
+
+
+@app.command
 def predict(
     *,
     arch: Annotated[
