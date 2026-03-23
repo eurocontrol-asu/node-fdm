@@ -21,7 +21,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `layers.structured` | `StructuredLayer` — normalize → backbone → heads → denormalize |
 | `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed |
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
-| `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, optimizer checkpoint save/load |
+| `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, model weights + optimizer checkpoint save/load |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
 | `dataset` | `FlightDataset` → `FlightSample` (typed tensors) |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame |
@@ -86,6 +86,7 @@ history = trainer.train()
 # history: list[dict[str, float]] with train_loss, val_loss per epoch
 
 # Resume training from a previous checkpoint
+trainer.load_model_weights()    # loads layer .pt files (raises if missing)
 trainer.load_optimizer_state()  # loads optimizer.pt if present, warns otherwise
 history = trainer.train()
 ```

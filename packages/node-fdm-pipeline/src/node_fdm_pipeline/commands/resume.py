@@ -146,6 +146,7 @@ def run_resume(
         model_dir=models_dir,
         device=device,
     )
+    trainer.load_model_weights()
     trainer.load_optimizer_state()
     trainer.train()
 

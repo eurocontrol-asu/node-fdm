@@ -210,6 +210,26 @@ class ODETrainer:
         self.save_meta()
         log.debug("model_saved", epoch=epoch)
 
+    def load_model_weights(self) -> None:
+        """Load layer weights from checkpoints saved by :meth:`save_layer_checkpoint`.
+
+        For each layer in ``model.layers_name``, loads the corresponding
+        ``.pt`` file, extracts ``layer_state``, and restores it.  Also
+        restores ``best_val_loss`` from the checkpoint.
+
+        Raises:
+            FileNotFoundError: If a layer checkpoint file is missing.
+        """
+        for name in self.model.layers_name:
+            ckpt_path = self.model_dir / f"{name}.pt"
+            if not ckpt_path.exists():
+                msg = f"Layer checkpoint not found: {ckpt_path}"
+                raise FileNotFoundError(msg)
+            ckpt = torch.load(ckpt_path, weights_only=True)
+            self.model.layers_dict[name].load_state_dict(ckpt["layer_state"])
+            self.best_val_loss = ckpt.get("best_val_loss", self.best_val_loss)
+        log.debug("model_weights_loaded", layers=list(self.model.layers_name))
+
     def load_optimizer_state(self) -> None:
         """Load optimizer state from checkpoint if available.
 
