@@ -27,9 +27,11 @@ class TestAdsbSchema:
         assert "fdm_adep_dist_m" not in adsb.E0_COLS
         assert "fdm_ades_dist_m" not in adsb.E0_COLS
 
-    def test_e1_cols_identical_to_opensky(self) -> None:
-        """E1_COLS is identical to opensky_2025."""
-        assert adsb.E1_COLS == opensky.E1_COLS
+    def test_e1_cols_superset_of_opensky(self) -> None:
+        """E1_COLS extends opensky_2025 with fdm_tas_diff_ms."""
+        assert set(opensky.E1_COLS).issubset(set(adsb.E1_COLS))
+        assert "fdm_tas_diff_ms" in adsb.E1_COLS
+        assert "fdm_tas_diff_ms" not in opensky.E1_COLS
 
     def test_dx_cols_no_gs(self) -> None:
         """DX_COLS does not include raw_gs_ms."""
