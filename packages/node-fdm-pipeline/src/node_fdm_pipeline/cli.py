@@ -66,6 +66,14 @@ def train(
         str,
         cyclopts.Parameter(help="ODE integration method: euler or rk4"),
     ] = "euler",
+    seq_len: Annotated[
+        int | None,
+        cyclopts.Parameter(help="Override sequence length for training windows"),
+    ] = None,
+    shift: Annotated[
+        int | None,
+        cyclopts.Parameter(help="Override shift between windows (defaults to seq-len)"),
+    ] = None,
     device: Annotated[
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
@@ -82,6 +90,8 @@ def train(
         batch_size=batch_size,
         lr=lr,
         method=method,
+        seq_len=seq_len,
+        shift=shift,
         device=device,
     )
 

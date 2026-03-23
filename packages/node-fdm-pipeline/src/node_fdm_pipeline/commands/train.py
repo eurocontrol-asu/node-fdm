@@ -25,6 +25,8 @@ def run_training(
     batch_size: int | None = None,
     lr: float | None = None,
     method: str = "euler",
+    seq_len: int | None = None,
+    shift: int | None = None,
     device: str = "cpu",
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
@@ -37,6 +39,8 @@ def run_training(
         batch_size: Override batch size.
         lr: Override learning rate.
         method: ODE integration method (``"euler"`` or ``"rk4"``).
+        seq_len: Override sequence length for training windows.
+        shift: Override shift between windows (defaults to seq_len).
         device: PyTorch device string (e.g. ``"cpu"``, ``"cuda:0"``).
     """
     import polars as pl
@@ -79,15 +83,17 @@ def run_training(
     for acft in typecodes:
         log.info("train_typecode", typecode=acft)
 
+        effective_seq_len = seq_len or 60
+
         training_config = TrainingConfig(
             architecture_name=info.name,
             model_name=f"{info.name}_{acft}",
             model_params=(3, 2, 48),
             step=4.0,
-            shift=60,
+            shift=shift or effective_seq_len,
             lr=lr or 1e-3,
             weight_decay=1e-4,
-            seq_len=60,
+            seq_len=effective_seq_len,
             batch_size=batch_size or 512,
             epochs=epochs or 800,
             method=method,

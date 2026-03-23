@@ -227,3 +227,83 @@ typecodes:
         # batch_size=512, len=10, n_step=max(0,1)=1, coeff=min(50,10)=10, adjusted=8000
         training_config = mock_trainer_cls.call_args.kwargs["config"]
         assert training_config.epochs == 8000
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_cli_seq_len_param(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """--seq-len CLI arg propagates to TrainingConfig.seq_len."""
+        config = self._make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="opensky",
+                config=config,
+                typecode="A320",
+                epochs=1,
+                seq_len=200,
+                device="cpu",
+            )
+
+        training_config = mock_trainer_cls.call_args.kwargs["config"]
+        assert training_config.seq_len == 200
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_shift_defaults_to_seq_len(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """When --shift is not given, shift defaults to seq_len."""
+        config = self._make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="opensky",
+                config=config,
+                typecode="A320",
+                seq_len=200,
+                device="cpu",
+            )
+
+        training_config = mock_trainer_cls.call_args.kwargs["config"]
+        assert training_config.shift == 200
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_shift_explicit(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Explicit --shift overrides the seq_len default."""
+        config = self._make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="opensky",
+                config=config,
+                typecode="A320",
+                seq_len=200,
+                shift=100,
+                device="cpu",
+            )
+
+        training_config = mock_trainer_cls.call_args.kwargs["config"]
+        assert training_config.shift == 100
