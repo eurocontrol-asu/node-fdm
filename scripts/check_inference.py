@@ -1,4 +1,14 @@
-"""Quick inference check: predict one flight and plot state variables."""
+"""Quick inference check: predict one flight and plot state variables.
+
+Loads a trained Neural-ODE model and a validation flight, runs forward
+prediction, and produces a multi-panel figure:
+
+* One subplot per state variable (altitude, flight-path angle, TAS).
+* Alt tracking subplot: ``fdm_alt_target_m - raw_alt_m``.
+* TAS tracking subplot: ``fdm_tas_target_ms - era_tas_ms``.
+
+Output: ``data/figures/inference_check.png``.
+"""
 
 from __future__ import annotations
 
@@ -81,7 +91,7 @@ print(f"Prediction length: {len(list(predictions.values())[0])} steps")
 time_true = np.arange(len(x_arr)) * STEP_S / 60  # minutes
 time_pred = np.arange(len(list(predictions.values())[0])) * STEP_S / 60
 
-n_plots = len(info.x_cols) + 1  # extra subplot for alt - alt_target
+n_plots = len(info.x_cols) + 2  # extra subplots for alt_diff + tas_diff
 fig, axes = plt.subplots(n_plots, 1, figsize=(14, 4 * n_plots), sharex=True)
 if n_plots == 1:
     axes = [axes]
@@ -119,10 +129,10 @@ alt_target_idx = info.u_cols.index("fdm_alt_target_m")
 
 alt_true = x_arr[:, alt_idx]
 alt_target = u_arr[:, alt_target_idx]
-diff_true = alt_true - alt_target
+diff_true = alt_target - alt_true
 
 alt_pred = predictions["raw_alt_m"]
-diff_pred = alt_pred - alt_target[: len(alt_pred)]
+diff_pred = alt_target[: len(alt_pred)] - alt_pred
 
 ax_diff = axes[len(info.x_cols)]
 ax_diff.plot(time_true, diff_true, "k-", lw=1.5, label="True", alpha=0.8)
@@ -131,9 +141,31 @@ ax_diff.axhline(0, color="gray", ls=":", lw=0.8)
 ymin, ymax = diff_true.min(), diff_true.max()
 margin = (ymax - ymin) * 0.10 if ymax != ymin else abs(ymax) * 0.10 + 1.0
 ax_diff.set_ylim(ymin - margin, ymax + margin)
-ax_diff.set_ylabel("Alt − Alt_target [m]")
+ax_diff.set_ylabel("Alt_target − Alt [m]")
 ax_diff.legend(loc="best")
 ax_diff.grid(True, alpha=0.3)
+
+# --- TAS - TAS_target subplot ---
+tas_idx = info.x_cols.index("era_tas_ms")
+tas_target_idx = info.u_cols.index("fdm_tas_target_ms")
+
+tas_true = x_arr[:, tas_idx]
+tas_target = u_arr[:, tas_target_idx]
+diff_tas_true = tas_target - tas_true
+
+tas_pred = predictions["era_tas_ms"]
+diff_tas_pred = tas_target[: len(tas_pred)] - tas_pred
+
+ax_tas = axes[len(info.x_cols) + 1]
+ax_tas.plot(time_true, diff_tas_true, "k-", lw=1.5, label="True", alpha=0.8)
+ax_tas.plot(time_pred, diff_tas_pred, "r--", lw=1.2, label="Predicted (Neural ODE)", alpha=0.8)
+ax_tas.axhline(0, color="gray", ls=":", lw=0.8)
+ymin, ymax = diff_tas_true.min(), diff_tas_true.max()
+margin = (ymax - ymin) * 0.10 if ymax != ymin else abs(ymax) * 0.10 + 1.0
+ax_tas.set_ylim(ymin - margin, ymax + margin)
+ax_tas.set_ylabel("TAS_target - TAS [m/s]")
+ax_tas.legend(loc="best")
+ax_tas.grid(True, alpha=0.3)
 
 axes[-1].set_xlabel("Time [min]")
 fig.suptitle(f"Neural ODE Inference — {best_fid}", fontsize=14)
