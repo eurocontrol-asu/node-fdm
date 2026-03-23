@@ -392,6 +392,43 @@ class TestLoadAndWindow:
         assert len(limited_samples) < len(all_samples)
 
 
+class TestLoaderE1TasDiff:
+    """Verify _load_and_window loads fdm_tas_diff_ms into e1 tensor (AXM-771)."""
+
+    def test_loader_e1_tas_diff(self) -> None:
+        """DataFrame with fdm_tas_diff_ms column, e1_cols includes it → correct e1 dim."""
+        n = 50
+        rng = np.random.default_rng(99)
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["f0"] * n,
+                "alt": np.linspace(1000, 10000, n).tolist(),
+                "tas": np.linspace(200, 250, n).tolist(),
+                "cmd": [0.0] * n,
+                "temp": [220.0] * n,
+                "d_alt": [1.0] * n,
+                "fdm_tas_diff_ms": rng.uniform(-5, 5, n).tolist(),
+            }
+        )
+
+        samples = _load_and_window(
+            df,
+            x_cols=["alt", "tas"],
+            u_cols=["cmd"],
+            e_cols=["temp"],
+            dx_cols=["d_alt"],
+            seq_len=10,
+            shift=10,
+            e1_cols=["fdm_tas_diff_ms"],
+        )
+
+        assert len(samples) > 0
+        for s in samples:
+            assert s.e1 is not None
+            assert s.e1.shape == (10, 1)  # seq_len x 1 e1 column
+            assert s.e1.isfinite().all()
+
+
 class TestGetTrainValDataE1Cols:
     """Tests for get_train_val_data with e1_cols (AXM-758)."""
 

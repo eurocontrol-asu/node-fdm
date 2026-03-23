@@ -233,6 +233,48 @@ class TestComputeStatsExtra:
         assert stats_baseline == stats_empty
 
 
+class TestE1StatsTasDiff:
+    """Verify compute_stats covers fdm_tas_diff_ms via e1_cols (AXM-771)."""
+
+    def test_e1_stats_include_tas_diff(self) -> None:
+        """FlightSample list with e1 tensor including tas_diff → stats dict has fdm_tas_diff_ms."""
+        seq_len = 20
+        n_samples = 5
+        # e1 tensor with 1 column representing fdm_tas_diff_ms
+        samples = [
+            FlightSample(
+                x=torch.randn(seq_len, 4),
+                u=torch.randn(seq_len, 3),
+                e=torch.randn(seq_len, 2),
+                dx=torch.randn(seq_len, 4),
+                e1=torch.randn(seq_len, 1),
+            )
+            for _ in range(n_samples)
+        ]
+
+        stats = compute_stats(
+            samples,
+            ["x1", "x2", "x3", "x4"],
+            ["u1", "u2", "u3"],
+            ["e1", "e2"],
+            ["dx1", "dx2", "dx3", "dx4"],
+            e1_cols=["fdm_tas_diff_ms"],
+        )
+
+        assert "fdm_tas_diff_ms" in stats
+        entry = stats["fdm_tas_diff_ms"]
+        assert "mean" in entry
+        assert "std" in entry
+        assert "max" in entry
+        # Values must be finite floats
+        for key in ("mean", "std", "max"):
+            v = entry[key]
+            assert isinstance(v, float)
+            assert v == v, f"{key} is NaN"  # NaN check
+        # std includes epsilon so must be > 0
+        assert entry["std"] > 0
+
+
 class TestComputeStatsExtended:
     """Extended tests for compute_stats (mean/std, reverted from IQR in AXM-745)."""
 

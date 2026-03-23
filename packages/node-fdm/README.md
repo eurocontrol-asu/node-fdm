@@ -23,7 +23,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
 | `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, model weights + optimizer checkpoint save/load |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
-| `dataset` | `FlightDataset` → `FlightSample` (typed tensors) |
+| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1) |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame |
 | `losses` | `get_loss` factory |
 | `callbacks` | `TrainingCallback` protocol + `ConsoleCallback` |
@@ -117,8 +117,8 @@ result = predictor.predict_flight(x_init, u_seq, e_seq)
 ```python
 from node_fdm.dataset import FlightDataset, FlightSample
 
-# FlightSample is a frozen dataclass
-sample = FlightSample(x=x_tensor, u=u_tensor, e=e_tensor, dx=dx_tensor)
+# FlightSample is a frozen dataclass (e1 is optional for extra environment columns)
+sample = FlightSample(x=x_tensor, u=u_tensor, e=e_tensor, dx=dx_tensor, e1=e1_tensor)
 
 # FlightDataset wraps a list of samples
 dataset = FlightDataset(samples=[sample, ...])
