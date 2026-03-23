@@ -392,6 +392,120 @@ class TestLoadAndWindow:
         assert len(limited_samples) < len(all_samples)
 
 
+class TestGetTrainValDataE1Cols:
+    """Tests for get_train_val_data with e1_cols (AXM-758)."""
+
+    @staticmethod
+    def _make_flight_df_with_e1(
+        n_flights: int = 4,
+        n_rows: int = 100,
+        *,
+        train_flights: int = 3,
+        e1_col_names: list[str] | None = None,
+    ) -> pl.DataFrame:
+        """Create a DataFrame with extra E1 columns."""
+        rng = np.random.default_rng(42)
+        rows: list[dict[str, object]] = []
+        e1_col_names = e1_col_names or []
+
+        for i in range(n_flights):
+            split = "train" if i < train_flights else "val"
+            fid = f"abc123_FLIGHT{i:02d}_s0"
+            for j in range(n_rows):
+                row: dict[str, object] = {
+                    "meta_flight_id": fid,
+                    "meta_split": split,
+                    "alt": float(np.linspace(1000, 10000, n_rows)[j]),
+                    "tas": float(np.linspace(200, 250, n_rows)[j]),
+                    "cmd": float(rng.random()),
+                    "temp": 220.0,
+                    "d_alt": float(rng.random()),
+                }
+                for col in e1_col_names:
+                    row[col] = float(rng.random() * 100)
+                rows.append(row)
+
+        return pl.DataFrame(rows)
+
+    def test_loader_e1_cols_stats(self) -> None:
+        """E1 columns in DataFrame are loaded and shaped correctly."""
+        e1_col_names = ["e1_wind", "e1_temp_delta"]
+        data_df = self._make_flight_df_with_e1(e1_col_names=e1_col_names)
+
+        train_ds, val_ds = get_train_val_data(
+            data_df,
+            x_cols=["alt", "tas"],
+            u_cols=["cmd"],
+            e_cols=["temp"],
+            dx_cols=["d_alt"],
+            e1_cols=e1_col_names,
+            seq_len=10,
+            shift=10,
+        )
+
+        assert isinstance(train_ds, FlightDataset)
+        assert len(train_ds) > 0
+        assert len(val_ds) > 0
+
+        # Samples should have e1 tensor with correct shape
+        sample = train_ds[0]
+        assert hasattr(sample, "e1")
+        assert sample.e1 is not None
+        assert sample.e1.shape == (10, 2)  # seq_len x n_e1_cols
+
+    def test_loader_no_e1_cols(self) -> None:
+        """Calling without e1_cols produces identical behavior — no regression."""
+        data_df = _make_flight_df()
+
+        train_ds_baseline, val_ds_baseline = get_train_val_data(
+            data_df,
+            x_cols=["alt", "tas"],
+            u_cols=["cmd"],
+            e_cols=["temp"],
+            dx_cols=["d_alt"],
+            seq_len=10,
+            shift=10,
+        )
+
+        train_ds_explicit, val_ds_explicit = get_train_val_data(
+            data_df,
+            x_cols=["alt", "tas"],
+            u_cols=["cmd"],
+            e_cols=["temp"],
+            dx_cols=["d_alt"],
+            e1_cols=None,
+            seq_len=10,
+            shift=10,
+        )
+
+        assert len(train_ds_baseline) == len(train_ds_explicit)
+        assert len(val_ds_baseline) == len(val_ds_explicit)
+
+    def test_loader_e1_col_missing_in_dataframe(self) -> None:
+        """E1 col not in DataFrame — warning logged, column skipped."""
+        data_df = _make_flight_df()  # No E1 columns in DataFrame
+
+        train_ds, val_ds = get_train_val_data(
+            data_df,
+            x_cols=["alt", "tas"],
+            u_cols=["cmd"],
+            e_cols=["temp"],
+            dx_cols=["d_alt"],
+            e1_cols=["nonexistent"],
+            seq_len=10,
+            shift=10,
+        )
+
+        # Should not crash, datasets still valid
+        assert len(train_ds) > 0
+        assert len(val_ds) > 0
+
+        # e1 should be None or empty since the column was skipped
+        sample = train_ds[0]
+        if hasattr(sample, "e1") and sample.e1 is not None:
+            assert sample.e1.shape[1] == 0  # No valid E1 columns
+
+
 class TestFillNanSel:
     """Tests for _fill_nan_sel helper."""
 

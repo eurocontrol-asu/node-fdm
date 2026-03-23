@@ -107,6 +107,132 @@ class TestComputeStats:
                 assert not (v != v), f"NaN in stats: {col_stats}"  # NaN check
 
 
+class TestComputeStatsExtra:
+    """Tests for compute_stats with extra E1 columns (AXM-758)."""
+
+    _x_cols: ClassVar[list[str]] = ["x1", "x2", "x3", "x4"]
+    _u_cols: ClassVar[list[str]] = ["u1", "u2", "u3"]
+    _e_cols: ClassVar[list[str]] = ["e1", "e2"]
+    _dx_cols: ClassVar[list[str]] = ["dx1", "dx2", "dx3", "dx4"]
+
+    @staticmethod
+    def _make_sample_with_e1(
+        seq_len: int = 10,
+        n_e1: int = 3,
+    ) -> FlightSample:
+        """Create a sample with an extra e1 tensor."""
+        return FlightSample(
+            x=torch.randn(seq_len, 4),
+            u=torch.randn(seq_len, 3),
+            e=torch.randn(seq_len, 2),
+            dx=torch.randn(seq_len, 4),
+            e1=torch.randn(seq_len, n_e1),
+        )
+
+    def test_compute_stats_with_extra(self) -> None:
+        """Extra e1 tensor (3 cols) produces stats with correct extra keys."""
+        e1_cols = ["e1_wind", "e1_temp", "e1_press"]
+        samples = [self._make_sample_with_e1(seq_len=20, n_e1=3) for _ in range(5)]
+
+        stats = compute_stats(
+            samples,
+            self._x_cols,
+            self._u_cols,
+            self._e_cols,
+            self._dx_cols,
+            e1_cols=e1_cols,
+        )
+
+        # All original + extra keys present
+        expected_keys = set(self._x_cols + self._u_cols + self._e_cols + self._dx_cols + e1_cols)
+        assert set(stats.keys()) == expected_keys
+
+        # Extra cols have correct stat structure
+        for col in e1_cols:
+            assert "mean" in stats[col]
+            assert "std" in stats[col]
+            assert "max" in stats[col]
+
+        # Verify values are computed from the e1 tensor, not zeros
+        e1_all = torch.cat([s.e1 for s in samples if s.e1 is not None], dim=0)
+        for i, col in enumerate(e1_cols):
+            vals = e1_all[:, i]
+            assert stats[col]["mean"] == pytest.approx(vals.mean().item(), abs=1e-4)
+            assert stats[col]["std"] == pytest.approx(vals.std().item() + 1e-6, abs=1e-4)
+            assert stats[col]["max"] == pytest.approx(vals.abs().max().item(), abs=1e-4)
+
+    def test_compute_stats_without_extra(self) -> None:
+        """Calling without e1_cols produces identical results to the original."""
+        samples = [_make_sample(seq_len=10) for _ in range(5)]
+
+        stats_original = compute_stats(
+            samples,
+            self._x_cols,
+            self._u_cols,
+            self._e_cols,
+            self._dx_cols,
+        )
+        stats_no_extra = compute_stats(
+            samples,
+            self._x_cols,
+            self._u_cols,
+            self._e_cols,
+            self._dx_cols,
+            e1_cols=None,
+        )
+
+        assert stats_original == stats_no_extra
+
+    def test_compute_stats_extra_overrides(self) -> None:
+        """Extra col with same name as existing col overwrites the value."""
+        # Use "e1" which already exists in _e_cols
+        e1_cols = ["e1"]
+        samples = [
+            FlightSample(
+                x=torch.full((10, 4), 1.0),
+                u=torch.full((10, 3), 1.0),
+                e=torch.full((10, 2), 1.0),
+                dx=torch.full((10, 4), 1.0),
+                e1=torch.full((10, 1), 99.0),  # Different value
+            )
+            for _ in range(3)
+        ]
+
+        stats = compute_stats(
+            samples,
+            self._x_cols,
+            self._u_cols,
+            self._e_cols,
+            self._dx_cols,
+            e1_cols=e1_cols,
+        )
+
+        # The e1 key should reflect the extra value (99.0), not the original (1.0)
+        assert stats["e1"]["mean"] == pytest.approx(99.0, abs=1e-4)
+
+    def test_compute_stats_empty_extra(self) -> None:
+        """Empty extra_data tensor — stats dict unchanged."""
+        samples = [_make_sample(seq_len=10) for _ in range(3)]
+
+        stats_baseline = compute_stats(
+            samples,
+            self._x_cols,
+            self._u_cols,
+            self._e_cols,
+            self._dx_cols,
+        )
+        stats_empty = compute_stats(
+            samples,
+            self._x_cols,
+            self._u_cols,
+            self._e_cols,
+            self._dx_cols,
+            e1_cols=[],
+        )
+
+        assert stats_baseline == stats_empty
+
+
 class TestComputeStatsExtended:
     """Extended tests for compute_stats (mean/std, reverted from IQR in AXM-745)."""
 

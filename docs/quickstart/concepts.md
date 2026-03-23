@@ -114,7 +114,7 @@ These hooks are referenced in the `ArchitectureSpec` as dotted paths and resolve
 The `FlightDataset` class handles data normalization automatically:
 
 !!! check "Automated Features"
-    * **Statistics**: Computes mean and standard deviation for every column via `compute_stats`.
+    * **Statistics**: Computes mean and standard deviation for every column via `compute_stats`. Supports optional `e1_cols` for extra environment columns.
     * **Robust Scaling**: Applies outlier-robust scaling (clipped at max ratio).
     * **Metadata**: Saves all statistics to `meta.json`, ensuring inference uses the exact same scaling as training.
 

@@ -40,6 +40,7 @@ def _load_and_window(
     shift: int,
     *,
     flight_limit: int | None = None,
+    e1_cols: list[str] | None = None,
 ) -> list[FlightSample]:
     """Group flights and slice into fixed-length windows.
 
@@ -53,6 +54,7 @@ def _load_and_window(
         seq_len: Window length.
         shift: Step between windows.
         flight_limit: Max number of flights to process.
+        e1_cols: Optional extra environment column names.
 
     Returns:
         List of windowed :class:`FlightSample` instances.
@@ -65,6 +67,15 @@ def _load_and_window(
     if missing:
         log.warning("missing_columns", missing=missing)
         return samples
+
+    # Resolve valid E1 columns (skip missing with warning)
+    valid_e1_cols: list[str] = []
+    if e1_cols:
+        for col in e1_cols:
+            if col in flights_df.columns:
+                valid_e1_cols.append(col)
+            else:
+                log.warning("e1_column_missing", column=col)
 
     has_distance_flag = "fdm_flag_distance_ok" in flights_df.columns
 
@@ -83,6 +94,10 @@ def _load_and_window(
         u_arr = df.select(u_cols).to_numpy().astype(np.float32)
         e_arr = df.select(e_cols).to_numpy().astype(np.float32)
         dx_arr = df.select(dx_cols).to_numpy().astype(np.float32)
+
+        e1_arr: np.ndarray | None = None
+        if valid_e1_cols:
+            e1_arr = df.select(valid_e1_cols).to_numpy().astype(np.float32)
 
         # Distance flag array for segment filtering (AC6)
         dist_ok: np.ndarray | None = None
@@ -106,12 +121,17 @@ def _load_and_window(
             if dist_ok is not None and not dist_ok[start:end].all():
                 continue
 
+            e1_tensor: torch.Tensor | None = None
+            if e1_arr is not None:
+                e1_tensor = torch.from_numpy(e1_arr[start:end].copy())
+
             samples.append(
                 FlightSample(
                     x=torch.from_numpy(slices[0].copy()),
                     u=torch.from_numpy(slices[1].copy()),
                     e=torch.from_numpy(slices[2].copy()),
                     dx=torch.from_numpy(slices[3].copy()),
+                    e1=e1_tensor,
                 )
             )
 
@@ -129,6 +149,7 @@ def get_train_val_data(
     shift: int = 60,
     train_limit: int | None = None,
     val_limit: int | None = None,
+    e1_cols: list[str] | None = None,
 ) -> tuple[FlightDataset, FlightDataset]:
     """Create training and validation datasets from Delta Table data.
 
@@ -173,6 +194,7 @@ def get_train_val_data(
         seq_len=seq_len,
         shift=shift,
         flight_limit=train_limit,
+        e1_cols=e1_cols,
     )
     val_samples = _load_and_window(
         val_df,
@@ -183,6 +205,7 @@ def get_train_val_data(
         seq_len=seq_len,
         shift=shift,
         flight_limit=val_limit,
+        e1_cols=e1_cols,
     )
 
     log.info(

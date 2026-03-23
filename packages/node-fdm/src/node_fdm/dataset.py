@@ -7,7 +7,7 @@ frozen dataclass instances.
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 
 import torch
 from torch.utils.data import Dataset
@@ -28,12 +28,14 @@ class FlightSample:
         u: Control tensor of shape ``(seq_len, n_u)``.
         e: Environment tensor of shape ``(seq_len, n_e)``.
         dx: Derivative tensor of shape ``(seq_len, n_dx)``.
+        e1: Optional extra environment tensor of shape ``(seq_len, n_e1)``.
     """
 
     x: torch.Tensor
     u: torch.Tensor
     e: torch.Tensor
     dx: torch.Tensor
+    e1: torch.Tensor | None = field(default=None)
 
 
 class FlightDataset(Dataset[FlightSample]):
@@ -70,6 +72,8 @@ def compute_stats(
     u_cols: list[str],
     e_cols: list[str],
     dx_cols: list[str],
+    *,
+    e1_cols: list[str] | None = None,
 ) -> dict[str, dict[str, float]]:
     """Compute per-column statistics from a list of samples.
 
@@ -82,6 +86,7 @@ def compute_stats(
         u_cols: Control column names.
         e_cols: Environment column names.
         dx_cols: Derivative column names.
+        e1_cols: Optional extra environment column names.
 
     Returns:
         Per-column statistics dictionary.
@@ -103,4 +108,18 @@ def compute_stats(
             "std": vals.std().item() + 1e-6,
             "max": vals.abs().max().item(),
         }
+
+    # Append extra E1 columns if provided
+    if e1_cols:
+        e1_tensors = [s.e1 for s in samples if s.e1 is not None]
+        if e1_tensors:
+            e1_all = torch.cat(e1_tensors, dim=0)
+            for i, col in enumerate(e1_cols):
+                vals = e1_all[:, i]
+                stats[col] = {
+                    "mean": vals.mean().item(),
+                    "std": vals.std().item() + 1e-6,
+                    "max": vals.abs().max().item(),
+                }
+
     return stats
