@@ -56,6 +56,7 @@ class ModelMeta(BaseModel):
         batch_size: Batch size used during training.
         method: ODE integration method (``"euler"`` or ``"rk4"``).
         stats_dict: Per-column normalization statistics.
+        optimizer_saved: Whether an optimizer checkpoint was saved.
     """
 
     architecture_name: str
@@ -67,6 +68,7 @@ class ModelMeta(BaseModel):
     batch_size: int
     method: str = "euler"
     stats_dict: dict[str, ColumnStats]
+    optimizer_saved: bool = False
 
     @classmethod
     def from_json(cls, path: Path) -> ModelMeta:

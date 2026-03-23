@@ -164,6 +164,7 @@ class ODETrainer:
 
     def save_meta(self) -> None:
         """Persist training metadata compatible with :class:`ModelMeta`."""
+        optimizer_path = self.model_dir / "optimizer.pt"
         meta: dict[str, Any] = {
             "architecture_name": self.config.architecture_name,
             "model_params": list(self.config.model_params),
@@ -174,6 +175,7 @@ class ODETrainer:
             "batch_size": self.config.batch_size,
             "method": self.config.method,
             "stats_dict": self.stats_dict,
+            "optimizer_saved": optimizer_path.exists(),
         }
         meta_path = self.model_dir / "meta.json"
         with meta_path.open("w") as f:
@@ -197,14 +199,30 @@ class ODETrainer:
         torch.save(save_dict, self.model_dir / f"{layer_name}.pt")
 
     def save_model(self, epoch: int) -> None:
-        """Save checkpoints for all layers.
+        """Save checkpoints for all layers and optimizer state.
 
         Args:
             epoch: Current epoch number.
         """
         for name in self.model.layers_name:
             self.save_layer_checkpoint(name, epoch)
+        torch.save(self.optimizer.state_dict(), self.model_dir / "optimizer.pt")
+        self.save_meta()
         log.debug("model_saved", epoch=epoch)
+
+    def load_optimizer_state(self) -> None:
+        """Load optimizer state from checkpoint if available.
+
+        If ``optimizer.pt`` does not exist, logs a warning and returns
+        without modifying the optimizer (fresh start).
+        """
+        optimizer_path = self.model_dir / "optimizer.pt"
+        if not optimizer_path.exists():
+            log.warning("optimizer_checkpoint_missing", path=str(optimizer_path))
+            return
+        state = torch.load(optimizer_path, weights_only=True)
+        self.optimizer.load_state_dict(state)
+        log.debug("optimizer_state_loaded", path=str(optimizer_path))
 
     def _build_norm_vectors(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Build normalization mean/std tensors for ``x_cols``.
