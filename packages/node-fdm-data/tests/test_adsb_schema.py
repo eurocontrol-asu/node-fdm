@@ -87,6 +87,23 @@ class TestStructuredInputs:
         ), f"Raw controls leaked into ODE inputs: {ode_inputs & raw_controls}"
 
 
+class TestUColsV3:
+    """Tests for U_COLS after AXM-808 (fdm_gamma_sel_rad → fdm_gamma_target_rad)."""
+
+    def test_u_cols_no_gamma_sel(self) -> None:
+        """U_COLS no longer contains fdm_gamma_sel_rad."""
+        assert "fdm_gamma_sel_rad" not in adsb.U_COLS
+
+    def test_u_cols_all_target_convention(self) -> None:
+        """All U_COLS entries use the _target_ naming convention."""
+        for col in adsb.U_COLS:
+            assert "_target_" in col, f"U_COLS entry {col!r} does not follow _target_ convention"
+
+    def test_u_cols_length(self) -> None:
+        """U_COLS still has exactly 3 control inputs after rename."""
+        assert len(adsb.U_COLS) == 3
+
+
 class TestBothSchemasCoexist:
     """Both schemas can be loaded without conflict."""
 

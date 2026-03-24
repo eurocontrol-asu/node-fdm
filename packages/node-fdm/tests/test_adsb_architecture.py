@@ -75,6 +75,27 @@ class TestAdsbStructuredInputCols:
         assert spec.layers[1].input_cols == expected
 
 
+class TestAdsbColMapV2:
+    """Tests for AXM-808: gamma_sel col_map points to fdm_gamma_target_rad."""
+
+    def test_col_map_gamma_sel_targets_gamma_target(self) -> None:
+        """TrajectoryLayer col_map maps gamma_sel → fdm_gamma_target_rad."""
+        spec = get("node_adsb_v1")
+        col_map = spec.layers[0].config["col_map"]
+        assert isinstance(col_map, dict)
+        assert col_map["gamma_sel"] == "fdm_gamma_target_rad"
+
+    def test_u_cols_contains_gamma_target(self) -> None:
+        """Registered spec u_cols contains fdm_gamma_target_rad."""
+        spec = get("node_adsb_v1")
+        assert "fdm_gamma_target_rad" in spec.u_cols
+
+    def test_u_cols_no_gamma_sel_rad(self) -> None:
+        """Registered spec u_cols does NOT contain fdm_gamma_sel_rad."""
+        spec = get("node_adsb_v1")
+        assert "fdm_gamma_sel_rad" not in spec.u_cols
+
+
 class TestBothArchitecturesCoexist:
     """Both architectures loaded without conflict."""
 

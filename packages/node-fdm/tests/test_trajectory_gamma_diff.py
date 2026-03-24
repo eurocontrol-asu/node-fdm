@@ -86,13 +86,13 @@ class TestAdsbGammaDiffSpec:
         assert "fdm_gamma_diff_rad" in structured_input_cols
 
     def test_adsb_trajectory_col_map_has_gamma_sel(self) -> None:
-        """TrajectoryLayer col_map includes gamma_sel for fdm_gamma_sel_rad."""
+        """TrajectoryLayer col_map includes gamma_sel for fdm_gamma_target_rad."""
         spec = get("node_adsb_v1")
         trajectory_config: dict[str, object] = spec.layers[0].config
         trajectory_col_map = trajectory_config.get("col_map", {})
         assert isinstance(trajectory_col_map, dict)
         assert "gamma_sel" in trajectory_col_map
-        assert trajectory_col_map["gamma_sel"] == "fdm_gamma_sel_rad"
+        assert trajectory_col_map["gamma_sel"] == "fdm_gamma_target_rad"
 
 
 # ---------------------------------------------------------------------------
