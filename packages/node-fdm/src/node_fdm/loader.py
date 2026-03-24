@@ -89,9 +89,13 @@ def _load_and_window(
         if n_rows < seq_len:
             continue
 
-        # Extract arrays
+        # Extract arrays (empty col lists → zero-width arrays)
         x_arr = df.select(x_cols).to_numpy().astype(np.float32)
-        u_arr = df.select(u_cols).to_numpy().astype(np.float32)
+        u_arr = (
+            df.select(u_cols).to_numpy().astype(np.float32)
+            if u_cols
+            else np.empty((n_rows, 0), dtype=np.float32)
+        )
         e_arr = df.select(e_cols).to_numpy().astype(np.float32)
         dx_arr = df.select(dx_cols).to_numpy().astype(np.float32)
 
