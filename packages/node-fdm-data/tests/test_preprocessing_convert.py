@@ -104,6 +104,39 @@ class TestConvertSI:
         result = convert_si(df)
         assert result["fdm_cas_sel_ms"][1] is None or result["fdm_cas_sel_ms"].is_nan()[1]
 
+    def test_convert_adds_alt_diff(self) -> None:
+        """fdm_alt_diff_m = fdm_alt_target_m - raw_alt_m when both exist."""
+        df = pl.DataFrame(
+            {
+                "fdm_alt_target_m": [10000.0, 12000.0],
+                "raw_alt_m": [9500.0, 11800.0],
+            }
+        )
+        result = convert_si(df)
+        assert "fdm_alt_diff_m" in result.columns
+        assert result["fdm_alt_diff_m"][0] == pytest.approx(500.0)
+        assert result["fdm_alt_diff_m"][1] == pytest.approx(200.0)
+
+    def test_convert_adds_tas_diff(self) -> None:
+        """fdm_tas_diff_ms = fdm_tas_target_ms - era_tas_ms when both exist."""
+        df = pl.DataFrame(
+            {
+                "fdm_tas_target_ms": [250.0, 300.0],
+                "era_tas_ms": [240.0, 290.0],
+            }
+        )
+        result = convert_si(df)
+        assert "fdm_tas_diff_ms" in result.columns
+        assert result["fdm_tas_diff_ms"][0] == pytest.approx(10.0)
+        assert result["fdm_tas_diff_ms"][1] == pytest.approx(10.0)
+
+    def test_convert_missing_source_cols(self) -> None:
+        """No crash and no diff columns when target columns are absent."""
+        df = pl.DataFrame({"raw_alt_m": [9500.0], "era_tas_ms": [240.0]})
+        result = convert_si(df)
+        assert "fdm_alt_diff_m" not in result.columns
+        assert "fdm_tas_diff_ms" not in result.columns
+
     def test_convert_missing_source_skipped(self) -> None:
         """Conversion is skipped when source column does not exist."""
         df = pl.DataFrame({"unrelated_col": [1.0, 2.0]})

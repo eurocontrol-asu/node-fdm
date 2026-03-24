@@ -18,6 +18,7 @@ from node_fdm_data.conversions import (
 )
 
 __all__ = [
+    "DELTA_DIFFS",
     "DERIVATIVE_BOUNDS",
     "SI_CONVERSIONS",
     "SI_DERIVATIVES",
@@ -52,6 +53,13 @@ SI_DERIVATIVES: list[tuple[str, str]] = [
     ("era_tas_ms", "fdm_d_tas_ms"),
 ]
 
+# Delta diffs: (target_col, source_col, output_col)
+# Precomputed differences needed by e1_cols loading (AXM-794).
+DELTA_DIFFS: list[tuple[str, str, str]] = [
+    ("fdm_alt_target_m", "raw_alt_m", "fdm_alt_diff_m"),
+    ("fdm_tas_target_ms", "era_tas_ms", "fdm_tas_diff_ms"),
+]
+
 DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
     "fdm_d_vz_ms": (-75.0, 75.0),
     "fdm_d_gamma_rads": (-0.025, 0.025),
@@ -60,21 +68,36 @@ DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
 
 
 def convert_si(df: pl.DataFrame) -> pl.DataFrame:
-    """Add SI-unit columns to the DataFrame (étape 6).
+    """Add SI-unit columns and delta diffs to the DataFrame (étape 6).
 
     For each entry in :data:`SI_CONVERSIONS` whose source column exists,
     a new target column is added.  Source columns are preserved.
+
+    After conversions, precomputes delta columns from :data:`DELTA_DIFFS`
+    (e.g. ``fdm_alt_diff_m``, ``fdm_tas_diff_ms``) when both operands
+    are present.  These are required by downstream e1_cols loading.
 
     Args:
         df: DataFrame with aeronautical-unit columns from étapes 0-5.
 
     Returns:
-        DataFrame with SI columns appended.
+        DataFrame with SI columns and delta diffs appended.
     """
     cols = set(df.columns)
     exprs = [fn(src).alias(tgt) for src, fn, tgt in SI_CONVERSIONS if src in cols]
     if exprs:
         df = df.with_columns(exprs)
+
+    # Precompute delta columns when both operands are present.
+    present = set(df.columns)
+    diff_exprs = [
+        (pl.col(tgt) - pl.col(src)).alias(out)
+        for tgt, src, out in DELTA_DIFFS
+        if tgt in present and src in present
+    ]
+    if diff_exprs:
+        df = df.with_columns(diff_exprs)
+
     return df
 
 
