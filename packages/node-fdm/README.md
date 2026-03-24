@@ -23,8 +23,8 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
 | `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, model weights + optimizer checkpoint save/load |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
-| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1) |
-| `loader` | `get_train_val_data` — build datasets from split DataFrame |
+| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1); `compute_stats` with NaN-safe e1 handling |
+| `loader` | `get_train_val_data` — build datasets from split DataFrame (NaN/inf filtered in x, u, e, dx, and e1 columns) |
 | `losses` | `get_loss` factory |
 | `callbacks` | `TrainingCallback` protocol + `ConsoleCallback` |
 

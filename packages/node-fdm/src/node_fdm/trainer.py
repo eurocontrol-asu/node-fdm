@@ -129,12 +129,14 @@ class ODETrainer:
 
         # Compute stats from training data
         dx_col_names = [col for _, col in self.spec.dx_cols]
+        e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
         self.stats_dict = compute_stats(
             list(train_dataset),  # type: ignore[call-overload]
             x_cols=self.spec.x_cols,
             u_cols=self.spec.u_cols,
             e_cols=self.spec.e0_cols,
             dx_cols=dx_col_names,
+            e1_cols=e1_cols,
         )
 
         self.model = FlightDynamicsModel(self.spec, self.stats_dict, config.model_params).to(

@@ -121,6 +121,10 @@ def _load_and_window(
             if not all(np.isfinite(s).all() for s in slices):
                 continue
 
+            # Also check e1 columns for NaN / inf
+            if e1_arr is not None and not np.isfinite(e1_arr[start:end]).all():
+                continue
+
             # Segment filter: all rows in window must have distance_ok (AC6)
             if dist_ok is not None and not dist_ok[start:end].all():
                 continue

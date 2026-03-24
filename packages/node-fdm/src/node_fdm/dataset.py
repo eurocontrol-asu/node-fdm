@@ -116,10 +116,12 @@ def compute_stats(
             e1_all = torch.cat(e1_tensors, dim=0)
             for i, col in enumerate(e1_cols):
                 vals = e1_all[:, i]
+                finite_mask = vals.isfinite()
+                clean = vals[finite_mask] if not finite_mask.all() else vals
                 stats[col] = {
-                    "mean": vals.mean().item(),
-                    "std": vals.std().item() + 1e-6,
-                    "max": vals.abs().max().item(),
+                    "mean": clean.mean().item() if len(clean) > 0 else 0.0,
+                    "std": (clean.std().item() if len(clean) > 1 else 0.0) + 1e-6,
+                    "max": clean.abs().max().item() if len(clean) > 0 else 0.0,
                 }
 
     return stats
