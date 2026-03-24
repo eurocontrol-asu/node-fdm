@@ -95,10 +95,14 @@ def compute_stats(
 
     # Concatenate all samples into one big tensor per category
     x_all = torch.cat([s.x for s in samples], dim=0)
-    u_all = torch.cat([s.u for s in samples], dim=0)
     e_all = torch.cat([s.e for s in samples], dim=0)
     dx_all = torch.cat([s.dx for s in samples], dim=0)
-    data = torch.cat([x_all, u_all, e_all, dx_all], dim=1)
+    parts = [x_all]
+    if u_cols:
+        u_all = torch.cat([s.u for s in samples], dim=0)
+        parts.append(u_all)
+    parts.extend([e_all, dx_all])
+    data = torch.cat(parts, dim=1)
 
     stats: dict[str, dict[str, float]] = {}
     for i, col in enumerate(all_cols):
@@ -114,7 +118,10 @@ def compute_stats(
         e1_tensors = [s.e1 for s in samples if s.e1 is not None]
         if e1_tensors:
             e1_all = torch.cat(e1_tensors, dim=0)
-            for i, col in enumerate(e1_cols):
+            # Only iterate over columns actually present in the tensor
+            # (loader may skip missing columns)
+            n_e1 = e1_all.shape[1]
+            for i, col in enumerate(e1_cols[:n_e1]):
                 vals = e1_all[:, i]
                 finite_mask = vals.isfinite()
                 clean = vals[finite_mask] if not finite_mask.all() else vals

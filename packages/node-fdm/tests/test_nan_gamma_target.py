@@ -9,7 +9,7 @@ from __future__ import annotations
 
 from pathlib import Path
 from typing import ClassVar
-from unittest.mock import patch
+from unittest.mock import MagicMock, patch
 
 import numpy as np
 import polars as pl
@@ -384,6 +384,11 @@ class TestTrainerE1ColsForwarding:
             mock_spec.e0_cols = ["temp"]
             mock_spec.e1_cols = ["gamma_target"]
             mock_spec.dx_cols = [("d_alt", "d_alt")]
+            # Mock layers with a trainable layer whose input_cols includes "cmd"
+            mock_ode_layer = MagicMock()
+            mock_ode_layer.trainable = True
+            mock_ode_layer.input_cols = ["alt", "tas", "cmd", "temp"]
+            mock_spec.layers = [mock_ode_layer]
 
             from node_fdm.trainer import TrainingConfig
 

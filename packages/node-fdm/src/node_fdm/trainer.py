@@ -77,18 +77,26 @@ class TrainingConfig(BaseModel):
     loss_name: str = "mse"
     grad_clip_norm: float = Field(default=1.0, gt=0)
     alpha_dict: dict[str, float] | None = None
+    lambda_tracking: float = Field(default=0.0, ge=0)
 
 
 def _collate_flight_samples(
     batch: list[FlightSample],
-) -> tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor]:
-    """Stack flight samples into batched tensors."""
-    return (
+) -> tuple[torch.Tensor, ...]:
+    """Stack flight samples into batched tensors.
+
+    Returns a 4-tuple ``(x, u, e, dx)`` when no ``e1`` data is present,
+    or a 5-tuple ``(x, u, e, dx, e1)`` when samples carry tracking targets.
+    """
+    base = (
         torch.stack([s.x for s in batch]),
         torch.stack([s.u for s in batch]),
         torch.stack([s.e for s in batch]),
         torch.stack([s.dx for s in batch]),
     )
+    if batch[0].e1 is not None:
+        return (*base, torch.stack([s.e1 for s in batch]))  # type: ignore[misc]
+    return base
 
 
 class ODETrainer:
@@ -128,18 +136,27 @@ class ODETrainer:
         self.callbacks: Sequence[TrainingCallback] = callbacks or [ConsoleCallback()]
 
         # Compute stats from training data
+        # Only compute stats for U columns that enter the StructuredLayer (U_ODE),
+        # not all U_COLS (which include targets consumed by TrajectoryLayer).
+        ode_layer = next(ly for ly in self.spec.layers if ly.trainable)
+        u_ode_cols = [c for c in self.spec.u_cols if c in ode_layer.input_cols]
         dx_col_names = [col for _, col in self.spec.dx_cols]
         e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
-        self.stats_dict = compute_stats(
-            list(train_dataset),  # type: ignore[call-overload]
-            x_cols=self.spec.x_cols,
-            u_cols=self.spec.u_cols,
-            e_cols=self.spec.e0_cols,
-            dx_cols=dx_col_names,
-            e1_cols=e1_cols,
-        )
+        _samples = list(train_dataset)  # type: ignore[call-overload]
+        _stats_args = {
+            "x_cols": self.spec.x_cols,
+            "u_cols": u_ode_cols,
+            "e_cols": self.spec.e0_cols,
+            "dx_cols": dx_col_names,
+        }
+        self.stats_dict = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
 
-        self.model = FlightDynamicsModel(self.spec, self.stats_dict, config.model_params).to(
+        # Model stats: computed without e1 so that tracking targets
+        # stored in FlightSample.e1 cannot overwrite base column stats
+        # (e1_cols may overlap with dx_cols).
+        model_stats = compute_stats(_samples, **_stats_args)
+
+        self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(
             self.device
         )
 
@@ -156,6 +173,24 @@ class ODETrainer:
         self._alpha_weights = self._build_alpha_weights()
 
         self.save_meta()
+
+        # Deterministic loaders for reproducible single-batch access
+        self.train_loader = DataLoader(
+            self.train_dataset,
+            batch_size=self.config.batch_size,
+            shuffle=True,
+            num_workers=self.config.num_workers,
+            collate_fn=_collate_flight_samples,
+            generator=torch.Generator().manual_seed(0),
+        )
+        self.val_loader = DataLoader(
+            self.val_dataset,
+            batch_size=self.config.val_batch_size,
+            shuffle=False,
+            num_workers=self.config.num_workers,
+            collate_fn=_collate_flight_samples,
+        )
+
         log.info(
             "trainer_initialized",
             architecture=config.architecture_name,
@@ -280,7 +315,7 @@ class ODETrainer:
 
     def _compute_batch_loss(
         self,
-        batch: tuple[torch.Tensor, torch.Tensor, torch.Tensor, torch.Tensor],
+        batch: tuple[torch.Tensor, ...],
     ) -> torch.Tensor:
         """Compute loss via ODE rollout trajectory comparison.
 
@@ -290,13 +325,22 @@ class ODETrainer:
         normalized using dataset statistics and weighted by
         ``alpha_dict`` before the loss function is applied.
 
+        When ``lambda_tracking > 0`` and the batch contains an e1 tensor
+        (tracking targets), a masked MSE tracking term is added to the
+        ODE rollout loss.  The ``known`` mask is derived from finite
+        values in e1 (NaN = unknown / autopilot disengaged).
+
         Args:
-            batch: Tuple of ``(x_seq, u_seq, e_seq, dx_seq)``.
+            batch: Tuple of ``(x_seq, u_seq, e_seq, dx_seq)`` or
+                ``(x_seq, u_seq, e_seq, dx_seq, e1_seq)``.
 
         Returns:
             Scalar loss tensor.
         """
-        x_seq, u_seq, e_seq, _ = (t.to(self.device) for t in batch)
+        tensors = tuple(t.to(self.device) for t in batch)
+        x_seq, u_seq, e_seq = tensors[0], tensors[1], tensors[2]
+        e1_seq: torch.Tensor | None = tensors[4] if len(tensors) == 5 else None
+
         seq_len = x_seq.shape[1]
         x0 = x_seq[:, 0, :]
 
@@ -328,6 +372,21 @@ class ODETrainer:
         true_weighted = true_norm * self._alpha_weights
 
         loss: torch.Tensor = self.loss_fn(pred_weighted, true_weighted)
+
+        # --- Tracking loss on autopilot targets ---
+        if e1_seq is not None and self.config.lambda_tracking > 0:
+            n_e1 = e1_seq.shape[2]
+            target = e1_seq[:, 1:, :]  # skip initial condition
+            pred_subset = x_pred[:, 1:, :n_e1]
+
+            known = target.isfinite().float()
+            target_clean = torch.nan_to_num(target, nan=0.0)
+            tracking_err = (pred_subset - target_clean) ** 2 * known
+
+            # Mean over all positions (unknown contribute 0)
+            tracking_loss = tracking_err.mean()
+
+            loss = loss + self.config.lambda_tracking * tracking_loss
 
         if torch.isnan(loss) or torch.isinf(loss):
             log.warning("nan_or_inf_loss", loss=loss.item())

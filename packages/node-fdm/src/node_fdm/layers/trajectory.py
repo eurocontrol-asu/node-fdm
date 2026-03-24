@@ -94,6 +94,7 @@ class TrajectoryLayer(nn.Module):
         """
         super().__init__()
         self.col_map = {**DEFAULT_COL_MAP, **(col_map or {})}
+        self.gamma_default = nn.Parameter(torch.tensor(0.0))
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Compute derived trajectory quantities from input mapping.
@@ -163,12 +164,17 @@ class TrajectoryLayer(nn.Module):
             tas_target = torch.nan_to_num(x[tas_sel_col], nan=0.0)
             output[c["tas_diff"]] = tas_target - tas
 
-        # Gamma difference from selected gamma target (NaN-aware)
+        # Gamma difference from selected gamma target (learnable default)
         gamma_sel_col = c.get("gamma_sel", "")
+        gamma_known_col = c.get("gamma_known", "")
         if gamma_sel_col and gamma_sel_col in x:
-            raw_target = x[gamma_sel_col]
-            valid = ~torch.isnan(raw_target)
-            gamma_diff = torch.where(valid, raw_target - gamma, torch.zeros_like(gamma))
+            target = x[gamma_sel_col]
+            if gamma_known_col and gamma_known_col in x:
+                known = x[gamma_known_col]
+                gamma_diff = known * (target - gamma) + (1 - known) * (self.gamma_default - gamma)
+            else:
+                # Fallback: no mask available, assume all known
+                gamma_diff = target - gamma
             output[c["gamma_diff"]] = gamma_diff
 
         return output

@@ -134,15 +134,16 @@ class TestAdsbForwardPassWithGammaDiff:
 # ---------------------------------------------------------------------------
 
 
-class TestGammaDiffNanAware:
-    """AXM-810: NaN-aware gamma_diff — NaN target positions yield zero diff."""
+class TestGammaDiffLearnableDefault:
+    """Gamma diff uses known mask + learnable default when target is unknown."""
 
     _col_map: ClassVar[dict[str, str]] = {
         "tas": "era_tas_ms",
         "gamma": "fdm_gamma_rad",
         "alt": "raw_alt_m",
         "wind": "fdm_long_wind_ms",
-        "gamma_sel": "fdm_gamma_sel_rad",
+        "gamma_sel": "fdm_gamma_target_rad",
+        "gamma_known": "fdm_gamma_target_known",
         "gamma_diff": "fdm_gamma_diff_rad",
     }
 
@@ -154,47 +155,56 @@ class TestGammaDiffNanAware:
             "fdm_long_wind_ms": torch.tensor([10.0, 5.0]),
         }
 
-    def test_gamma_diff_nan_target_yields_zero(self) -> None:
-        """NaN gamma_target → gamma_diff = 0 at those positions."""
+    def test_gamma_diff_unknown_uses_default(self) -> None:
+        """known=0 → gamma_diff = gamma_default - gamma (learnable)."""
         layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
-        x["fdm_gamma_sel_rad"] = torch.tensor([float("nan"), float("nan")])
+        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.0])  # filled value (was NaN)
+        x["fdm_gamma_target_known"] = torch.tensor([0.0, 0.0])  # unknown
 
         output = layer(x)
 
         assert "fdm_gamma_diff_rad" in output
-        expected = torch.tensor([0.0, 0.0])
+        # gamma_default starts at 0.0, gamma = [0.05, -0.03]
+        # diff = 0.0 - gamma = [-0.05, 0.03]
+        expected = torch.tensor([0.0 - 0.05, 0.0 - (-0.03)])
         assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
 
-    def test_gamma_diff_valid_target(self) -> None:
-        """Valid gamma_target: gamma_diff = target - gamma."""
+    def test_gamma_diff_known_uses_target(self) -> None:
+        """known=1 → gamma_diff = target - gamma."""
         layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
         x["fdm_gamma_rad"] = torch.tensor([0.03, 0.03])
-        x["fdm_gamma_sel_rad"] = torch.tensor([0.05, 0.05])
+        x["fdm_gamma_target_rad"] = torch.tensor([0.05, 0.05])
+        x["fdm_gamma_target_known"] = torch.tensor([1.0, 1.0])
 
         output = layer(x)
 
-        assert "fdm_gamma_diff_rad" in output
         expected = torch.tensor([0.02, 0.02])
         assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
 
-    def test_gamma_diff_mixed(self) -> None:
-        """Mixed NaN/valid: 0 where NaN, correct diff where valid."""
+    def test_gamma_diff_mixed_known_unknown(self) -> None:
+        """Mixed known/unknown: target where known=1, default where known=0."""
         layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
-        x["fdm_gamma_sel_rad"] = torch.tensor([float("nan"), 0.02])
+        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.02])  # [filled, real]
+        x["fdm_gamma_target_known"] = torch.tensor([0.0, 1.0])  # [unknown, known]
 
         output = layer(x)
 
-        assert "fdm_gamma_diff_rad" in output
-        # NaN target → 0
-        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(0.0), atol=1e-6)
-        # Valid target: 0.02 - (-0.03) = 0.05
+        # idx 0: unknown → gamma_default(0.0) - 0.05 = -0.05
+        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(-0.05), atol=1e-6)
+        # idx 1: known → 0.02 - (-0.03) = 0.05
         assert torch.isclose(output["fdm_gamma_diff_rad"][1], torch.tensor(0.05), atol=1e-6)
+
+    def test_gamma_default_is_learnable(self) -> None:
+        """gamma_default is an nn.Parameter (trainable)."""
+        layer = TrajectoryLayer(col_map=self._col_map)
+        assert hasattr(layer, "gamma_default")
+        assert isinstance(layer.gamma_default, torch.nn.Parameter)
 
 
 class TestTrajectoryGammaDiffEdgeCases:

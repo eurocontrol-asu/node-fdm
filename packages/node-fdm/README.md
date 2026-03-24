@@ -19,9 +19,9 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `layers.blocks` | `MLPBlock`, `Backbone`, `Head`, `MultiLayerDict` |
 | `layers.normalizers` | `InputNormalizer`, `OutputDenormalizer` |
 | `layers.structured` | `StructuredLayer` — normalize → backbone → heads → denormalize |
-| `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed, TAS diff, gamma diff |
+| `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed, TAS diff, gamma diff (learnable default, `gamma_known` mask) |
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
-| `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, model weights + optimizer checkpoint save/load |
+| `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, optional tracking loss on autopilot targets (`lambda_tracking`), model weights + optimizer checkpoint save/load |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
 | `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1); `compute_stats` with NaN-safe e1 handling |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame (NaN/inf filtered in x, u, e, dx, and e1 columns) |
@@ -74,6 +74,8 @@ config = TrainingConfig(
     method="rk4",
     # Optional: per-variable loss weights for x_cols (defaults to 1.0 for all)
     alpha_dict={"altitude_ft": 2.0, "tas_kt": 1.5},
+    # Optional: tracking loss on autopilot targets from e1 (0.0 = disabled)
+    lambda_tracking=0.5,
 )
 
 trainer = ODETrainer(

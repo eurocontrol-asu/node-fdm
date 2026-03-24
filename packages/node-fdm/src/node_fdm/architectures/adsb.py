@@ -33,7 +33,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
         LayerSpec(
             name="trajectory",
             layer_class="node_fdm.layers.trajectory.TrajectoryLayer",
-            input_cols=X_COLS + E0_COLS,
+            input_cols=X_COLS + U_COLS + E0_COLS,
             output_cols=E1_COLS,
             trainable=False,
             config={
@@ -46,11 +46,12 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "vz": "fdm_d_vz_ms",
                     "gs": "raw_gs_ms",
                     "mach": "era_mach",
-                    "cas": "bds_ias_ms",
+                    "cas": "fdm_cas_ms",
                     "alt_diff": "fdm_alt_diff_m",
                     "tas_sel": "fdm_tas_target_ms",
                     "tas_diff": "fdm_tas_diff_ms",
                     "gamma_sel": "fdm_gamma_target_rad",
+                    "gamma_known": "fdm_gamma_target_known",
                     "gamma_diff": "fdm_gamma_diff_rad",
                 },
             },

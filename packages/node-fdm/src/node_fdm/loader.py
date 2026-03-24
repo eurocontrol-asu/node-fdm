@@ -111,10 +111,10 @@ def _load_and_window(
         for start in range(0, n_rows - seq_len + 1, shift):
             end = start + seq_len
 
-            # Check for NaN / inf
+            # Check for NaN / inf (u_arr excluded: gamma_target NaN
+            # is expected and handled by TrajectoryLayer)
             slices = [
                 x_arr[start:end],
-                u_arr[start:end],
                 e_arr[start:end],
                 dx_arr[start:end],
             ]
@@ -135,10 +135,10 @@ def _load_and_window(
 
             samples.append(
                 FlightSample(
-                    x=torch.from_numpy(slices[0].copy()),
-                    u=torch.from_numpy(slices[1].copy()),
-                    e=torch.from_numpy(slices[2].copy()),
-                    dx=torch.from_numpy(slices[3].copy()),
+                    x=torch.from_numpy(x_arr[start:end].copy()),
+                    u=torch.from_numpy(u_arr[start:end].copy()),
+                    e=torch.from_numpy(e_arr[start:end].copy()),
+                    dx=torch.from_numpy(dx_arr[start:end].copy()),
                     e1=e1_tensor,
                 )
             )
