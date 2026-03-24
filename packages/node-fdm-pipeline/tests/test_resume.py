@@ -461,3 +461,29 @@ class TestResumeEdgeCases:
             data_kwargs = mock_get_data.call_args.kwargs
             assert "e1_cols" in data_kwargs, "e1_cols not passed to get_train_val_data"
             assert data_kwargs["e1_cols"] == ["fdm_tas_diff_ms", "fdm_alt_diff_m"]
+
+    def test_resume_e1_cols_has_gamma_diff(self, tmp_path: Path) -> None:
+        """Resuming adsb model passes fdm_gamma_diff_rad in e1_cols to loader."""
+        from node_fdm_pipeline.commands.resume import run_resume
+
+        model_dir = tmp_path / "models" / "node_adsb_v1_A320"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1")
+        config = _make_config(tmp_path)
+
+        with (
+            patch("node_fdm.loader.get_train_val_data") as mock_get_data,
+            patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
+            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
+        ):
+            mock_get_data.return_value = (MagicMock(), MagicMock())
+            mock_trainer_cls.return_value = MagicMock()
+
+            run_resume(
+                model=model_dir,
+                config=config,
+                device="cpu",
+            )
+
+            data_kwargs = mock_get_data.call_args.kwargs
+            assert "e1_cols" in data_kwargs, "e1_cols not passed to get_train_val_data"
+            assert "fdm_gamma_diff_rad" in data_kwargs["e1_cols"]

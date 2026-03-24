@@ -342,3 +342,30 @@ typecodes:
         assert "e1_cols" in data_kwargs, "e1_cols not passed to get_train_val_data"
         assert data_kwargs["e1_cols"] == E1_COLS
         assert "fdm_alt_diff_m" in data_kwargs["e1_cols"]
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_train_e1_cols_has_gamma_diff(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Training with adsb arch passes fdm_gamma_diff_rad in e1_cols to loader."""
+        config = self._make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="adsb",
+                config=config,
+                typecode="A320",
+                epochs=1,
+                device="cpu",
+            )
+
+        data_kwargs = mock_get_data.call_args.kwargs
+        assert "e1_cols" in data_kwargs, "e1_cols not passed to get_train_val_data"
+        assert "fdm_gamma_diff_rad" in data_kwargs["e1_cols"]
