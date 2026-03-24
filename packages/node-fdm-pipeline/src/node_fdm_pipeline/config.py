@@ -92,7 +92,7 @@ class CasFilterConfig(BaseModel, frozen=True):
 class TasFilterConfig(BaseModel, frozen=True):
     """TAS selected-parameter filter."""
 
-    tol: float = 1.0
+    tol: float = 0.75
     min_len: int = 20
     use_alt: bool = False
     smooth_window: int = 20
