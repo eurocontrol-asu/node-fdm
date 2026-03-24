@@ -186,6 +186,11 @@ def build_selected_params(  # noqa: PLR0915
     TAS plateaus are masked in regions where Mach or CAS plateaus have
     already been detected, avoiding double-counting.
 
+    Level-flight indicator:
+
+    * ``fdm_gamma_from_alt_rad`` — 0.0 where ``fdm_alt_sel_ft`` is
+      detected (altitude plateau / ALT HLD), NaN elsewhere.
+
     Target columns (backward-filled with last-point anchor):
 
     * ``fdm_alt_target_ft`` — from altitude segments
@@ -271,6 +276,12 @@ def build_selected_params(  # noqa: PLR0915
     if alt_cfg is not None and alt_col in df.columns:
         alt_segs = detect_constant_segments(alt_arr, **alt_cfg)
         df = add_segment_column(df, alt_segs, "fdm_alt_sel_ft")
+
+    # --- Gamma from altitude hold (gamma=0 where alt plateau detected) ---
+    if "fdm_alt_sel_ft" in df.columns:
+        alt_sel = df["fdm_alt_sel_ft"].to_numpy()
+        gamma_from_alt = np.where(np.isnan(alt_sel), np.nan, 0.0)
+        df = df.with_columns(pl.Series("fdm_gamma_from_alt_rad", gamma_from_alt))
 
     # --- MCP altitude backfill (independent of alt segments) ---
     mcp_col = "bds_mcp_sel_alt_ft"

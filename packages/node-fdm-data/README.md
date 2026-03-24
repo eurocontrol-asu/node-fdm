@@ -14,7 +14,7 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 - **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components; Polars expression variants: `haversine_expr`, `compute_mach_expr`, `compute_cas_expr`
 - **Column schemas** — OpenSky 2025, QAR, and ADS-B architectures with typed column lists and conversion registries
 - **Flight processor** — Configurable `FlightProcessor` pipeline with method-chaining API
-- **Segment detection** — `build_selected_params` detects constant-speed/altitude plateaus and produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`) via backward-fill with last-point anchor
+- **Segment detection** — `build_selected_params` detects constant-speed/altitude plateaus and produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`) via backward-fill with last-point anchor; altitude plateaus also emit `fdm_gamma_from_alt_rad` (0.0 in level flight, NaN elsewhere)
 - **Preprocessing** — SI conversion with precomputed delta columns (`fdm_alt_diff_m`, `fdm_tas_diff_ms`), temporal derivatives, OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction)
 - **Dataset splitting** — `split_by_icao` for deterministic train/val/test split (prevents data leakage)
 
