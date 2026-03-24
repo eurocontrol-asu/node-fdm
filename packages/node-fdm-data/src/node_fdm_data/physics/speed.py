@@ -11,7 +11,7 @@ import numpy as np
 from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, R
 from node_fdm_data.physics.isa import isa_pressure, isa_temperature
 
-__all__ = ["cas_to_tas", "mach_to_tas"]
+__all__ = ["cas_to_tas", "mach_to_tas", "vz_to_gamma"]
 
 _GM1_OVER_2: float = (GAMMA_AIR - 1.0) / 2.0  # 0.2
 _G_OVER_GM1: float = GAMMA_AIR / (GAMMA_AIR - 1.0)  # 3.5
@@ -56,3 +56,21 @@ def cas_to_tas(cas: float | np.ndarray, h_m: float | np.ndarray) -> float | np.n
     mach = np.sqrt((2.0 / (GAMMA_AIR - 1.0)) * ((qc / p + 1.0) ** _INV_G_OVER_GM1 - 1.0))
 
     return mach_to_tas(mach, h_m)
+
+
+def vz_to_gamma(
+    vz: float | np.ndarray,
+    tas: float | np.ndarray,
+) -> float | np.ndarray:
+    """Convert vertical speed to flight-path angle (radians).
+
+    ``gamma = arcsin(clamp(vz / tas, -1, 1))``
+
+    Returns NaN when *tas* is zero or any input is NaN.
+    Clamps the ratio to [-1, 1] when |vz| > tas.
+    """
+    vz_arr = np.asarray(vz, dtype=np.float64)
+    tas_arr = np.asarray(tas, dtype=np.float64)
+    safe_tas = np.where(tas_arr == 0.0, np.nan, tas_arr)
+    ratio = np.clip(vz_arr / safe_tas, -1.0, 1.0)
+    return np.arcsin(ratio)

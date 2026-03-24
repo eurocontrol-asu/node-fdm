@@ -20,7 +20,7 @@ from node_fdm_data.physics.constants import (
     R,
 )
 from node_fdm_data.physics.isa import isa_density, isa_pressure, isa_pressure_expr, isa_temperature
-from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas
+from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas, vz_to_gamma
 
 __all__ = [
     "A0",
@@ -44,4 +44,5 @@ __all__ = [
     "isa_pressure_expr",
     "isa_temperature",
     "mach_to_tas",
+    "vz_to_gamma",
 ]
