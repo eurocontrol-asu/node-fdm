@@ -58,6 +58,7 @@ SI_DERIVATIVES: list[tuple[str, str]] = [
 DELTA_DIFFS: list[tuple[str, str, str]] = [
     ("fdm_alt_target_m", "raw_alt_m", "fdm_alt_diff_m"),
     ("fdm_tas_target_ms", "era_tas_ms", "fdm_tas_diff_ms"),
+    ("fdm_gamma_target_rad", "fdm_gamma_rad", "fdm_gamma_diff_rad"),
 ]
 
 DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
@@ -74,7 +75,7 @@ def convert_si(df: pl.DataFrame) -> pl.DataFrame:
     a new target column is added.  Source columns are preserved.
 
     After conversions, precomputes delta columns from :data:`DELTA_DIFFS`
-    (e.g. ``fdm_alt_diff_m``, ``fdm_tas_diff_ms``) when both operands
+    (e.g. ``fdm_alt_diff_m``, ``fdm_tas_diff_ms``, ``fdm_gamma_diff_rad``) when both operands
     are present.  These are required by downstream e1_cols loading.
 
     Args:

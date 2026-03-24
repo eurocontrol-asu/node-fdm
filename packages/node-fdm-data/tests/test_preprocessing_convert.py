@@ -130,6 +130,50 @@ class TestConvertSI:
         assert result["fdm_tas_diff_ms"][0] == pytest.approx(10.0)
         assert result["fdm_tas_diff_ms"][1] == pytest.approx(10.0)
 
+    def test_convert_adds_gamma_diff(self) -> None:
+        """fdm_gamma_diff_rad = fdm_gamma_target_rad - fdm_gamma_rad."""
+        df = pl.DataFrame(
+            {
+                "fdm_gamma_target_rad": [0.05, 0.10],
+                "fdm_gamma_rad": [0.03, 0.08],
+            }
+        )
+        result = convert_si(df)
+        assert "fdm_gamma_diff_rad" in result.columns
+        assert result["fdm_gamma_diff_rad"][0] == pytest.approx(0.02)
+        assert result["fdm_gamma_diff_rad"][1] == pytest.approx(0.02)
+
+    def test_convert_gamma_diff_missing_source(self) -> None:
+        """No crash and no gamma_diff column when fdm_gamma_target_rad is absent."""
+        df = pl.DataFrame({"fdm_gamma_rad": [0.05, 0.10]})
+        result = convert_si(df)
+        assert "fdm_gamma_diff_rad" not in result.columns
+
+    def test_convert_gamma_diff_nan_propagated(self) -> None:
+        """NaN in fdm_gamma_target_rad propagates to fdm_gamma_diff_rad."""
+        df = pl.DataFrame(
+            {
+                "fdm_gamma_target_rad": [0.05, float("nan"), 0.10],
+                "fdm_gamma_rad": [0.03, 0.04, 0.08],
+            }
+        )
+        result = convert_si(df)
+        assert "fdm_gamma_diff_rad" in result.columns
+        assert result["fdm_gamma_diff_rad"][0] == pytest.approx(0.02)
+        assert result["fdm_gamma_diff_rad"].is_nan()[1]
+        assert result["fdm_gamma_diff_rad"][2] == pytest.approx(0.02)
+
+    def test_convert_gamma_diff_both_zero(self) -> None:
+        """Level flight: both gamma values zero yields gamma_diff = 0."""
+        df = pl.DataFrame(
+            {
+                "fdm_gamma_target_rad": [0.0],
+                "fdm_gamma_rad": [0.0],
+            }
+        )
+        result = convert_si(df)
+        assert result["fdm_gamma_diff_rad"][0] == pytest.approx(0.0)
+
     def test_convert_missing_source_cols(self) -> None:
         """No crash and no diff columns when target columns are absent."""
         df = pl.DataFrame({"raw_alt_m": [9500.0], "era_tas_ms": [240.0]})
