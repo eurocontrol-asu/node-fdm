@@ -420,3 +420,44 @@ class TestResumeEdgeCases:
             # get_train_val_data should be called with new seq_len
             data_kwargs = mock_get_data.call_args.kwargs
             assert data_kwargs["seq_len"] == 120
+
+    def test_resume_e1_cols_loaded(self, tmp_path: Path) -> None:
+        """E1 columns forwarded to get_train_val_data on resume.
+
+        When e1_cols are passed, FlightSample.e1 tensors are populated,
+        ensuring resumed training uses the same feature set as initial training.
+        """
+        from node_fdm_pipeline.commands.resume import run_resume
+
+        model_dir = tmp_path / "models" / "opensky_2025_A320"
+        _make_meta_json(model_dir, architecture_name="opensky_2025")
+        config = _make_config(tmp_path)
+
+        with (
+            patch("node_fdm_pipeline.commands.resume.resolve_architecture") as mock_resolve,
+            patch("node_fdm.loader.get_train_val_data") as mock_get_data,
+            patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
+            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
+        ):
+            mock_resolve.return_value = MagicMock(
+                name="opensky_2025",
+                architecture_import="node_fdm.architectures.opensky",
+                x_cols=["a"],
+                u_cols=["b"],
+                e0_cols=["c"],
+                e1_cols=["fdm_tas_diff_ms", "fdm_alt_diff_m"],
+                dx_cols=[(1, "d")],
+            )
+            mock_get_data.return_value = (MagicMock(), MagicMock())
+            mock_trainer_cls.return_value = MagicMock()
+
+            run_resume(
+                model=model_dir,
+                config=config,
+                device="cpu",
+            )
+
+            # get_train_val_data must receive e1_cols kwarg
+            data_kwargs = mock_get_data.call_args.kwargs
+            assert "e1_cols" in data_kwargs, "e1_cols not passed to get_train_val_data"
+            assert data_kwargs["e1_cols"] == ["fdm_tas_diff_ms", "fdm_alt_diff_m"]

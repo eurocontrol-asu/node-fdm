@@ -307,3 +307,38 @@ typecodes:
 
         training_config = mock_trainer_cls.call_args.kwargs["config"]
         assert training_config.shift == 100
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_train_e1_cols_in_stats(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """E1 columns passed to get_train_val_data so stats include them.
+
+        When e1_cols are forwarded, the trainer computes stats for them and
+        they appear in the saved meta.json stats_dict.
+        """
+        from node_fdm_data.schemas.opensky import E1_COLS
+
+        config = self._make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="opensky",
+                config=config,
+                typecode="A320",
+                epochs=1,
+                device="cpu",
+            )
+
+        # get_train_val_data must receive e1_cols kwarg matching the architecture
+        data_kwargs = mock_get_data.call_args.kwargs
+        assert "e1_cols" in data_kwargs, "e1_cols not passed to get_train_val_data"
+        assert data_kwargs["e1_cols"] == E1_COLS
+        assert "fdm_alt_diff_m" in data_kwargs["e1_cols"]

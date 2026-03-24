@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
@@ -21,6 +21,7 @@ class ArchitectureInfo:
         x_cols: State column names.
         u_cols: Control column names.
         e0_cols: Environment column names.
+        e1_cols: Derived environment column names (computed by physics layers).
         dx_cols: Derivative column specs ``(sign, col_name)``.
         preprocessing_fn: Flight preprocessing function (used by predict/stats).
         segment_filter_fn: Optional segment filter function (used by predict/stats).
@@ -35,6 +36,7 @@ class ArchitectureInfo:
     preprocessing_fn: Any
     segment_filter_fn: Any
     architecture_import: str
+    e1_cols: list[str] = field(default_factory=list)
 
 
 #: Reverse mapping from architecture registry name to CLI arch key.
@@ -60,52 +62,56 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
     """
     match arch:
         case "opensky":
-            from node_fdm_data.schemas.opensky import DX_COLS, E0_COLS, U_COLS, X_COLS
+            from node_fdm_data.schemas.opensky import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
                 name="opensky_2025",
                 x_cols=X_COLS,
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
+                e1_cols=E1_COLS,
                 dx_cols=DX_COLS,
                 preprocessing_fn=None,
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.opensky",
             )
         case "opensky_v2":
-            from node_fdm_data.schemas.opensky_v2 import DX_COLS, E0_COLS, U_COLS, X_COLS
+            from node_fdm_data.schemas.opensky_v2 import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
                 name="opensky_v2",
                 x_cols=X_COLS,
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
+                e1_cols=E1_COLS,
                 dx_cols=DX_COLS,
                 preprocessing_fn=None,
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.opensky_v2",
             )
         case "qar":
-            from node_fdm_data.schemas.qar import DX_COLS, E0_COLS, U_COLS, X_COLS
+            from node_fdm_data.schemas.qar import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
                 name="qar",
                 x_cols=X_COLS,
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
+                e1_cols=E1_COLS,
                 dx_cols=DX_COLS,
                 preprocessing_fn=None,
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.qar",
             )
         case "adsb":
-            from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, U_COLS, X_COLS
+            from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
                 name="node_adsb_v1",
                 x_cols=X_COLS,
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
+                e1_cols=E1_COLS,
                 dx_cols=DX_COLS,
                 preprocessing_fn=None,
                 segment_filter_fn=None,

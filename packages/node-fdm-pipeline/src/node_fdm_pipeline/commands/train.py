@@ -111,6 +111,7 @@ def run_training(
             x_cols=info.x_cols,
             u_cols=info.u_cols,
             e_cols=info.e0_cols,
+            e1_cols=info.e1_cols,
             dx_cols=dx_col_names,
             seq_len=training_config.seq_len,
             shift=training_config.shift,
