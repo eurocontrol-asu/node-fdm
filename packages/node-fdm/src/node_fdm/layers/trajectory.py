@@ -72,6 +72,13 @@ class TrajectoryLayer(nn.Module):
 
     Column names are resolved through ``col_map`` so the same layer works
     with different naming conventions (OpenSky vs. QAR).
+
+    NaN handling for error signals:
+        - **gamma_diff**: NaN-aware — positions where ``gamma_target`` is
+          NaN produce ``gamma_diff = 0`` (no correction signal), rather
+          than propagating NaN or computing ``0 - gamma``.
+        - **tas_diff** / **alt_diff**: NaN targets are replaced with 0
+          via ``nan_to_num`` before differencing.
     """
 
     def __init__(self, col_map: dict[str, str] | None = None) -> None:
@@ -156,10 +163,12 @@ class TrajectoryLayer(nn.Module):
             tas_target = torch.nan_to_num(x[tas_sel_col], nan=0.0)
             output[c["tas_diff"]] = tas_target - tas
 
-        # Gamma difference from selected gamma target
+        # Gamma difference from selected gamma target (NaN-aware)
         gamma_sel_col = c.get("gamma_sel", "")
         if gamma_sel_col and gamma_sel_col in x:
-            gamma_target = torch.nan_to_num(x[gamma_sel_col], nan=0.0)
-            output[c["gamma_diff"]] = gamma_target - gamma
+            raw_target = x[gamma_sel_col]
+            valid = ~torch.isnan(raw_target)
+            gamma_diff = torch.where(valid, raw_target - gamma, torch.zeros_like(gamma))
+            output[c["gamma_diff"]] = gamma_diff
 
         return output

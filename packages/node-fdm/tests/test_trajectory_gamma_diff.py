@@ -1,14 +1,19 @@
-"""Tests for AXM-806: compute fdm_gamma_diff_rad in TrajectoryLayer.
+"""Tests for TrajectoryLayer gamma_diff computation.
+
+AXM-806: initial gamma_diff support.
+AXM-810: NaN-aware gamma_diff — NaN target yields zero diff, not -gamma.
 
 Validates that:
 - TrajectoryLayer computes gamma difference (target - current) when gamma_sel is in col_map.
 - Output includes fdm_gamma_diff_rad when properly configured.
 - Backward compatibility: no gamma_diff output when gamma_sel not in col_map.
 - NODE_ADSB_V1 spec includes fdm_gamma_diff_rad in StructuredLayer input_cols.
-- Edge cases: NaN gamma target and zero gamma.
+- NaN-aware: NaN gamma_target → gamma_diff = 0 (not -gamma).
 """
 
 from __future__ import annotations
+
+from typing import ClassVar
 
 import torch
 
@@ -129,36 +134,71 @@ class TestAdsbForwardPassWithGammaDiff:
 # ---------------------------------------------------------------------------
 
 
-class TestTrajectoryGammaDiffEdgeCases:
-    """Edge-case handling for gamma diff computation."""
+class TestGammaDiffNanAware:
+    """AXM-810: NaN-aware gamma_diff — NaN target positions yield zero diff."""
 
-    def test_trajectory_gamma_diff_nan_target(self) -> None:
-        """NaN gamma_target handled via nan_to_num → gamma_diff = 0 - gamma = -gamma."""
-        col_map = {
-            "tas": "era_tas_ms",
-            "gamma": "fdm_gamma_rad",
-            "alt": "raw_alt_m",
-            "wind": "fdm_long_wind_ms",
-            "gamma_sel": "fdm_gamma_sel_rad",
-            "gamma_diff": "fdm_gamma_diff_rad",
-        }
+    _col_map: ClassVar[dict[str, str]] = {
+        "tas": "era_tas_ms",
+        "gamma": "fdm_gamma_rad",
+        "alt": "raw_alt_m",
+        "wind": "fdm_long_wind_ms",
+        "gamma_sel": "fdm_gamma_sel_rad",
+        "gamma_diff": "fdm_gamma_diff_rad",
+    }
 
-        layer = TrajectoryLayer(col_map=col_map)
-
-        x = {
+    def _base_inputs(self) -> dict[str, torch.Tensor]:
+        return {
             "era_tas_ms": torch.tensor([250.0, 300.0]),
             "fdm_gamma_rad": torch.tensor([0.05, -0.03]),
             "raw_alt_m": torch.tensor([5000.0, 10000.0]),
             "fdm_long_wind_ms": torch.tensor([10.0, 5.0]),
-            "fdm_gamma_sel_rad": torch.tensor([float("nan"), 0.02]),
         }
+
+    def test_gamma_diff_nan_target_yields_zero(self) -> None:
+        """NaN gamma_target → gamma_diff = 0 at those positions."""
+        layer = TrajectoryLayer(col_map=self._col_map)
+
+        x = self._base_inputs()
+        x["fdm_gamma_sel_rad"] = torch.tensor([float("nan"), float("nan")])
 
         output = layer(x)
 
         assert "fdm_gamma_diff_rad" in output
-        # NaN target → nan_to_num → 0.0, so gamma_diff[0] = 0.0 - 0.05 = -0.05
-        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(-0.05), atol=1e-5)
-        assert torch.isfinite(output["fdm_gamma_diff_rad"][1])
+        expected = torch.tensor([0.0, 0.0])
+        assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
+
+    def test_gamma_diff_valid_target(self) -> None:
+        """Valid gamma_target: gamma_diff = target - gamma."""
+        layer = TrajectoryLayer(col_map=self._col_map)
+
+        x = self._base_inputs()
+        x["fdm_gamma_rad"] = torch.tensor([0.03, 0.03])
+        x["fdm_gamma_sel_rad"] = torch.tensor([0.05, 0.05])
+
+        output = layer(x)
+
+        assert "fdm_gamma_diff_rad" in output
+        expected = torch.tensor([0.02, 0.02])
+        assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
+
+    def test_gamma_diff_mixed(self) -> None:
+        """Mixed NaN/valid: 0 where NaN, correct diff where valid."""
+        layer = TrajectoryLayer(col_map=self._col_map)
+
+        x = self._base_inputs()
+        x["fdm_gamma_sel_rad"] = torch.tensor([float("nan"), 0.02])
+
+        output = layer(x)
+
+        assert "fdm_gamma_diff_rad" in output
+        # NaN target → 0
+        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(0.0), atol=1e-6)
+        # Valid target: 0.02 - (-0.03) = 0.05
+        assert torch.isclose(output["fdm_gamma_diff_rad"][1], torch.tensor(0.05), atol=1e-6)
+
+
+class TestTrajectoryGammaDiffEdgeCases:
+    """Edge-case handling for gamma diff computation."""
 
     def test_trajectory_gamma_diff_zero_gamma(self) -> None:
         """Zero gamma (level flight): gamma_diff = target - 0 = target."""
