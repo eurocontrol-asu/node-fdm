@@ -6,12 +6,12 @@ Simplified longitudinal model:
 * **Control (U)**: replaces ``fdm_mcp_alt_sel_m`` (BDS40, ~50% coverage)
   with ``fdm_alt_target_m`` (backward-fill, never NaN).  Uses unified
   ``fdm_tas_target_ms`` instead of separate Mach/CAS selects.
-* **Control ODE subset (U_ODE)**: only ``fdm_vz_sel_ms`` — altitude
-  and TAS targets are consumed by the trajectory layer, not the ODE.
+* **Control ODE subset (U_ODE)**: empty — all controls (altitude,
+  TAS, gamma targets) are consumed by the trajectory layer, not the ODE.
 * **Environment (E0)**: removes airport distances (not relevant for
   flight dynamics).
 * **Environment at t (E1)**: extends opensky with ``fdm_tas_diff_ms``
-  (TAS error signal for the structured layer).
+  and ``fdm_gamma_diff_rad`` (error signals for the structured layer).
 * **Derivatives (DX)**: removes ``raw_gs_ms`` (derivative of the
   dropped distance state).
 
@@ -44,14 +44,12 @@ X_COLS: list[str] = [
 U_COLS: list[str] = [
     "fdm_alt_target_m",
     "fdm_tas_target_ms",
-    "fdm_vz_sel_ms",
+    "fdm_gamma_target_rad",
 ]
 
-# Subset of U_COLS fed to the ODE layer (excludes fdm_alt_target_m
-# and fdm_tas_target_ms, which are consumed only by the trajectory layer).
-U_ODE_COLS: list[str] = [
-    "fdm_vz_sel_ms",
-]
+# Subset of U_COLS fed to the ODE layer — empty: all controls are
+# consumed by the trajectory layer, none feed the ODE directly.
+U_ODE_COLS: list[str] = []
 
 # ---------------------------------------------------------------------------
 # Environment at t=0 (e0) — fed to trajectory layer
@@ -71,6 +69,7 @@ E1_COLS: list[str] = [
     "bds_ias_ms",
     "fdm_alt_diff_m",
     "fdm_tas_diff_ms",
+    "fdm_gamma_diff_rad",
 ]
 
 # ---------------------------------------------------------------------------

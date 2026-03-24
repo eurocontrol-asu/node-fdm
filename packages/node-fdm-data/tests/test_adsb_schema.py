@@ -47,16 +47,44 @@ class TestAdsbSchema:
         ]
 
 
+class TestUColsV2:
+    """Tests for U_COLS after AXM-805 (gamma_target replaces vz_sel)."""
+
+    def test_u_cols_has_gamma_target(self) -> None:
+        """U_COLS contains fdm_gamma_target_rad as control input."""
+        assert "fdm_gamma_target_rad" in adsb.U_COLS
+
+    def test_u_cols_no_vz_sel(self) -> None:
+        """U_COLS no longer contains fdm_vz_sel_ms."""
+        assert "fdm_vz_sel_ms" not in adsb.U_COLS
+
+
 class TestUOdeCols:
     """Tests for the U_ODE_COLS subset used by the ODE layer."""
 
-    def test_u_ode_cols_subset_of_u_cols(self) -> None:
-        """U_ODE_COLS is a strict subset of U_COLS."""
-        assert set(adsb.U_ODE_COLS).issubset(set(adsb.U_COLS))
+    def test_u_ode_cols_empty(self) -> None:
+        """U_ODE_COLS is empty — no direct control feeds the ODE."""
+        assert adsb.U_ODE_COLS == []
 
-    def test_u_ode_cols_no_alt_target(self) -> None:
-        """U_ODE_COLS excludes fdm_alt_target_m (trajectory-only control)."""
-        assert "fdm_alt_target_m" not in adsb.U_ODE_COLS
+
+class TestE1ColsV2:
+    """Tests for E1_COLS after AXM-805 (gamma_diff added)."""
+
+    def test_e1_cols_has_gamma_diff(self) -> None:
+        """E1_COLS contains fdm_gamma_diff_rad."""
+        assert "fdm_gamma_diff_rad" in adsb.E1_COLS
+
+
+class TestStructuredInputs:
+    """Tests that ODE inputs contain no raw absolute control."""
+
+    def test_structured_no_raw_control(self) -> None:
+        """U_ODE_COLS + E1_COLS must not contain absolute control columns."""
+        raw_controls = {"fdm_vz_sel_ms", "fdm_alt_target_m", "fdm_tas_target_ms"}
+        ode_inputs = set(adsb.U_ODE_COLS) | set(adsb.E1_COLS)
+        assert (
+            not ode_inputs & raw_controls
+        ), f"Raw controls leaked into ODE inputs: {ode_inputs & raw_controls}"
 
 
 class TestBothSchemasCoexist:

@@ -19,11 +19,11 @@ class TestUColsHasTasTarget:
         assert "fdm_tas_target_ms" in adsb.U_COLS
 
 
-class TestUOdeColsVzOnly:
-    """U_ODE_COLS should contain only fdm_vz_sel_ms after refactor."""
+class TestUOdeColsEmpty:
+    """U_ODE_COLS is empty — no direct control feeds the ODE (AXM-805)."""
 
-    def test_u_ode_cols_vz_only(self) -> None:
-        assert adsb.U_ODE_COLS == ["fdm_vz_sel_ms"]
+    def test_u_ode_cols_empty(self) -> None:
+        assert adsb.U_ODE_COLS == []
 
 
 class TestE1ColsHasTasDiff:
