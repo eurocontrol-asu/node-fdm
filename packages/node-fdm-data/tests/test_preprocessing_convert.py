@@ -150,7 +150,7 @@ class TestConvertSI:
         assert "fdm_gamma_diff_rad" not in result.columns
 
     def test_convert_gamma_diff_nan_propagated(self) -> None:
-        """NaN in fdm_gamma_target_rad propagates to fdm_gamma_diff_rad."""
+        """NaN in fdm_gamma_target_rad yields 0 in fdm_gamma_diff_rad (AXM-809)."""
         df = pl.DataFrame(
             {
                 "fdm_gamma_target_rad": [0.05, float("nan"), 0.10],
@@ -160,7 +160,7 @@ class TestConvertSI:
         result = convert_si(df)
         assert "fdm_gamma_diff_rad" in result.columns
         assert result["fdm_gamma_diff_rad"][0] == pytest.approx(0.02)
-        assert result["fdm_gamma_diff_rad"].is_nan()[1]
+        assert result["fdm_gamma_diff_rad"][1] == pytest.approx(0.0)
         assert result["fdm_gamma_diff_rad"][2] == pytest.approx(0.02)
 
     def test_convert_gamma_diff_both_zero(self) -> None:

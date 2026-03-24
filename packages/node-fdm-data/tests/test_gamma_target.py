@@ -1,4 +1,8 @@
-"""Tests for fdm_gamma_target_rad — unified gamma target (fusion 3 sources + bfill)."""
+"""Tests for fdm_gamma_target_rad — unified gamma target v2 (AXM-809).
+
+Priority order (highest → lowest): vz→gamma > gamma_sel > gamma_from_alt.
+NaN-preserving: gaps between segments stay NaN (no backward-fill).
+"""
 
 from __future__ import annotations
 
@@ -8,6 +12,7 @@ import numpy as np
 import polars as pl
 import pytest
 
+from node_fdm_data.preprocessing.convert import convert_si
 from node_fdm_data.segments import build_selected_params
 
 # ---------------------------------------------------------------------------
@@ -91,7 +96,7 @@ def _make_standard_flight(n: int = 300, *, seed: int = 42) -> pl.DataFrame:
 
 
 # ---------------------------------------------------------------------------
-# Unit tests
+# Existing unit tests (unchanged)
 # ---------------------------------------------------------------------------
 
 
@@ -105,37 +110,13 @@ class TestGammaTargetExists:
         assert "fdm_gamma_target_rad" in result.columns
 
 
-class TestGammaTargetNoNan:
-    """fdm_gamma_target_rad has no NaN values on a standard flight."""
-
-    def test_gamma_target_no_nan(self) -> None:
-        df = _make_standard_flight()
-        result = build_selected_params(df, _full_config())
-
-        col = result["fdm_gamma_target_rad"]
-        nan_count = col.null_count() + col.is_nan().sum()
-        assert nan_count == 0, f"Expected zero NaN, got {nan_count}"
-
-
-class TestGammaTargetLastRowEqualsActual:
-    """Last value of fdm_gamma_target_rad equals actual fdm_gamma_rad[-1]."""
-
-    def test_gamma_target_last_row_equals_actual(self) -> None:
-        df = _make_standard_flight()
-        result = build_selected_params(df, _full_config())
-
-        last_target = result["fdm_gamma_target_rad"][-1]
-        last_actual = result["fdm_gamma_rad"][-1]
-        assert last_target == pytest.approx(last_actual, rel=1e-6)
-
-
 # ---------------------------------------------------------------------------
-# Functional tests
+# Existing functional tests (unchanged)
 # ---------------------------------------------------------------------------
 
 
 class TestGammaTargetVzSource:
-    """Where vz plateau is detected, gamma_target ≈ arcsin(vz_ms / tas_ms)."""
+    """Where vz plateau is detected, gamma_target ~ arcsin(vz_ms / tas_ms)."""
 
     def test_gamma_target_vz_source(self) -> None:
         n = 200
@@ -164,12 +145,9 @@ class TestGammaTargetVzSource:
 
         result = build_selected_params(df, _full_config())
 
-        # In the vz plateau region (indices ~50..150), gamma_target should
-        # approximate arcsin(vz_ms / tas_ms)
         expected_gamma = float(np.arcsin(1500.0 * _FT_MIN_TO_MS / (300.0 * _KT_TO_MS)))
         target = result["fdm_gamma_target_rad"].to_numpy()
 
-        # Check the middle of the plateau
         plateau_vals = target[70:130]
         np.testing.assert_allclose(plateau_vals, expected_gamma, atol=0.01)
 
@@ -180,8 +158,6 @@ class TestGammaTargetGammaSource:
     def test_gamma_target_gamma_source(self) -> None:
         n = 200
         rng = np.random.default_rng(42)
-        # Flight with gamma plateau at -0.05 rad in middle section
-        # No vz data to avoid vz-masking of gamma_sel detection
         gamma_val = -0.05
         gamma = np.concatenate(
             [
@@ -201,8 +177,7 @@ class TestGammaTargetGammaSource:
             }
         )
 
-        # Config with gamma only (no vz to avoid masking)
-        config = {
+        config: dict[str, Any] = {
             "gamma": {
                 "tol": 0.002,
                 "min_len": 15,
@@ -214,18 +189,388 @@ class TestGammaTargetGammaSource:
         result = build_selected_params(df, config)
 
         target = result["fdm_gamma_target_rad"].to_numpy()
-        # In the gamma plateau region, target should be ~ -0.05
         plateau_vals = target[70:130]
         np.testing.assert_allclose(plateau_vals, gamma_val, atol=0.005)
 
 
+# ---------------------------------------------------------------------------
+# Existing edge cases (unchanged)
+# ---------------------------------------------------------------------------
+
+
+class TestGammaTargetZeroTas:
+    """vz_sel with zero TAS — no crash, clamped gamma."""
+
+    def test_zero_tas_no_crash(self) -> None:
+        n = 100
+        alt = np.linspace(5_000, 15_000, n)
+        vz = np.full(n, 1500.0)
+        tas_kt = np.zeros(n)  # degenerate: TAS = 0
+        gamma = np.full(n, 0.0)  # placeholder gamma
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "raw_vz_ftmin": vz,
+                "era_tas_kt": tas_kt,
+                "fdm_gamma_rad": gamma,
+            }
+        )
+
+        result = build_selected_params(df, _full_config())
+
+        if "fdm_gamma_target_rad" in result.columns:
+            target = result["fdm_gamma_target_rad"].to_numpy()
+            assert not np.any(np.isinf(target[~np.isnan(target)]))
+
+
+# ===========================================================================
+# AXM-809 — New unit tests
+# ===========================================================================
+
+
+class TestGammaTargetHasNan:
+    """NaN-preserving: gaps between segments retain NaN (no bfill)."""
+
+    def test_gamma_target_has_nan(self) -> None:
+        n = 300
+        rng = np.random.default_rng(42)
+        third = n // 3
+
+        # Climb with clear vz plateau, erratic middle (no plateau), descent
+        vz = np.concatenate(
+            [
+                np.full(third, 1500.0) + rng.normal(0, 5, third),
+                rng.uniform(-200, 200, n - 2 * third),  # erratic — no segment
+                np.full(third, -1500.0) + rng.normal(0, 5, third),
+            ]
+        )
+        alt = np.concatenate(
+            [
+                np.linspace(5_000, 20_000, third),
+                np.linspace(20_000, 20_500, n - 2 * third),  # near-flat but noisy
+                np.linspace(20_500, 5_000, third),
+            ]
+        )
+        tas_kt = np.full(n, 350.0)
+        vz_ms = vz * _FT_MIN_TO_MS
+        tas_ms = tas_kt * _KT_TO_MS
+        gamma = np.arcsin(np.clip(vz_ms / tas_ms, -1, 1))
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "raw_vz_ftmin": vz,
+                "era_tas_kt": tas_kt,
+                "fdm_gamma_rad": gamma,
+            }
+        )
+
+        # Use config without alt detection so middle section has no source
+        config: dict[str, Any] = {
+            "vz": {
+                "tol": 25,
+                "min_len": 20,
+                "use_alt": False,
+                "min_abs_value": 75,
+                "smooth_window": 15,
+                "smooth_method": "savgol",
+            },
+        }
+        result = build_selected_params(df, config)
+
+        target = result["fdm_gamma_target_rad"]
+        nan_count = target.null_count() + target.is_nan().sum()
+        assert nan_count > 0, "Expected NaN in gaps between segments"
+
+
+class TestGammaTargetPriorityVzOverGamma:
+    """vz->gamma (highest priority) overrides gamma_sel when both overlap."""
+
+    def test_gamma_target_priority_vz_over_gamma(self) -> None:
+        n = 200
+        rng = np.random.default_rng(42)
+
+        # Constant vz at 1000 ft/min + constant gamma at a DIFFERENT value
+        # so we can distinguish which source wins.
+        vz_val = 1000.0
+        tas_val_kt = 400.0
+        expected_vz_gamma = float(np.arcsin(vz_val * _FT_MIN_TO_MS / (tas_val_kt * _KT_TO_MS)))
+        # Set gamma to a distinctly different constant (0.08 rad ~ 4.6 deg)
+        forced_gamma = 0.08
+
+        vz = np.full(n, vz_val) + rng.normal(0, 2, n)
+        tas_kt = np.full(n, tas_val_kt)
+        alt = np.linspace(5_000, 25_000, n)
+        gamma = np.full(n, forced_gamma) + rng.normal(0, 0.0001, n)
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "raw_vz_ftmin": vz,
+                "era_tas_kt": tas_kt,
+                "fdm_gamma_rad": gamma,
+            }
+        )
+
+        config: dict[str, Any] = {
+            "vz": {
+                "tol": 25,
+                "min_len": 20,
+                "use_alt": False,
+                "min_abs_value": 75,
+                "smooth_window": 15,
+                "smooth_method": "savgol",
+            },
+            "gamma": {
+                "tol": 0.002,
+                "min_len": 15,
+                "use_alt": False,
+                "smooth_window": 5,
+                "smooth_method": "savgol",
+            },
+        }
+
+        result = build_selected_params(df, config)
+        target = result["fdm_gamma_target_rad"].to_numpy()
+
+        # Where vz_sel is detected, gamma_target should match vz->gamma,
+        # NOT the gamma_sel value (0.08 rad).
+        vz_sel = result["fdm_vz_sel_ftmin"].to_numpy()
+        vz_mask = ~np.isnan(vz_sel)
+        assert vz_mask.sum() > 20, "Expected vz plateau detection"
+
+        np.testing.assert_allclose(
+            target[vz_mask],
+            expected_vz_gamma,
+            atol=0.005,
+            err_msg="vz->gamma should override gamma_sel",
+        )
+
+
+class TestGammaTargetPriorityGammaOverAlt:
+    """gamma_sel overrides gamma_from_alt (alt is lowest priority)."""
+
+    def test_gamma_target_priority_gamma_over_alt(self) -> None:
+        n = 200
+        rng = np.random.default_rng(42)
+
+        # Constant altitude (alt_sel detected → gamma_from_alt = 0)
+        # AND a non-zero constant gamma (gamma_sel detected)
+        alt = np.full(n, 35_000.0)
+        gamma_val = -0.03
+        gamma = np.full(n, gamma_val) + rng.normal(0, 0.0001, n)
+        # Near-zero vz so vz doesn't dominate
+        vz = rng.normal(0, 5, n)
+        tas_kt = np.full(n, 450.0)
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "raw_vz_ftmin": vz,
+                "era_tas_kt": tas_kt,
+                "fdm_gamma_rad": gamma,
+            }
+        )
+
+        config = _full_config()
+        result = build_selected_params(df, config)
+
+        # Alt plateau should be detected
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        alt_mask = ~np.isnan(alt_sel)
+        assert alt_mask.sum() > 0, "Expected altitude plateau detection"
+
+        # Gamma_sel should also be detected
+        gamma_sel = result["fdm_gamma_sel_rad"].to_numpy()
+        gamma_mask = ~np.isnan(gamma_sel)
+        assert gamma_mask.sum() > 0, "Expected gamma plateau detection"
+
+        # Where both overlap, gamma_sel wins (not gamma_from_alt=0)
+        overlap = alt_mask & gamma_mask
+        assert overlap.sum() > 0, "Expected overlap between alt and gamma segments"
+
+        target = result["fdm_gamma_target_rad"].to_numpy()
+        np.testing.assert_allclose(
+            target[overlap],
+            gamma_val,
+            atol=0.005,
+            err_msg="gamma_sel should override gamma_from_alt",
+        )
+
+
+class TestGammaTargetNoNearZero:
+    """Gamma_sel does not detect near-zero plateaus during cruise."""
+
+    def test_gamma_target_no_near_zero(self) -> None:
+        df = _make_standard_flight()
+        result = build_selected_params(df, _full_config())
+
+        if "fdm_gamma_sel_rad" not in result.columns:
+            pytest.skip("gamma_sel not produced")
+
+        gamma_sel = result["fdm_gamma_sel_rad"].to_numpy()
+        valid = gamma_sel[~np.isnan(gamma_sel)]
+
+        # No detected gamma_sel segment should have near-zero value
+        # (cruise gamma ~ 0 must be filtered out by min_abs_value)
+        if len(valid) > 0:
+            assert np.all(
+                np.abs(valid) > 0.005
+            ), f"gamma_sel contains near-zero values: {valid[np.abs(valid) <= 0.005]}"
+
+
+class TestGammaDiffNanFilledZero:
+    """gamma_diff = 0 where gamma_target is NaN (not NaN propagation)."""
+
+    def test_gamma_diff_nan_filled_zero(self) -> None:
+        n = 50
+        rng = np.random.default_rng(42)
+
+        # Build a DataFrame that already has gamma_target with some NaN
+        gamma_actual = rng.uniform(-0.05, 0.05, n)
+        gamma_target = gamma_actual.copy()
+        # Inject NaN in middle section
+        gamma_target[15:35] = np.nan
+
+        df = pl.DataFrame(
+            {
+                "fdm_gamma_target_rad": gamma_target,
+                "fdm_gamma_rad": gamma_actual,
+                # convert_si also needs raw columns for SI conversions
+                "raw_alt_ft": np.linspace(10_000, 35_000, n),
+                "era_tas_kt": np.full(n, 400.0),
+                "raw_vz_ftmin": np.full(n, 0.0),
+            }
+        )
+
+        result = convert_si(df)
+
+        assert "fdm_gamma_diff_rad" in result.columns, "gamma_diff column missing"
+        diff = result["fdm_gamma_diff_rad"].to_numpy()
+
+        # Where target was NaN, diff should be 0 (not NaN)
+        nan_mask = np.isnan(gamma_target)
+        assert not np.any(
+            np.isnan(diff[nan_mask])
+        ), "gamma_diff should be 0 where gamma_target is NaN"
+        np.testing.assert_allclose(diff[nan_mask], 0.0, atol=1e-10)
+
+
+# ===========================================================================
+# AXM-809 — New edge cases
+# ===========================================================================
+
+
+class TestGammaTargetAllNan:
+    """Very short flight, no segments → gamma_target all NaN, gamma_diff all 0."""
+
+    def test_all_nan_target(self) -> None:
+        rng = np.random.default_rng(99)
+        n = 10  # below min_len thresholds → no segments detected
+        vz = rng.uniform(-500, 500, n)
+        tas_kt = rng.uniform(200, 400, n)
+        alt = np.linspace(5_000, 10_000, n)
+        vz_ms = vz * _FT_MIN_TO_MS
+        tas_ms = tas_kt * _KT_TO_MS
+        gamma = np.arcsin(np.clip(vz_ms / np.where(tas_ms == 0, np.nan, tas_ms), -1, 1))
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "raw_vz_ftmin": vz,
+                "era_tas_kt": tas_kt,
+                "fdm_gamma_rad": gamma,
+            }
+        )
+
+        result = build_selected_params(df, _full_config())
+
+        target = result["fdm_gamma_target_rad"]
+        nan_count = target.null_count() + target.is_nan().sum()
+        assert nan_count == n, f"Expected all NaN, got {n - nan_count} non-NaN values"
+
+        # gamma_diff should be all 0
+        result_si = convert_si(result)
+        if "fdm_gamma_diff_rad" in result_si.columns:
+            diff = result_si["fdm_gamma_diff_rad"].to_numpy()
+            np.testing.assert_allclose(diff, 0.0, atol=1e-10)
+
+
+class TestGammaTargetOnlyAltSel:
+    """Only alt_sel present → gamma_target = 0 in cruise, NaN elsewhere."""
+
+    def test_only_alt_sel(self) -> None:
+        n = 300
+        rng = np.random.default_rng(42)
+        third = n // 3
+
+        # Long cruise in the middle, no vz/gamma segments
+        alt = np.concatenate(
+            [
+                np.linspace(10_000, 35_000, third),
+                np.full(n - 2 * third, 35_000.0),  # cruise
+                np.linspace(35_000, 10_000, third),
+            ]
+        )
+        # Erratic vz (no plateau detectable)
+        vz = rng.uniform(-200, 200, n)
+        tas_kt = np.full(n, 400.0)
+        vz_ms = vz * _FT_MIN_TO_MS
+        tas_ms = tas_kt * _KT_TO_MS
+        gamma = np.arcsin(np.clip(vz_ms / tas_ms, -1, 1))
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "raw_vz_ftmin": vz,
+                "era_tas_kt": tas_kt,
+                "fdm_gamma_rad": gamma,
+            }
+        )
+
+        # Only alt detection enabled (no vz, no gamma)
+        config: dict[str, Any] = {
+            "alt": {
+                "tol": 25,
+                "min_len": 5,
+                "use_alt": False,
+                "min_abs_value": 25,
+                "smooth_window": 5,
+                "smooth_method": "savgol",
+            },
+        }
+        result = build_selected_params(df, config)
+
+        target = result["fdm_gamma_target_rad"]
+        target_arr = target.to_numpy()
+
+        # Where alt_sel is detected → gamma_target = 0
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        alt_mask = ~np.isnan(alt_sel)
+        assert alt_mask.sum() > 0, "Expected altitude plateau detection"
+        np.testing.assert_allclose(target_arr[alt_mask], 0.0, atol=1e-10)
+
+        # Elsewhere → gamma_target is NaN
+        non_alt_mask = np.isnan(alt_sel)
+        non_alt_vals = target_arr[non_alt_mask]
+        nan_count = np.isnan(non_alt_vals).sum()
+        assert (
+            nan_count == non_alt_mask.sum()
+        ), f"Expected NaN outside alt segments, got {non_alt_mask.sum() - nan_count} non-NaN"
+
+
+# ===========================================================================
+# Updated existing tests — contract changes for AXM-809
+# ===========================================================================
+
+
 class TestGammaTargetAltHoldSource:
-    """Where altitude plateau is detected, gamma_target = 0."""
+    """Where only alt plateau detected (no vz/gamma), gamma_target = 0."""
 
     def test_gamma_target_alt_hold_source(self) -> None:
         n = 200
         rng = np.random.default_rng(42)
-        # Flight with altitude plateau in middle section
         alt = np.concatenate(
             [
                 np.linspace(10_000, 35_000, 50),
@@ -233,6 +578,7 @@ class TestGammaTargetAltHoldSource:
                 np.linspace(35_000, 10_000, 50),
             ]
         )
+        # Near-zero vz in cruise (below min_abs_value), so no vz_sel in cruise
         vz = np.concatenate(
             [
                 np.full(50, 1500.0),
@@ -256,153 +602,19 @@ class TestGammaTargetAltHoldSource:
 
         result = build_selected_params(df, _full_config())
 
-        # Where alt plateau is detected, gamma_target should be 0
         alt_sel = result["fdm_alt_sel_ft"].to_numpy()
         target = result["fdm_gamma_target_rad"].to_numpy()
 
+        # In cruise zone where only alt_sel detected (no vz_sel),
+        # gamma_target should be 0
         alt_hold_mask = ~np.isnan(alt_sel)
         assert alt_hold_mask.sum() > 0, "Expected altitude plateau detection"
-        np.testing.assert_allclose(target[alt_hold_mask], 0.0, atol=1e-10)
 
-
-class TestGammaTargetPriority:
-    """alt_hold (gamma=0) overwrites vz→gamma when both overlap."""
-
-    def test_gamma_target_priority(self) -> None:
-        n = 200
-        rng = np.random.default_rng(42)
-        # Flight at constant altitude with constant vz (overlapping sources)
-        # Alt plateau → gamma_target=0 should override vz→gamma
-        alt = np.full(n, 35_000.0)  # entire flight level
-        vz = np.full(n, 500.0) + rng.normal(0, 3, n)  # small constant vz
-        tas_kt = np.full(n, 450.0)
-        vz_ms = vz * _FT_MIN_TO_MS
-        tas_ms = tas_kt * _KT_TO_MS
-        gamma = np.arcsin(np.clip(vz_ms / tas_ms, -1, 1))
-
-        df = pl.DataFrame(
-            {
-                "raw_alt_ft": alt,
-                "raw_vz_ftmin": vz,
-                "era_tas_kt": tas_kt,
-                "fdm_gamma_rad": gamma,
-            }
-        )
-
-        config = _full_config()
-        config["vz"]["min_abs_value"] = 10  # lower threshold so vz is detected
-        result = build_selected_params(df, config)
-
-        # Alt hold should override vz->gamma: gamma_target = 0 where alt plateau
-        # (except last row which is anchored to actual gamma)
-        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
-        target = result["fdm_gamma_target_rad"].to_numpy()
-
-        alt_hold_mask = ~np.isnan(alt_sel)
-        # Exclude last row (anchor point)
-        alt_hold_mask[-1] = False
-        assert alt_hold_mask.sum() > 0, "Expected altitude plateau detection"
-        np.testing.assert_allclose(target[alt_hold_mask], 0.0, atol=1e-10)
-
-
-# ---------------------------------------------------------------------------
-# Edge cases
-# ---------------------------------------------------------------------------
-
-
-class TestGammaTargetNoSegments:
-    """No segments detected — bfill from last actual gamma."""
-
-    def test_no_segments_bfill(self) -> None:
-        rng = np.random.default_rng(99)
-        n = 10  # very short flight, below min_len thresholds
-        vz = rng.uniform(-500, 500, n)
-        tas_kt = rng.uniform(200, 400, n)
-        alt = np.linspace(5_000, 10_000, n)
-        vz_ms = vz * _FT_MIN_TO_MS
-        tas_ms = tas_kt * _KT_TO_MS
-        gamma = np.arcsin(np.clip(vz_ms / np.where(tas_ms == 0, np.nan, tas_ms), -1, 1))
-
-        df = pl.DataFrame(
-            {
-                "raw_alt_ft": alt,
-                "raw_vz_ftmin": vz,
-                "era_tas_kt": tas_kt,
-                "fdm_gamma_rad": gamma,
-            }
-        )
-
-        result = build_selected_params(df, _full_config())
-
-        col = result["fdm_gamma_target_rad"]
-        last_actual = result["fdm_gamma_rad"][-1]
-        last_target = col[-1]
-
-        # Last row anchored to actual gamma
-        assert last_target == pytest.approx(last_actual, rel=1e-6)
-        # Backward fill should fill everything
-        nan_count = col.null_count() + col.is_nan().sum()
-        assert nan_count == 0
-
-
-class TestGammaTargetAllAltHold:
-    """alt_sel covers everything → gamma_target = 0 everywhere."""
-
-    def test_all_alt_hold(self) -> None:
-        n = 100
-        rng = np.random.default_rng(42)
-        alt = np.full(n, 35_000.0)  # constant altitude
-        vz = rng.normal(0, 5, n)  # near-zero vz, noisy
-        tas_kt = np.full(n, 450.0)
-        vz_ms = vz * _FT_MIN_TO_MS
-        tas_ms = tas_kt * _KT_TO_MS
-        gamma = np.arcsin(np.clip(vz_ms / tas_ms, -1, 1))
-
-        df = pl.DataFrame(
-            {
-                "raw_alt_ft": alt,
-                "raw_vz_ftmin": vz,
-                "era_tas_kt": tas_kt,
-                "fdm_gamma_rad": gamma,
-            }
-        )
-
-        result = build_selected_params(df, _full_config())
-
-        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
-        target = result["fdm_gamma_target_rad"].to_numpy()
-
-        # Where alt is detected -> gamma_target = 0 (except last row = anchor)
-        alt_hold_mask = ~np.isnan(alt_sel)
-        alt_hold_mask[-1] = False
-        assert alt_hold_mask.sum() > 0
-        np.testing.assert_allclose(target[alt_hold_mask], 0.0, atol=1e-10)
-
-
-class TestGammaTargetZeroTas:
-    """vz_sel with zero TAS — no crash, clamped gamma."""
-
-    def test_zero_tas_no_crash(self) -> None:
-        n = 100
-        alt = np.linspace(5_000, 15_000, n)
-        vz = np.full(n, 1500.0)
-        tas_kt = np.zeros(n)  # degenerate: TAS = 0
-        gamma = np.full(n, 0.0)  # placeholder gamma
-
-        df = pl.DataFrame(
-            {
-                "raw_alt_ft": alt,
-                "raw_vz_ftmin": vz,
-                "era_tas_kt": tas_kt,
-                "fdm_gamma_rad": gamma,
-            }
-        )
-
-        # Should not raise
-        result = build_selected_params(df, _full_config())
-
-        # Column should exist (even if values are NaN/clamped)
-        if "fdm_gamma_target_rad" in result.columns:
-            target = result["fdm_gamma_target_rad"].to_numpy()
-            # No inf values
-            assert not np.any(np.isinf(target[~np.isnan(target)]))
+        # Only check rows where alt_sel detected but vz_sel is NOT detected
+        if "fdm_vz_sel_ftmin" in result.columns:
+            vz_sel = result["fdm_vz_sel_ftmin"].to_numpy()
+            only_alt = alt_hold_mask & np.isnan(vz_sel)
+        else:
+            only_alt = alt_hold_mask
+        if only_alt.sum() > 0:
+            np.testing.assert_allclose(target[only_alt], 0.0, atol=1e-10)

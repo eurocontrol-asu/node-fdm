@@ -21,15 +21,32 @@ from typing import Any
 
 import numpy as np
 import polars as pl
+from pydantic import BaseModel
 from scipy.signal import savgol_filter
 
 from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas, vz_to_gamma
 
 __all__ = [
+    "GammaFilterConfig",
     "add_segment_column",
     "build_selected_params",
     "detect_constant_segments",
 ]
+
+
+class GammaFilterConfig(BaseModel):
+    """Configuration for gamma segment detection with sensible defaults.
+
+    Adds ``min_abs_value`` (default 0.005 rad) to filter near-zero
+    gamma plateaus during cruise that are not meaningful targets.
+    """
+
+    tol: float = 0.002
+    min_len: int = 15
+    use_alt: bool = False
+    min_abs_value: float = 0.005
+    smooth_window: int = 5
+    smooth_method: str = "savgol"
 
 
 def detect_constant_segments(
@@ -198,8 +215,8 @@ def build_selected_params(  # noqa: PLR0915
     * ``fdm_tas_target_kt`` — unified TAS target built from
       Mach→TAS (highest priority), CAS→TAS, and TAS_sel segments.
     * ``fdm_gamma_target_rad`` — unified gamma target built from
-      vz→gamma (lowest priority), gamma_sel, and gamma_from_alt=0
-      (highest priority, ALT HLD).
+      vz→gamma (highest priority), gamma_sel, and gamma_from_alt=0
+      (lowest priority, ALT HLD).  NaN-preserving: gaps stay NaN.
 
     Args:
         df: Single-flight DataFrame (sorted by time).
@@ -259,19 +276,19 @@ def build_selected_params(  # noqa: PLR0915
         vz_cfg = config.get("vz", {})
         vz_segs = detect_constant_segments(
             df[vz_col].to_numpy(),
+            alt_values=alt_arr,
             **vz_cfg,
         )
         df = add_segment_column(df, vz_segs, "fdm_vz_sel_ftmin")
     else:
         vz_segs = []
 
-    # --- Gamma selected (optional, mask Vz-constant regions) ---
+    # --- Gamma selected (optional, no vz-masking — priority handles overlap) ---
     gamma_cfg = config.get("gamma")
     if gamma_cfg is not None and "fdm_gamma_rad" in df.columns:
+        gcfg = GammaFilterConfig(**gamma_cfg)
         gamma_arr = df["fdm_gamma_rad"].to_numpy().copy()
-        for seg in vz_segs:
-            gamma_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
-        gamma_segs = detect_constant_segments(gamma_arr, **gamma_cfg)
+        gamma_segs = detect_constant_segments(gamma_arr, **gcfg.model_dump())
         df = add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
 
     # --- Altitude selected (detect level segments on raw_alt_ft) ---
@@ -382,13 +399,28 @@ def build_selected_params(  # noqa: PLR0915
         )
 
     # fdm_gamma_target_rad: "which flight-path angle is the aircraft targeting?"
-    # Combines vz→gamma (lowest), gamma_sel, gamma_from_alt=0 (highest), then bfill.
+    # Priority (highest → lowest): vz→gamma > gamma_sel > gamma_from_alt=0.
+    # NaN-preserving: gaps between segments stay NaN (no backward-fill).
     if "fdm_gamma_rad" in df.columns:
         n = len(df)
         gamma_target = np.full(n, np.nan)
         _ft_min_to_ms = 0.3048 / 60
 
-        # Layer 1 (lowest priority): vz_sel → gamma via vz_to_gamma
+        # Layer 1 (lowest priority): gamma_from_alt (ALT HLD → gamma=0)
+        if "fdm_gamma_from_alt_rad" in df.columns:
+            gfa = df["fdm_gamma_from_alt_rad"].to_numpy()
+            mask = ~np.isnan(gfa)
+            if mask.any():
+                gamma_target[mask] = 0.0
+
+        # Layer 2: gamma_sel (overrides gamma_from_alt)
+        if "fdm_gamma_sel_rad" in df.columns:
+            gamma_sel = df["fdm_gamma_sel_rad"].to_numpy()
+            mask = ~np.isnan(gamma_sel)
+            if mask.any():
+                gamma_target[mask] = gamma_sel[mask]
+
+        # Layer 3 (highest priority): vz_sel → gamma via vz_to_gamma
         if "fdm_vz_sel_ftmin" in df.columns and tas_col in df.columns:
             vz_sel = df["fdm_vz_sel_ftmin"].to_numpy()
             tas_arr_ms = df[tas_col].to_numpy() * 0.514444
@@ -397,27 +429,8 @@ def build_selected_params(  # noqa: PLR0915
                 vz_ms = vz_sel[mask] * _ft_min_to_ms
                 gamma_target[mask] = vz_to_gamma(vz_ms, tas_arr_ms[mask])
 
-        # Layer 2: gamma_sel (overrides vz→gamma)
-        if "fdm_gamma_sel_rad" in df.columns:
-            gamma_sel = df["fdm_gamma_sel_rad"].to_numpy()
-            mask = ~np.isnan(gamma_sel)
-            if mask.any():
-                gamma_target[mask] = gamma_sel[mask]
-
-        # Layer 3 (highest priority): gamma_from_alt (ALT HLD → gamma=0)
-        if "fdm_gamma_from_alt_rad" in df.columns:
-            gfa = df["fdm_gamma_from_alt_rad"].to_numpy()
-            mask = ~np.isnan(gfa)
-            if mask.any():
-                gamma_target[mask] = 0.0
-
-        # Anchor last row to actual gamma, then backward-fill
-        gamma_target[n - 1] = df["fdm_gamma_rad"][-1]
         df = df.with_columns(
-            pl.Series("fdm_gamma_target_rad", gamma_target)
-            .fill_nan(None)
-            .backward_fill()
-            .alias("fdm_gamma_target_rad"),
+            pl.Series("fdm_gamma_target_rad", gamma_target),
         )
 
     return df

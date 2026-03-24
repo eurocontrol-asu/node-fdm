@@ -90,9 +90,13 @@ def convert_si(df: pl.DataFrame) -> pl.DataFrame:
         df = df.with_columns(exprs)
 
     # Precompute delta columns when both operands are present.
+    # Where target is NaN, diff is 0 (NaN-preserving gamma target, AXM-809).
     present = set(df.columns)
     diff_exprs = [
-        (pl.col(tgt) - pl.col(src)).alias(out)
+        pl.when(pl.col(tgt).is_nan() | pl.col(tgt).is_null())
+        .then(pl.lit(0.0))
+        .otherwise(pl.col(tgt) - pl.col(src))
+        .alias(out)
         for tgt, src, out in DELTA_DIFFS
         if tgt in present and src in present
     ]
