@@ -201,10 +201,12 @@ class TestGammaDiffLearnableDefault:
         assert torch.isclose(output["fdm_gamma_diff_rad"][1], torch.tensor(0.05), atol=1e-6)
 
     def test_gamma_default_is_learnable(self) -> None:
-        """gamma_default is an nn.Parameter (trainable)."""
+        """gamma_default_net is an nn.Module with trainable parameters."""
         layer = TrajectoryLayer(col_map=self._col_map)
-        assert hasattr(layer, "gamma_default")
-        assert isinstance(layer.gamma_default, torch.nn.Parameter)
+        assert hasattr(layer, "gamma_default_net")
+        params = list(layer.gamma_default_net.parameters())
+        assert len(params) > 0
+        assert all(p.requires_grad for p in params)
 
 
 class TestTrajectoryGammaDiffEdgeCases:

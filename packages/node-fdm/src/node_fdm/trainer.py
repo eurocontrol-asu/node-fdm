@@ -339,7 +339,7 @@ class ODETrainer:
         """
         tensors = tuple(t.to(self.device) for t in batch)
         x_seq, u_seq, e_seq = tensors[0], tensors[1], tensors[2]
-        e1_seq: torch.Tensor | None = tensors[4] if len(tensors) == 5 else None
+        _ = tensors[4] if len(tensors) == 5 else None  # e1_seq reserved for future use
 
         seq_len = x_seq.shape[1]
         x0 = x_seq[:, 0, :]
@@ -374,22 +374,72 @@ class ODETrainer:
         loss: torch.Tensor = self.loss_fn(pred_weighted, true_weighted)
 
         # --- Tracking loss on autopilot targets ---
-        if e1_seq is not None and self.config.lambda_tracking > 0:
-            n_e1 = e1_seq.shape[2]
-            target = e1_seq[:, 1:, :]  # skip initial condition
-            pred_subset = x_pred[:, 1:, :n_e1]
+        # Compares predicted states with target consignes from U_COLS.
+        # U_COLS order: [alt_target, tas_target, gamma_target, gamma_known]
+        # X_COLS order: [alt, gamma, tas]
+        if self.config.lambda_tracking > 0 and u_seq.shape[2] >= 4:
+            u_skip = u_seq[:, 1:, :]  # skip initial condition
+            pred = x_pred[:, 1:, :]
 
-            known = target.isfinite().float()
-            target_clean = torch.nan_to_num(target, nan=0.0)
-            tracking_err = (pred_subset - target_clean) ** 2 * known
+            alt_target = u_skip[:, :, 0]
+            tas_target = u_skip[:, :, 1]
+            gamma_target = u_skip[:, :, 2]
 
-            # Mean over all positions (unknown contribute 0)
-            tracking_loss = tracking_err.mean()
+            alt_pred = pred[:, :, 0]  # raw_alt_m
+            gamma_pred = pred[:, :, 1]  # fdm_gamma_rad
+            tas_pred = pred[:, :, 2]  # era_tas_ms
+
+            # MSE in z-score space (consistent with main ODE loss)
+            std_alt = self._norm_std[0]
+            std_gamma = self._norm_std[1]
+            std_tas = self._norm_std[2]
+
+            # All 3 targets always active:
+            # - alt/tas: backfilled, always valid
+            # - gamma: real target when known=1, gamma_default when known=0
+            #   (both cases help the model learn)
+            tracking_loss = (
+                ((alt_target - alt_pred) / std_alt) ** 2
+                + ((tas_target - tas_pred) / std_tas) ** 2
+                + ((gamma_target - gamma_pred) / std_gamma) ** 2
+            ).mean()
 
             loss = loss + self.config.lambda_tracking * tracking_loss
 
         if torch.isnan(loss) or torch.isinf(loss):
             log.warning("nan_or_inf_loss", loss=loss.item())
+
+        # --- DEBUG: log magnitudes on first batch of first epoch ---
+        if not getattr(self, "_debug_logged", False):
+            self._debug_logged = True
+            with torch.no_grad():
+                log.info(
+                    "debug_magnitudes",
+                    norm_std=[f"{v:.6f}" for v in self._norm_std.tolist()],
+                    norm_mean=[f"{v:.6f}" for v in self._norm_mean.tolist()],
+                    ode_loss=(
+                        f"{self.loss_fn(pred_norm, true_norm).item():.6f}"
+                        if "pred_norm" in dir()
+                        else "n/a"
+                    ),
+                )
+                if self.config.lambda_tracking > 0 and u_seq.shape[2] >= 4:
+                    alt_err = torch.abs(alt_target - alt_pred)
+                    tas_err = torch.abs(tas_target - tas_pred)
+                    gam_err = torch.abs(gamma_target - gamma_pred)
+                    log.info(
+                        "debug_tracking_errors",
+                        alt_err_mean=f"{alt_err.mean().item():.4f}",
+                        alt_err_max=f"{alt_err.max().item():.4f}",
+                        tas_err_mean=f"{tas_err.mean().item():.4f}",
+                        tas_err_max=f"{tas_err.max().item():.4f}",
+                        gam_err_mean=f"{gam_err.mean().item():.4f}",
+                        gam_err_max=f"{gam_err.max().item():.4f}",
+                        tracking_loss=f"{tracking_loss.item():.4f}",
+                        weighted_tracking=(
+                            f"{(self.config.lambda_tracking * tracking_loss).item():.4f}"
+                        ),
+                    )
 
         return loss
 

@@ -15,6 +15,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from node_fdm.layers.blocks import GammaDefaultNet
 from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, T0, R
 
 __all__ = [
@@ -94,7 +95,7 @@ class TrajectoryLayer(nn.Module):
         """
         super().__init__()
         self.col_map = {**DEFAULT_COL_MAP, **(col_map or {})}
-        self.gamma_default = nn.Parameter(torch.tensor(0.0))
+        self.gamma_default_net = GammaDefaultNet()
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Compute derived trajectory quantities from input mapping.
@@ -171,7 +172,8 @@ class TrajectoryLayer(nn.Module):
             target = x[gamma_sel_col]
             if gamma_known_col and gamma_known_col in x:
                 known = x[gamma_known_col]
-                gamma_diff = known * (target - gamma) + (1 - known) * (self.gamma_default - gamma)
+                gamma_pred = self.gamma_default_net(alt, gamma, tas)
+                gamma_diff = known * (target - gamma) + (1 - known) * (gamma_pred - gamma)
             else:
                 # Fallback: no mask available, assume all known
                 gamma_diff = target - gamma

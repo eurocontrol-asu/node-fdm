@@ -16,7 +16,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `models.fdm` | `FlightDynamicsModel` — layered state derivative computation |
 | `models.batch_neural_ode` | `BatchNeuralODE` — ODE wrapper with input interpolation |
 | `models.fdm_prod` | `FlightDynamicsModelProd` — load pretrained weights for inference |
-| `layers.blocks` | `MLPBlock`, `Backbone`, `Head`, `MultiLayerDict` |
+| `layers.blocks` | `MLPBlock`, `Backbone`, `Head`, `MultiLayerDict`, `GammaDefaultNet` |
 | `layers.normalizers` | `InputNormalizer`, `OutputDenormalizer` |
 | `layers.structured` | `StructuredLayer` — normalize → backbone → heads → denormalize |
 | `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed, TAS diff, gamma diff (learnable default, `gamma_known` mask) |

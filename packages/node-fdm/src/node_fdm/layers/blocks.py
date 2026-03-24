@@ -13,6 +13,7 @@ import torch.nn as nn
 
 __all__ = [
     "Backbone",
+    "GammaDefaultNet",
     "Head",
     "MLPBlock",
     "MultiLayerDict",
@@ -103,6 +104,62 @@ class Head(MLPBlock):
             num_layers=num_layers,
             last_activation=last_activation,
         )
+
+
+class GammaDefaultNet(nn.Module):
+    """Context-aware default gamma predictor.
+
+    Takes altitude, gamma, and TAS as inputs and produces a scalar
+    correction per batch element.  Zero-initialized so that a fresh
+    network outputs 0.0 (preserving the old scalar-default behavior).
+    """
+
+    _INPUT_DIM: int = 3  # alt, gamma, tas
+
+    def __init__(
+        self,
+        hidden_dim: int = 32,
+        num_layers: int = 1,
+    ) -> None:
+        """Initialize the gamma default network.
+
+        Args:
+            hidden_dim: Hidden layer width.
+            num_layers: Number of hidden layers.
+        """
+        super().__init__()
+        self.register_buffer("_scale", torch.tensor(1.0))
+        self.mlp = MLPBlock(
+            input_dim=self._INPUT_DIM,
+            hidden_dim=hidden_dim,
+            output_dim=1,
+            num_layers=num_layers,
+        )
+        # Zero-init the last linear layer so fresh net outputs ≈ 0.
+        last_linear = self.mlp.net[-1]
+        if isinstance(last_linear, nn.Linear):
+            nn.init.zeros_(last_linear.weight)
+            nn.init.zeros_(last_linear.bias)
+
+    def forward(
+        self,
+        alt: torch.Tensor,
+        gamma: torch.Tensor,
+        tas: torch.Tensor,
+    ) -> torch.Tensor:
+        """Predict default gamma correction from flight context.
+
+        Args:
+            alt: Altitude tensor of shape ``(batch,)``.
+            gamma: Flight-path angle tensor of shape ``(batch,)``.
+            tas: True airspeed tensor of shape ``(batch,)``.
+
+        Returns:
+            Scalar correction per sample, shape ``(batch,)``.
+        """
+        x = torch.stack([alt, gamma, tas], dim=-1)  # (batch, 3)
+        out: torch.Tensor = self.mlp(x).squeeze(-1) * self._scale
+        return out
 
 
 class MultiLayerDict(nn.Module):

@@ -177,67 +177,58 @@ class TestTrackingLoss:
             f"{loss_tracking.item()} vs {loss_base.item()}"
         )
 
-    def test_tracking_loss_known_mask(self, tmp_path: Path) -> None:
-        """known=0 everywhere → tracking term = 0 despite target-pred gap."""
+    def test_tracking_loss_always_active(self, tmp_path: Path) -> None:
+        """Tracking loss is active regardless of known mask (helps gamma_default learn)."""
         seq_len = 5
-        all_unknown = [0.0] * seq_len
 
+        # Both known=0 and known=1 produce tracking loss with gamma_offset
         trainer, _, _ = _make_trainer(
             tmp_path,
             lambda_tracking=1.0,
-            gamma_offset=10.0,  # huge offset
-            known_mask=all_unknown,
+            gamma_offset=10.0,
+            known_mask=[0.0] * seq_len,
         )
 
-        batch = next(iter(trainer.train_loader))
-        loss = trainer._compute_batch_loss(batch)
-
-        # With all known=0, tracking term is 0 → loss equals ODE-only loss
-        # Rebuild a baseline trainer with lambda=0 to compare
         trainer_base, _, _ = _make_trainer(
             tmp_path / "base",
             lambda_tracking=0.0,
+            gamma_offset=10.0,
+            known_mask=[0.0] * seq_len,
         )
+
+        batch = next(iter(trainer.train_loader))
         batch_base = next(iter(trainer_base.train_loader))
+        loss = trainer._compute_batch_loss(batch)
         loss_base = trainer_base._compute_batch_loss(batch_base)
 
-        assert torch.isclose(
-            loss, loss_base, rtol=1e-5
-        ), f"All known=0 should nullify tracking term: {loss.item()} vs {loss_base.item()}"
+        # Tracking adds penalty even with known=0 (gamma_default target)
+        assert (
+            loss > loss_base
+        ), f"Tracking should add penalty even with known=0: {loss.item()} vs {loss_base.item()}"
 
-    def test_tracking_loss_mixed_known(self, tmp_path: Path) -> None:
-        """known=[0,1,1,0] → tracking penalizes only positions where known=1."""
-        seq_len = 4
-        mixed_known = [0.0, 1.0, 1.0, 0.0]
-
-        trainer_mixed, _, _ = _make_trainer(
-            tmp_path / "mixed",
-            lambda_tracking=1.0,
-            seq_len=seq_len,
+    def test_tracking_loss_larger_lambda_larger_loss(self, tmp_path: Path) -> None:
+        """Bigger lambda_tracking → bigger total loss."""
+        trainer_low, _, _ = _make_trainer(
+            tmp_path / "low",
+            lambda_tracking=0.1,
             gamma_offset=5.0,
-            known_mask=mixed_known,
         )
 
-        all_known = [1.0, 1.0, 1.0, 1.0]
-        trainer_all, _, _ = _make_trainer(
-            tmp_path / "all",
-            lambda_tracking=1.0,
-            seq_len=seq_len,
+        trainer_high, _, _ = _make_trainer(
+            tmp_path / "high",
+            lambda_tracking=10.0,
             gamma_offset=5.0,
-            known_mask=all_known,
         )
 
-        batch_mixed = next(iter(trainer_mixed.train_loader))
-        batch_all = next(iter(trainer_all.train_loader))
+        batch_low = next(iter(trainer_low.train_loader))
+        batch_high = next(iter(trainer_high.train_loader))
 
-        loss_mixed = trainer_mixed._compute_batch_loss(batch_mixed)
-        loss_all = trainer_all._compute_batch_loss(batch_all)
+        loss_low = trainer_low._compute_batch_loss(batch_low)
+        loss_high = trainer_high._compute_batch_loss(batch_high)
 
-        # Mixed mask (2 of 4 known) should produce less tracking penalty
-        # than all-known (4 of 4 known), given same offset
-        assert loss_mixed < loss_all, (
-            f"Mixed known mask should yield lower tracking loss than all-known: "
-            f"{loss_mixed.item()} vs {loss_all.item()}"
+        assert loss_high > loss_low, (
+            f"Higher lambda should yield higher total loss: "
+            f"{loss_high.item()} vs {loss_low.item()}"
         )
 
 
