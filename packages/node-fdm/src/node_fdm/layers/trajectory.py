@@ -63,7 +63,12 @@ def _isa_pressure_torch(h: torch.Tensor) -> torch.Tensor:
 
 
 class TrajectoryLayer(nn.Module):
-    """Compute trajectory outputs: vertical speed, Mach, CAS, ground speed.
+    """Compute trajectory outputs: vertical speed, Mach, CAS, ground speed, and error signals.
+
+    Derived quantities include aerodynamic speeds (Mach, CAS), vertical
+    speed, ground speed, and optional error signals (altitude diff, TAS
+    diff, gamma diff) when the corresponding selected/target columns are
+    present in the input.
 
     Column names are resolved through ``col_map`` so the same layer works
     with different naming conventions (OpenSky vs. QAR).
@@ -76,8 +81,9 @@ class TrajectoryLayer(nn.Module):
             col_map: Mapping from canonical names (``"tas"``, ``"gamma"``,
                 ``"alt"``, ``"wind"``, ``"alt_sel"``, ``"vz"``, ``"gs"``,
                 ``"mach"``, ``"cas"``, ``"alt_diff"``, ``"tas_sel"``,
-                ``"tas_diff"``) to actual column names in the input dict.
-                Missing keys fall back to ``DEFAULT_COL_MAP`` (OpenSky naming).
+                ``"tas_diff"``, ``"gamma_sel"``, ``"gamma_diff"``) to
+                actual column names in the input dict.  Missing keys fall
+                back to ``DEFAULT_COL_MAP`` (OpenSky naming).
         """
         super().__init__()
         self.col_map = {**DEFAULT_COL_MAP, **(col_map or {})}
@@ -149,5 +155,11 @@ class TrajectoryLayer(nn.Module):
         if tas_sel_col and tas_sel_col in x:
             tas_target = torch.nan_to_num(x[tas_sel_col], nan=0.0)
             output[c["tas_diff"]] = tas_target - tas
+
+        # Gamma difference from selected gamma target
+        gamma_sel_col = c.get("gamma_sel", "")
+        if gamma_sel_col and gamma_sel_col in x:
+            gamma_target = torch.nan_to_num(x[gamma_sel_col], nan=0.0)
+            output[c["gamma_diff"]] = gamma_target - gamma
 
         return output

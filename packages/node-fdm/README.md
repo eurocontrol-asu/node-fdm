@@ -19,7 +19,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `layers.blocks` | `MLPBlock`, `Backbone`, `Head`, `MultiLayerDict` |
 | `layers.normalizers` | `InputNormalizer`, `OutputDenormalizer` |
 | `layers.structured` | `StructuredLayer` — normalize → backbone → heads → denormalize |
-| `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed, TAS diff |
+| `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed, TAS diff, gamma diff |
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
 | `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, model weights + optimizer checkpoint save/load |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |

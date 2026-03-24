@@ -44,7 +44,7 @@ X_COLS: list[str] = [
 U_COLS: list[str] = [
     "fdm_alt_target_m",
     "fdm_tas_target_ms",
-    "fdm_gamma_target_rad",
+    "fdm_gamma_sel_rad",
 ]
 
 # Subset of U_COLS fed to the ODE layer — empty: all controls are
