@@ -122,11 +122,16 @@ class AltFilterConfig(BaseModel, frozen=True):
 
 
 class GammaFilterConfig(BaseModel, frozen=True):
-    """Flight-path angle selected-parameter filter."""
+    """Flight-path angle selected-parameter filter.
+
+    Adds ``min_abs_value`` (default 0.005 rad) to filter near-zero
+    gamma plateaus during cruise that are not meaningful targets.
+    """
 
     tol: float = 0.002
     min_len: int = 15
     use_alt: bool = False
+    min_abs_value: float = 0.005
     smooth_window: int = 5
     smooth_method: str = "savgol"
 

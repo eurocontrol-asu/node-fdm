@@ -10,6 +10,7 @@ from pydantic import ValidationError
 from node_fdm_pipeline.config import (
     BadaConfig,
     ComputingConfig,
+    GammaFilterConfig,
     PathsConfig,
     PipelineConfig,
     SelectedParamConfig,
@@ -105,6 +106,73 @@ unknown_section:
         # Should not raise — extra keys are ignored by default
         cfg = PipelineConfig.from_yaml(config)
         assert cfg.typecodes == ["A320"]
+
+
+class TestGammaFilterConfig:
+    """Tests for GammaFilterConfig — gamma detection filter parameters."""
+
+    def test_default_fields(self) -> None:
+        """GammaFilterConfig exposes all expected fields with correct types."""
+        cfg = GammaFilterConfig()
+        assert isinstance(cfg.tol, float)
+        assert isinstance(cfg.min_len, int)
+        assert isinstance(cfg.use_alt, bool)
+        assert isinstance(cfg.smooth_window, int)
+        assert isinstance(cfg.smooth_method, str)
+
+    def test_frozen(self) -> None:
+        """GammaFilterConfig is immutable (frozen=True)."""
+        cfg = GammaFilterConfig()
+        with pytest.raises(ValidationError):
+            cfg.tol = 0.5  # type: ignore[misc]
+
+    def test_custom_values(self) -> None:
+        """GammaFilterConfig accepts custom values."""
+        cfg = GammaFilterConfig(tol=0.01, min_len=30, use_alt=True)
+        assert cfg.tol == 0.01
+        assert cfg.min_len == 30
+        assert cfg.use_alt is True
+
+    def test_yaml_gamma_override(self, tmp_path: Path) -> None:
+        """YAML gamma overrides flow through PipelineConfig correctly."""
+        config = tmp_path / "config.yaml"
+        config.write_text("""\
+paths:
+  data_dir: "/tmp/data"
+typecodes:
+  - A320
+selected_params:
+  gamma:
+    tol: 0.005
+    min_len: 20
+    use_alt: true
+""")
+        cfg = PipelineConfig.from_yaml(config)
+        assert cfg.selected_params.gamma.tol == 0.005
+        assert cfg.selected_params.gamma.min_len == 20
+        assert cfg.selected_params.gamma.use_alt is True
+        # Non-overridden fields keep defaults
+        assert cfg.selected_params.gamma.smooth_method == GammaFilterConfig().smooth_method
+
+    def test_yaml_partial_gamma_override(self, tmp_path: Path) -> None:
+        """Overriding one gamma field keeps the rest at defaults."""
+        config = tmp_path / "config.yaml"
+        config.write_text("""\
+paths:
+  data_dir: "/tmp/data"
+typecodes:
+  - A320
+selected_params:
+  gamma:
+    tol: 0.01
+""")
+        cfg = PipelineConfig.from_yaml(config)
+        assert cfg.selected_params.gamma.tol == 0.01
+        defaults = GammaFilterConfig()
+        assert cfg.selected_params.gamma.min_len == defaults.min_len
+        assert cfg.selected_params.gamma.use_alt == defaults.use_alt
+        assert cfg.selected_params.gamma.smooth_window == defaults.smooth_window
+        assert cfg.selected_params.gamma.smooth_method == defaults.smooth_method
 
 
 class TestSelectedParamConfig:
