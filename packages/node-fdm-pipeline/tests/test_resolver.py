@@ -82,7 +82,7 @@ class TestResolveArchitecture:
         assert isinstance(info, ArchitectureInfo)
         assert info.name == "node_adsb_v1"
         assert len(info.x_cols) == 3
-        assert len(info.u_cols) == 4
+        assert len(info.u_cols) == 3
         assert len(info.e0_cols) == 2
         assert len(info.dx_cols) == 3
         assert info.segment_filter_fn is None
