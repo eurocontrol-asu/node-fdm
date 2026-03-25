@@ -26,6 +26,11 @@ from node_fdm.dataset import FlightDataset, FlightSample, compute_stats
 from node_fdm.losses import get_loss
 from node_fdm.models.batch_neural_ode import BatchNeuralODE
 from node_fdm.models.fdm import FlightDynamicsModel
+from node_fdm.models.projected_integrator import (
+    ClampedEuler,
+    ClampedRK4,
+    _clamp_columns,
+)
 
 __all__ = [
     "ODETrainer",
@@ -75,7 +80,7 @@ class TrainingConfig(BaseModel):
     val_batch_size: int = Field(default=10000, gt=0)
     num_workers: int = Field(default=4, ge=0)
     loss_name: str = "mse"
-    grad_clip_norm: float = Field(default=1.0, gt=0)
+    grad_clip_norm: float = Field(default=10.0, gt=0)
     alpha_dict: dict[str, float] | None = None
     lambda_tracking: float = Field(default=0.0, ge=0)
 
@@ -328,6 +333,30 @@ class ODETrainer:
                     weights[i] = self.config.alpha_dict[col]
         return weights
 
+    @staticmethod
+    def _resolve_bounds(
+        named_bounds: dict[str, tuple[float, float]],
+        cols: list[str] | list[tuple[int, str]],
+    ) -> dict[int, tuple[float, float]]:
+        """Convert named bounds to column-index bounds.
+
+        Args:
+            named_bounds: Mapping from column name to ``(lo, hi)``.
+            cols: Column list — either ``["name", ...]`` for x_cols or
+                ``[(sign, "name"), ...]`` for dx_cols.
+
+        Returns:
+            Mapping from column index to ``(lo, hi)``.
+        """
+        if not named_bounds:
+            return {}
+        result: dict[int, tuple[float, float]] = {}
+        for i, col in enumerate(cols):
+            name: str = col[1] if isinstance(col, tuple) else col  # type: ignore[assignment]
+            if name in named_bounds:
+                result[i] = named_bounds[name]
+        return result
+
     def _compute_batch_loss(
         self,
         batch: tuple[torch.Tensor, ...],
@@ -368,10 +397,38 @@ class ODETrainer:
         )
 
         self.model.reset_history()
-        func = BatchNeuralODE(self.model, u_seq, e_seq, t_grid)
-        x_pred = odeint(func, x0, t_grid, method=self.config.method)
 
-        # odeint returns (time, batch, n_x) → (batch, time, n_x)
+        # Convert named bounds to column-index dicts
+        x_bounds_idx = self._resolve_bounds(self.spec.x_bounds, self.spec.x_cols)
+        dx_bounds_idx = self._resolve_bounds(self.spec.dx_bounds, self.spec.dx_cols)
+
+        func = BatchNeuralODE(self.model, u_seq, e_seq, t_grid, dx_bounds=dx_bounds_idx)
+
+        if x_bounds_idx:
+            # Use projected integrator for bounded specs
+            project_fn = lambda x: _clamp_columns(x, x_bounds_idx)  # noqa: E731
+            method = self.config.method
+            solver_kwargs = {
+                "atol": 1e-6,
+                "rtol": 1e-3,
+                "step_size": self.config.step,
+            }
+            if method == "euler":
+                solver = ClampedEuler(func, x0, project_fn=project_fn, **solver_kwargs)
+                x_pred = solver.integrate(t_grid)
+            elif method == "rk4":
+                solver = ClampedRK4(func, x0, project_fn=project_fn, **solver_kwargs)
+                x_pred = solver.integrate(t_grid)
+            else:
+                msg = (
+                    f"Method '{method}' does not support state projection. "
+                    f"Use 'euler' or 'rk4' with x_bounds."
+                )
+                raise ValueError(msg)
+        else:
+            x_pred = odeint(func, x0, t_grid, method=self.config.method)
+
+        # odeint / solver returns (time, batch, n_x) → (batch, time, n_x)
         x_pred = x_pred.permute(1, 0, 2)
 
         # Compare predicted vs true trajectory (skip initial condition)

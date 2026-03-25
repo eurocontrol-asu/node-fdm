@@ -5,6 +5,8 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from node_fdm.models.projected_integrator import _soft_clamp_columns
+
 __all__ = [
     "BatchNeuralODE",
 ]
@@ -23,6 +25,7 @@ class BatchNeuralODE(nn.Module):
         u_seq: torch.Tensor,
         e_seq: torch.Tensor,
         t_grid: torch.Tensor,
+        dx_bounds: dict[int, tuple[float, float]] | None = None,
     ) -> None:
         """Initialize the ODE wrapper and reset model history.
 
@@ -31,6 +34,7 @@ class BatchNeuralODE(nn.Module):
             u_seq: Control inputs ``(batch, time, n_u)``.
             e_seq: Environment inputs ``(batch, time, n_e)``.
             t_grid: Monotonic time grid ``(time,)``.
+            dx_bounds: Optional column-index bounds for soft-clamping derivatives.
         """
         super().__init__()
         self.model = model
@@ -39,6 +43,7 @@ class BatchNeuralODE(nn.Module):
         self.u_seq = u_seq
         self.e_seq = e_seq
         self.t_grid = t_grid
+        self.dx_bounds = dx_bounds or {}
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
         """Evaluate dynamics at time ``t`` with linear interpolation.
@@ -69,4 +74,6 @@ class BatchNeuralODE(nn.Module):
         e_t = (1 - alpha) * e0 + alpha * e1
 
         result: torch.Tensor = self.model(x, u_t, e_t)
+        if self.dx_bounds:
+            result = _soft_clamp_columns(result, self.dx_bounds)
         return result
