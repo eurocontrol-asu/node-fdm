@@ -331,7 +331,8 @@ def build_selected_params(  # noqa: PLR0915
     # fdm_alt_target_ft: "which altitude is the aircraft heading towards?"
     # Anchor last row to actual altitude, then backward-fill from segments.
     if "fdm_alt_sel_ft" in df.columns and alt_col in df.columns:
-        last_alt = df[alt_col][-1]
+        _valid_alt = df[alt_col].drop_nulls().drop_nans()
+        last_alt = _valid_alt[-1] if len(_valid_alt) > 0 else 0.0
         df = df.with_columns(
             pl.col("fdm_alt_sel_ft").fill_nan(None).alias("_alt_target_tmp"),
         )
@@ -346,7 +347,8 @@ def build_selected_params(  # noqa: PLR0915
     # fdm_cas_target_kt: "which CAS is the aircraft heading towards?"
     cas_src = "era_cas_kt" if "era_cas_kt" in df.columns else "bds_ias_kt"
     if "fdm_cas_sel_kt" in df.columns and cas_src in df.columns:
-        last_cas = df[cas_src][-1]
+        _valid_cas = df[cas_src].drop_nulls().drop_nans()
+        last_cas = _valid_cas[-1] if len(_valid_cas) > 0 else 0.0
         df = df.with_columns(
             pl.col("fdm_cas_sel_kt").fill_nan(None).alias("_cas_target_tmp"),
         )
@@ -390,7 +392,8 @@ def build_selected_params(  # noqa: PLR0915
                 tas_target[mask] = np.asarray(tas_ms) * _ms_to_kt
 
         # Anchor last row to actual TAS, then backward-fill
-        tas_target[n - 1] = df[tas_src][-1]
+        _last_tas = df[tas_src].drop_nulls().drop_nans()
+        tas_target[n - 1] = _last_tas[-1] if len(_last_tas) > 0 else 0.0
         df = df.with_columns(
             pl.Series("fdm_tas_target_kt", tas_target)
             .fill_nan(None)
@@ -429,8 +432,15 @@ def build_selected_params(  # noqa: PLR0915
                 vz_ms = vz_sel[mask] * _ft_min_to_ms
                 gamma_target[mask] = vz_to_gamma(vz_ms, tas_arr_ms[mask])
 
+        # Known mask: 1 where a segment was detected, 0 where NaN (no info)
+        gamma_known = (~np.isnan(gamma_target)).astype(np.float64)
+
+        # Fill NaN → 0.0 so tensors are safe for PyTorch (no NaN in autograd)
+        gamma_target_filled = np.where(np.isnan(gamma_target), 0.0, gamma_target)
+
         df = df.with_columns(
-            pl.Series("fdm_gamma_target_rad", gamma_target),
+            pl.Series("fdm_gamma_target_rad", gamma_target_filled),
+            pl.Series("fdm_gamma_target_known", gamma_known),
         )
 
     return df

@@ -27,11 +27,12 @@ class TestAdsbSchema:
         assert "fdm_adep_dist_m" not in adsb.E0_COLS
         assert "fdm_ades_dist_m" not in adsb.E0_COLS
 
-    def test_e1_cols_superset_of_opensky(self) -> None:
-        """E1_COLS extends opensky_2025 with fdm_tas_diff_ms."""
-        assert set(opensky.E1_COLS).issubset(set(adsb.E1_COLS))
+    def test_e1_cols_has_error_signals(self) -> None:
+        """E1_COLS contains diff error signals and fdm_cas_ms (not bds_ias_ms)."""
         assert "fdm_tas_diff_ms" in adsb.E1_COLS
-        assert "fdm_tas_diff_ms" not in opensky.E1_COLS
+        assert "fdm_gamma_diff_rad" in adsb.E1_COLS
+        assert "fdm_cas_ms" in adsb.E1_COLS
+        assert "bds_ias_ms" not in adsb.E1_COLS
 
     def test_dx_cols_no_gs(self) -> None:
         """DX_COLS does not include raw_gs_ms."""
@@ -100,8 +101,8 @@ class TestUColsV3:
             assert "_target_" in col, f"U_COLS entry {col!r} does not follow _target_ convention"
 
     def test_u_cols_length(self) -> None:
-        """U_COLS still has exactly 3 control inputs after rename."""
-        assert len(adsb.U_COLS) == 3
+        """U_COLS has 4 entries: 3 targets + gamma_known mask."""
+        assert len(adsb.U_COLS) == 4
 
 
 class TestBothSchemasCoexist:

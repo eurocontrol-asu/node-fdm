@@ -229,10 +229,10 @@ class TestGammaTargetZeroTas:
 # ===========================================================================
 
 
-class TestGammaTargetHasNan:
-    """NaN-preserving: gaps between segments retain NaN (no bfill)."""
+class TestGammaTargetKnownMask:
+    """Gaps between segments have gamma_target_known=0 (filled to 0.0, not NaN)."""
 
-    def test_gamma_target_has_nan(self) -> None:
+    def test_gamma_target_known_gaps(self) -> None:
         n = 300
         rng = np.random.default_rng(42)
         third = n // 3
@@ -279,9 +279,14 @@ class TestGammaTargetHasNan:
         }
         result = build_selected_params(df, config)
 
-        target = result["fdm_gamma_target_rad"]
-        nan_count = target.null_count() + target.is_nan().sum()
-        assert nan_count > 0, "Expected NaN in gaps between segments"
+        assert "fdm_gamma_target_known" in result.columns
+        known = result["fdm_gamma_target_known"].to_numpy()
+        target = result["fdm_gamma_target_rad"].to_numpy()
+
+        # Gaps should have known=0, not NaN in target
+        unknown_count = (known == 0).sum()
+        assert unknown_count > 0, "Expected unknown gaps between segments"
+        assert not np.any(np.isnan(target)), "gamma_target should have no NaN (filled to 0.0)"
 
 
 class TestGammaTargetPriorityVzOverGamma:
@@ -462,10 +467,10 @@ class TestGammaDiffNanFilledZero:
 # ===========================================================================
 
 
-class TestGammaTargetAllNan:
-    """Very short flight, no segments → gamma_target all NaN, gamma_diff all 0."""
+class TestGammaTargetAllUnknown:
+    """Very short flight, no segments → gamma_target_known all 0, target all 0.0."""
 
-    def test_all_nan_target(self) -> None:
+    def test_all_unknown_target(self) -> None:
         rng = np.random.default_rng(99)
         n = 10  # below min_len thresholds → no segments detected
         vz = rng.uniform(-500, 500, n)
@@ -486,19 +491,14 @@ class TestGammaTargetAllNan:
 
         result = build_selected_params(df, _full_config())
 
-        target = result["fdm_gamma_target_rad"]
-        nan_count = target.null_count() + target.is_nan().sum()
-        assert nan_count == n, f"Expected all NaN, got {n - nan_count} non-NaN values"
-
-        # gamma_diff should be all 0
-        result_si = convert_si(result)
-        if "fdm_gamma_diff_rad" in result_si.columns:
-            diff = result_si["fdm_gamma_diff_rad"].to_numpy()
-            np.testing.assert_allclose(diff, 0.0, atol=1e-10)
+        known = result["fdm_gamma_target_known"].to_numpy()
+        target = result["fdm_gamma_target_rad"].to_numpy()
+        assert np.all(known == 0), f"Expected all unknown, got {(known == 1).sum()} known"
+        assert not np.any(np.isnan(target)), "gamma_target should be 0.0 not NaN"
 
 
 class TestGammaTargetOnlyAltSel:
-    """Only alt_sel present → gamma_target = 0 in cruise, NaN elsewhere."""
+    """Only alt_sel present → gamma_target = 0 in cruise, known=0 elsewhere."""
 
     def test_only_alt_sel(self) -> None:
         n = 300
@@ -542,22 +542,19 @@ class TestGammaTargetOnlyAltSel:
         }
         result = build_selected_params(df, config)
 
-        target = result["fdm_gamma_target_rad"]
-        target_arr = target.to_numpy()
+        target_arr = result["fdm_gamma_target_rad"].to_numpy()
+        known = result["fdm_gamma_target_known"].to_numpy()
 
-        # Where alt_sel is detected → gamma_target = 0
+        # Where alt_sel is detected → gamma_target = 0, known = 1
         alt_sel = result["fdm_alt_sel_ft"].to_numpy()
         alt_mask = ~np.isnan(alt_sel)
         assert alt_mask.sum() > 0, "Expected altitude plateau detection"
         np.testing.assert_allclose(target_arr[alt_mask], 0.0, atol=1e-10)
+        assert np.all(known[alt_mask] == 1.0)
 
-        # Elsewhere → gamma_target is NaN
+        # Elsewhere → gamma_target = 0.0 (filled), known = 0
         non_alt_mask = np.isnan(alt_sel)
-        non_alt_vals = target_arr[non_alt_mask]
-        nan_count = np.isnan(non_alt_vals).sum()
-        assert (
-            nan_count == non_alt_mask.sum()
-        ), f"Expected NaN outside alt segments, got {non_alt_mask.sum() - nan_count} non-NaN"
+        assert np.all(known[non_alt_mask] == 0.0)
 
 
 # ===========================================================================

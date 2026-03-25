@@ -8,6 +8,7 @@ from __future__ import annotations
 
 from collections.abc import Callable
 
+import numpy as np
 import polars as pl
 
 from node_fdm_data.conversions import (
@@ -16,6 +17,7 @@ from node_fdm_data.conversions import (
     kt_to_ms,
     nm_to_m,
 )
+from node_fdm_data.physics.speed import tas_to_cas
 
 __all__ = [
     "DELTA_DIFFS",
@@ -88,6 +90,14 @@ def convert_si(df: pl.DataFrame) -> pl.DataFrame:
     exprs = [fn(src).alias(tgt) for src, fn, tgt in SI_CONVERSIONS if src in cols]
     if exprs:
         df = df.with_columns(exprs)
+
+    # Compute CAS from TAS + altitude via ISA (fdm_cas_ms — always available,
+    # unlike bds_ias_ms which has ~40% NaN from Mode-S gaps).
+    if "era_tas_ms" in df.columns and "raw_alt_m" in df.columns:
+        tas_arr = df["era_tas_ms"].to_numpy()
+        alt_arr = df["raw_alt_m"].to_numpy()
+        cas_arr = np.asarray(tas_to_cas(tas_arr, alt_arr), dtype=np.float64)
+        df = df.with_columns(pl.Series("fdm_cas_ms", cas_arr))
 
     # Precompute delta columns when both operands are present.
     # Where target is NaN, diff is 0 (NaN-preserving gamma target, AXM-809).

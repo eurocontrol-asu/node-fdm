@@ -11,7 +11,7 @@ import numpy as np
 from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, R
 from node_fdm_data.physics.isa import isa_pressure, isa_temperature
 
-__all__ = ["cas_to_tas", "mach_to_tas", "vz_to_gamma"]
+__all__ = ["cas_to_tas", "mach_to_tas", "tas_to_cas", "vz_to_gamma"]
 
 _GM1_OVER_2: float = (GAMMA_AIR - 1.0) / 2.0  # 0.2
 _G_OVER_GM1: float = GAMMA_AIR / (GAMMA_AIR - 1.0)  # 3.5
@@ -56,6 +56,29 @@ def cas_to_tas(cas: float | np.ndarray, h_m: float | np.ndarray) -> float | np.n
     mach = np.sqrt((2.0 / (GAMMA_AIR - 1.0)) * ((qc / p + 1.0) ** _INV_G_OVER_GM1 - 1.0))
 
     return mach_to_tas(mach, h_m)
+
+
+def tas_to_cas(tas: float | np.ndarray, h_m: float | np.ndarray) -> float | np.ndarray:
+    """Convert True Airspeed (m/s) to Calibrated Airspeed (m/s) at altitude *h_m* (metres).
+
+    Inverse of ``cas_to_tas``: TAS → Mach → impact pressure → CAS.
+    """
+    tas_arr = np.asarray(tas, dtype=np.float64)
+    h = np.asarray(h_m, dtype=np.float64)
+    t = np.asarray(isa_temperature(h), dtype=np.float64)
+    t = np.where(np.isnan(h), np.nan, t)
+    a_local = np.sqrt(GAMMA_AIR * R * t)
+
+    # TAS → Mach
+    mach = tas_arr / a_local
+
+    # Mach → impact pressure at altitude
+    p = np.asarray(isa_pressure(h), dtype=np.float64)
+    qc = p * ((1.0 + _GM1_OVER_2 * mach**2) ** _G_OVER_GM1 - 1.0)
+
+    # Impact pressure → CAS (sea-level isentropic relation, inverse)
+    cas = A0 * np.sqrt((2.0 / (GAMMA_AIR - 1.0)) * ((qc / P0 + 1.0) ** _INV_G_OVER_GM1 - 1.0))
+    return np.where(tas_arr < 0.0, np.nan, cas)
 
 
 def vz_to_gamma(
