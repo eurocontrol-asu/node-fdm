@@ -163,7 +163,7 @@ class ODETrainer:
         # Freeze GammaDefaultNet when tracking loss is disabled — the ODE
         # gradient path (through StructuredLayer → gamma_diff) otherwise
         # pushes the net to saturation without a physically meaningful signal.
-        if config.lambda_tracking == 0:
+        if config.lambda_tracking == 0 and hasattr(self.model, "layers_dict"):
             traj = (
                 self.model.layers_dict["trajectory"]
                 if "trajectory" in self.model.layers_dict

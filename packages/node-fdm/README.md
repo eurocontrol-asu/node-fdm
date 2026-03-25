@@ -15,6 +15,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `architectures.adsb` | ADS-B v1 architecture (auto-registered) |
 | `models.fdm` | `FlightDynamicsModel` — layered state derivative computation |
 | `models.batch_neural_ode` | `BatchNeuralODE` — ODE wrapper with input interpolation |
+| `models.projected_integrator` | `ClampedEuler`, `ClampedRK4` — fixed-step solvers with state projection after each step; `_clamp_columns` (hard), `_soft_clamp_columns` (tanh-based) |
 | `models.fdm_prod` | `FlightDynamicsModelProd` — load pretrained weights for inference |
 | `layers.blocks` | `MLPBlock`, `Backbone`, `Head`, `MultiLayerDict`, `GammaDefaultNet` |
 | `layers.normalizers` | `InputNormalizer`, `OutputDenormalizer` |
