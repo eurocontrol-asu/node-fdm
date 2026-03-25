@@ -28,6 +28,7 @@ def run_training(
     seq_len: int | None = None,
     shift: int | None = None,
     device: str = "cpu",
+    lambda_tracking: float | None = None,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
 
@@ -98,6 +99,7 @@ def run_training(
             epochs=epochs or 800,
             method=method,
             num_workers=4,
+            lambda_tracking=lambda_tracking or 0.0,
         )
 
         data_df = full_df.filter(pl.col("meta_aircraft_type") == acft)

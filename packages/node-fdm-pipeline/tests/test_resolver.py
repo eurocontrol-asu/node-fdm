@@ -77,28 +77,23 @@ class TestResolveArchitecture:
         assert info.preprocessing_fn is None
 
     def test_resolve_adsb(self) -> None:
-        """Resolving 'adsb' returns correct ArchitectureInfo."""
+        """Resolving 'adsb' returns correct ArchitectureInfo with U_COLS for loader."""
         info = resolve_architecture("adsb")
         assert isinstance(info, ArchitectureInfo)
         assert info.name == "node_adsb_v1"
-        assert len(info.x_cols) == 3
-        assert info.u_cols == []
-        assert len(info.e0_cols) == 2
+        assert info.x_cols == ["raw_alt_m", "fdm_gamma_rad", "era_tas_ms"]
+        assert info.u_cols == [
+            "fdm_alt_target_m",
+            "fdm_tas_target_ms",
+            "fdm_gamma_target_rad",
+            "fdm_gamma_target_known",
+        ]
+        assert info.e0_cols == ["fdm_long_wind_ms", "era_temp_K"]
         assert len(info.dx_cols) == 3
+        assert "fdm_gamma_diff_rad" in info.e1_cols
+        assert info.architecture_import == "node_fdm.architectures.adsb"
         assert info.segment_filter_fn is None
         assert info.preprocessing_fn is None
-
-    def test_resolve_adsb_cols(self) -> None:
-        """Resolving 'adsb' returns correct column lists from schemas.adsb."""
-        info = resolve_architecture("adsb")
-        assert info.x_cols == ["raw_alt_m", "fdm_gamma_rad", "era_tas_ms"]
-        assert info.u_cols == []
-        assert info.e0_cols == ["fdm_long_wind_ms", "era_temp_K"]
-
-    def test_resolve_adsb_import(self) -> None:
-        """Resolving 'adsb' sets correct architecture_import path."""
-        info = resolve_architecture("adsb")
-        assert info.architecture_import == "node_fdm.architectures.adsb"
 
     def test_resolve_unknown_mentions_adsb(self) -> None:
         """Unknown architecture error message includes 'adsb' in supported list."""
@@ -111,11 +106,3 @@ class TestResolveArchitecture:
         adsb = resolve_architecture("adsb")
         assert opensky.name != adsb.name
         assert opensky.x_cols != adsb.x_cols
-
-    def test_resolve_adsb_cols_updated(self) -> None:
-        """Resolving 'adsb' returns updated u_cols (empty U_ODE) and e1_cols with gamma_diff."""
-        info = resolve_architecture("adsb")
-        # u_cols should no longer contain ODE-internal controls (U_ODE is empty)
-        assert info.u_cols == []
-        # e1_cols must include fdm_gamma_diff_rad
-        assert "fdm_gamma_diff_rad" in info.e1_cols

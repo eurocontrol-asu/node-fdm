@@ -78,6 +78,13 @@ def train(
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
     ] = "cpu",
+    lambda_tracking: Annotated[
+        float | None,
+        cyclopts.Parameter(
+            name="--lambda-tracking",
+            help="Tracking loss weight on autopilot targets (0=disabled)",
+        ),
+    ] = None,
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
     from node_fdm_pipeline.commands.train import run_training
@@ -93,6 +100,7 @@ def train(
         seq_len=seq_len,
         shift=shift,
         device=device,
+        lambda_tracking=lambda_tracking,
     )
 
 
@@ -135,6 +143,13 @@ def resume(
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
     ] = "cpu",
+    lambda_tracking: Annotated[
+        float | None,
+        cyclopts.Parameter(
+            name="--lambda-tracking",
+            help="Tracking loss weight on autopilot targets (0=disabled)",
+        ),
+    ] = None,
 ) -> None:
     """Resume training from an existing model checkpoint."""
     from node_fdm_pipeline.commands.resume import run_resume
@@ -149,6 +164,7 @@ def resume(
         shift=shift,
         overwrite=overwrite,
         device=device,
+        lambda_tracking=lambda_tracking,
     )
 
 

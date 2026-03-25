@@ -25,6 +25,7 @@ def run_resume(
     shift: int | None = None,
     overwrite: bool = False,
     device: str = "cpu",
+    lambda_tracking: float | None = None,
 ) -> None:
     """Resume training from a saved model checkpoint.
 
@@ -42,6 +43,7 @@ def run_resume(
         shift: Override shift between windows.
         overwrite: Save back into the same model directory.
         device: PyTorch device string.
+        lambda_tracking: Tracking loss weight (0=disabled).
     """
     import polars as pl
     from node_fdm.loader import get_train_val_data
@@ -110,6 +112,7 @@ def run_resume(
         epochs=epochs or 200,
         method=meta.method,
         num_workers=4,
+        lambda_tracking=lambda_tracking or 0.0,
     )
 
     dx_col_names = [col for _, col in info.dx_cols]

@@ -104,12 +104,12 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 architecture_import="node_fdm.architectures.qar",
             )
         case "adsb":
-            from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_ODE_COLS, X_COLS
+            from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
             return ArchitectureInfo(
                 name="node_adsb_v1",
                 x_cols=X_COLS,
-                u_cols=U_ODE_COLS,
+                u_cols=U_COLS,
                 e0_cols=E0_COLS,
                 e1_cols=E1_COLS,
                 dx_cols=DX_COLS,
