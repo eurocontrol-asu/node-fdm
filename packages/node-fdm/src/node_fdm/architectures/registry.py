@@ -57,6 +57,8 @@ class ArchitectureSpec(BaseModel, frozen=True):
         layers: Ordered list of layer specifications.
         preprocessing_fn: Optional dotted path to preprocessing function.
         segment_filter_fn: Optional dotted path to segment filter function.
+        x_bounds: Physical bounds for state variables as ``{col: (min, max)}``.
+        dx_bounds: Physical bounds for derivatives as ``{col: (min, max)}``.
     """
 
     name: str
@@ -68,6 +70,8 @@ class ArchitectureSpec(BaseModel, frozen=True):
     layers: list[LayerSpec]
     preprocessing_fn: str | None = None
     segment_filter_fn: str | None = None
+    x_bounds: dict[str, tuple[float, float]] = {}
+    dx_bounds: dict[str, tuple[float, float]] = {}
 
 
 def register(spec: ArchitectureSpec) -> None:

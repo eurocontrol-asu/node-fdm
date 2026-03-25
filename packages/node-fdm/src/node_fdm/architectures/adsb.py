@@ -66,6 +66,16 @@ NODE_ADSB_V1 = ArchitectureSpec(
     ],
     preprocessing_fn="node_fdm_data.preprocessing.opensky.flight_processing",
     segment_filter_fn=None,
+    x_bounds={
+        "raw_alt_m": (0.0, 15000.0),
+        "fdm_gamma_rad": (-0.3, 0.3),
+        "era_tas_ms": (50.0, 350.0),
+    },
+    dx_bounds={
+        "fdm_d_vz_ms": (-10.0, 10.0),
+        "fdm_d_gamma_rads": (-0.01, 0.01),
+        "fdm_d_tas_ms": (-5.0, 5.0),
+    },
 )
 
 register(NODE_ADSB_V1)

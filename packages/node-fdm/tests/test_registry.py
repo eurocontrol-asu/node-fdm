@@ -79,3 +79,85 @@ class TestRegistry:
         assert len(spec.layers) == 4
         assert spec.layers[0].name == "trajectory"
         assert spec.layers[3].name == "data_ode"
+
+
+class TestArchitectureSpecBounds:
+    """Tests for physical bounds on ArchitectureSpec."""
+
+    def test_spec_with_bounds(self) -> None:
+        """ArchitectureSpec accepts x_bounds and dx_bounds fields."""
+        x_bounds = {
+            "alt_m": (0.0, 15000.0),
+            "tas_ms": (50.0, 300.0),
+        }
+        dx_bounds = {
+            "d_alt_ms": (-50.0, 50.0),
+        }
+        spec = ArchitectureSpec(
+            name="bounds_test",
+            x_cols=["alt_m", "tas_ms"],
+            u_cols=[],
+            e0_cols=[],
+            e1_cols=[],
+            dx_cols=[(1, "d_alt_ms")],
+            layers=[],
+            x_bounds=x_bounds,
+            dx_bounds=dx_bounds,
+        )
+        assert spec.x_bounds == x_bounds
+        assert spec.dx_bounds == dx_bounds
+        assert spec.x_bounds["alt_m"] == (0.0, 15000.0)
+        assert spec.dx_bounds["d_alt_ms"] == (-50.0, 50.0)
+
+    def test_spec_without_bounds(self) -> None:
+        """ArchitectureSpec defaults to empty dicts when bounds omitted."""
+        spec = ArchitectureSpec(
+            name="no_bounds_test",
+            x_cols=["x1"],
+            u_cols=[],
+            e0_cols=[],
+            e1_cols=[],
+            dx_cols=[],
+            layers=[],
+        )
+        assert spec.x_bounds == {}
+        assert spec.dx_bounds == {}
+
+    def test_adsb_bounds_registered(self) -> None:
+        """node_adsb_v1 spec declares physical bounds."""
+        import node_fdm.architectures.adsb  # noqa: F401 — triggers auto-register
+
+        spec = get("node_adsb_v1")
+        assert len(spec.x_bounds) == 3
+        assert len(spec.dx_bounds) == 3
+
+    def test_partial_bounds(self) -> None:
+        """Only some columns have bounds; unbounded columns unaffected."""
+        spec = ArchitectureSpec(
+            name="partial_bounds_test",
+            x_cols=["alt_m", "tas_ms", "gamma_rad"],
+            u_cols=[],
+            e0_cols=[],
+            e1_cols=[],
+            dx_cols=[(1, "d_alt_ms"), (1, "d_tas_ms")],
+            layers=[],
+            x_bounds={"alt_m": (0.0, 15000.0)},
+            dx_bounds={"d_alt_ms": (-50.0, 50.0)},
+        )
+        assert "alt_m" in spec.x_bounds
+        assert "tas_ms" not in spec.x_bounds
+        assert "gamma_rad" not in spec.x_bounds
+        assert "d_alt_ms" in spec.dx_bounds
+        assert "d_tas_ms" not in spec.dx_bounds
+
+    def test_existing_architectures_no_bounds(self) -> None:
+        """Existing architectures (opensky_2025, qar) load with empty bounds."""
+        import node_fdm.architectures.opensky  # triggers auto-register
+        import node_fdm.architectures.qar  # noqa: F401 — triggers auto-register
+
+        opensky = get("opensky_2025")
+        qar = get("qar")
+        assert opensky.x_bounds == {}
+        assert opensky.dx_bounds == {}
+        assert qar.x_bounds == {}
+        assert qar.dx_bounds == {}
