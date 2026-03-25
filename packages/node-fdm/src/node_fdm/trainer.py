@@ -160,6 +160,21 @@ class ODETrainer:
             self.device
         )
 
+        # Freeze GammaDefaultNet when tracking loss is disabled — the ODE
+        # gradient path (through StructuredLayer → gamma_diff) otherwise
+        # pushes the net to saturation without a physically meaningful signal.
+        if config.lambda_tracking == 0:
+            traj = (
+                self.model.layers_dict["trajectory"]
+                if "trajectory" in self.model.layers_dict
+                else None
+            )
+            if traj is not None:
+                gamma_net = getattr(traj, "gamma_default_net", None)
+                if gamma_net is not None:
+                    for p in gamma_net.parameters():
+                        p.requires_grad_(False)
+
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=config.lr,

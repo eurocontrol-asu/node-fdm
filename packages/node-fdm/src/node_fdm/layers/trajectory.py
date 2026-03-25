@@ -95,7 +95,7 @@ class TrajectoryLayer(nn.Module):
         """
         super().__init__()
         self.col_map = {**DEFAULT_COL_MAP, **(col_map or {})}
-        self.gamma_default_net = GammaDefaultNet()
+        self.gamma_default_net = GammaDefaultNet(hidden_dim=8, num_layers=1)
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Compute derived trajectory quantities from input mapping.
@@ -172,7 +172,8 @@ class TrajectoryLayer(nn.Module):
             target = x[gamma_sel_col]
             if gamma_known_col and gamma_known_col in x:
                 known = x[gamma_known_col]
-                gamma_pred = self.gamma_default_net(alt, gamma, tas)
+                vz = output[c["vz"]]
+                gamma_pred = self.gamma_default_net(alt, tas, vz)
                 gamma_diff = known * (target - gamma) + (1 - known) * (gamma_pred - gamma)
             else:
                 # Fallback: no mask available, assume all known

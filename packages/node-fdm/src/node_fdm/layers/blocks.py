@@ -109,12 +109,22 @@ class Head(MLPBlock):
 class GammaDefaultNet(nn.Module):
     """Context-aware default gamma predictor.
 
-    Takes altitude, gamma, and TAS as inputs and produces a scalar
-    correction per batch element.  Zero-initialized so that a fresh
-    network outputs 0.0 (preserving the old scalar-default behavior).
+    Takes altitude, TAS, and vertical speed as inputs and produces a
+    bounded scalar correction per batch element.  Output is clamped to
+    ±``max_gamma_rad`` (default 0.18 rad ≈ 10°) via tanh.
+
+    Gamma is intentionally excluded from inputs to avoid a feedback
+    loop (the net's output influences gamma via gamma_diff).  Vertical
+    speed (``vz = tas * sin(gamma)``) is used instead to convey
+    climb/descent intent without creating a direct feedback path.
+
+    Zero-initialized so that a fresh network outputs 0.0 (preserving
+    the old scalar-default behavior).
     """
 
-    _INPUT_DIM: int = 3  # alt, gamma, tas
+    _INPUT_DIM: int = 3  # alt, tas, vz
+
+    _MAX_GAMMA_RAD: float = 0.18  # ≈ 10°, physical upper bound
 
     def __init__(
         self,
@@ -128,7 +138,7 @@ class GammaDefaultNet(nn.Module):
             num_layers: Number of hidden layers.
         """
         super().__init__()
-        self.register_buffer("_scale", torch.tensor(1.0))
+        self.register_buffer("_scale", torch.tensor(self._MAX_GAMMA_RAD))
         self.mlp = MLPBlock(
             input_dim=self._INPUT_DIM,
             hidden_dim=hidden_dim,
@@ -144,21 +154,22 @@ class GammaDefaultNet(nn.Module):
     def forward(
         self,
         alt: torch.Tensor,
-        gamma: torch.Tensor,
         tas: torch.Tensor,
+        vz: torch.Tensor,
     ) -> torch.Tensor:
         """Predict default gamma correction from flight context.
 
         Args:
             alt: Altitude tensor of shape ``(batch,)``.
-            gamma: Flight-path angle tensor of shape ``(batch,)``.
             tas: True airspeed tensor of shape ``(batch,)``.
+            vz: Vertical speed tensor of shape ``(batch,)``.
 
         Returns:
             Scalar correction per sample, shape ``(batch,)``.
         """
-        x = torch.stack([alt, gamma, tas], dim=-1)  # (batch, 3)
-        out: torch.Tensor = self.mlp(x).squeeze(-1) * self._scale
+        x = torch.stack([alt, tas, vz], dim=-1)  # (batch, 3)
+        scale: torch.Tensor = self._scale  # type: ignore[assignment]
+        out: torch.Tensor = torch.tanh(self.mlp(x).squeeze(-1)) * scale
         return out
 
 
