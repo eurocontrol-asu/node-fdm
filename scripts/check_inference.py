@@ -247,15 +247,13 @@ ax.grid(True, alpha=0.3)
 
 # ── Col 3, Row 1: Gamma diff ──
 ax = axes[1, 2]
-# True diff uses net output on true trajectory where unknown
-diff_gamma_true = gamma_target_effective - gamma_true
-# Predicted diff uses net output on predicted trajectory where unknown
-gamma_target_eff_pred = np.where(
+# Only show diff where gamma target is known; 0 otherwise
+diff_gamma_true = np.where(gamma_known == 1.0, gamma_target_raw - gamma_true, 0.0)
+diff_gamma_pred = np.where(
     gamma_known[:n_pred] == 1.0,
-    gamma_target_raw[:n_pred],
-    gamma_default_pred,
+    gamma_target_raw[:n_pred] - gamma_pred,
+    0.0,
 )
-diff_gamma_pred = gamma_target_eff_pred - gamma_pred
 ax.plot(time_true, np.degrees(diff_gamma_true), "k-", lw=1.5, label="True", alpha=0.8)
 ax.plot(time_pred, np.degrees(diff_gamma_pred), "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.axhline(0, color="gray", ls=":", lw=0.8)
