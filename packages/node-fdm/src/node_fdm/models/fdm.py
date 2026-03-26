@@ -62,7 +62,15 @@ class FlightDynamicsModel(nn.Module):
             if layer_spec.trainable:
                 layer = self._create_structured_layer(layer_spec, layer_cls)
             else:
-                layer = layer_cls(**layer_spec.config)
+                # Pass input_stats for layers that support normalization
+                # (e.g. TrajectoryLayer → GammaDefaultNet).
+                import inspect
+
+                sig = inspect.signature(layer_cls.__init__)
+                if "input_stats" in sig.parameters:
+                    layer = layer_cls(**layer_spec.config, input_stats=stats_dict)
+                else:
+                    layer = layer_cls(**layer_spec.config)
 
             self.layers_dict[layer_spec.name] = layer
 
@@ -106,6 +114,19 @@ class FlightDynamicsModel(nn.Module):
             if col in self.stats_dict
         }
 
+        denormalize_modes: dict[str, str | None] = layer_spec.config.get("denormalize_modes", {})
+        scale_dict: dict[str, float] = {}
+        cap_dict: dict[str, float] = {}
+        for col, mode in denormalize_modes.items():
+            if mode == "scaled":
+                col_stats = self.stats_dict.get(col, {})
+                if "p999" not in col_stats:
+                    msg = f"Scaled mode for '{col}' requires 'p999' in stats_dict"
+                    raise ValueError(msg)
+                scale_dict[col] = col_stats["p999"]
+                if col in self.spec.dx_bounds:
+                    cap_dict[col] = self.spec.dx_bounds[col][1]
+
         return layer_cls(
             input_cols=layer_spec.input_cols,
             input_stats=(input_mean, input_std),
@@ -115,6 +136,9 @@ class FlightDynamicsModel(nn.Module):
             backbone_depth=self.backbone_depth,
             head_dim=self.neurons_num // 2,
             head_depth=self.head_depth,
+            denormalize_modes=denormalize_modes if denormalize_modes else None,
+            scale_dict=scale_dict if scale_dict else None,
+            cap_dict=cap_dict if cap_dict else None,
         )
 
     def reset_history(self) -> None:

@@ -62,18 +62,19 @@ NODE_ADSB_V1 = ArchitectureSpec(
             input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS,
             output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms"],
             trainable=True,
+            config={"denormalize_modes": {"fdm_d_gamma_rads": "scaled"}},
         ),
     ],
     preprocessing_fn="node_fdm_data.preprocessing.opensky.flight_processing",
     segment_filter_fn=None,
     x_bounds={
-        "raw_alt_m": (0.0, 15000.0),
+        "raw_alt_m": (-500.0, 20000.0),
         "fdm_gamma_rad": (-0.3, 0.3),
-        "era_tas_ms": (50.0, 350.0),
+        "era_tas_ms": (0.0, 350.0),
     },
     dx_bounds={
-        "fdm_d_vz_ms": (-10.0, 10.0),
-        "fdm_d_gamma_rads": (-0.01, 0.01),
+        "fdm_d_vz_ms": (-50.0, 50.0),
+        "fdm_d_gamma_rads": (-0.03, 0.03),
         "fdm_d_tas_ms": (-5.0, 5.0),
     },
 )

@@ -107,7 +107,7 @@ class TestAdsbGammaDiffSpec:
 
 def _make_stats(cols: list[str]) -> dict[str, dict[str, float]]:
     """Build a dummy stats_dict covering all columns."""
-    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0} for col in cols}
+    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0, "p999": 0.8} for col in cols}
 
 
 class TestAdsbForwardPassWithGammaDiff:
@@ -116,7 +116,8 @@ class TestAdsbForwardPassWithGammaDiff:
     def test_model_forward_new_dims(self) -> None:
         """Build FDM with gamma diff spec, run forward — output shape correct, no error."""
         spec = get("node_adsb_v1")
-        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
+        dx_col_names = [c for _, c in spec.dx_cols]
+        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols + dx_col_names
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)
@@ -156,8 +157,14 @@ class TestGammaDiffLearnableDefault:
         }
 
     def test_gamma_diff_unknown_uses_default(self) -> None:
-        """known=0 → gamma_diff = gamma_default - gamma (learnable)."""
-        layer = TrajectoryLayer(col_map=self._col_map)
+        """known=0 → gamma_diff ≈ gamma_default - gamma (learnable)."""
+        layer = TrajectoryLayer(
+            col_map=self._col_map,
+            input_stats={
+                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
+                "era_tas_ms": {"mean": 250.0, "std": 40.0},
+            },
+        )
 
         x = self._base_inputs()
         x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.0])  # filled value (was NaN)
@@ -166,14 +173,21 @@ class TestGammaDiffLearnableDefault:
         output = layer(x)
 
         assert "fdm_gamma_diff_rad" in output
-        # gamma_default starts at 0.0, gamma = [0.05, -0.03]
-        # diff = 0.0 - gamma = [-0.05, 0.03]
-        expected = torch.tensor([0.0 - 0.05, 0.0 - (-0.03)])
-        assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
+        # Small-init net outputs near 0, so gamma_diff ≈ small - gamma
+        gamma = torch.tensor([0.05, -0.03])
+        diff = output["fdm_gamma_diff_rad"]
+        assert torch.allclose(diff, -gamma, atol=0.2)
+        assert torch.isfinite(diff).all()
 
     def test_gamma_diff_known_uses_target(self) -> None:
         """known=1 → gamma_diff = target - gamma."""
-        layer = TrajectoryLayer(col_map=self._col_map)
+        layer = TrajectoryLayer(
+            col_map=self._col_map,
+            input_stats={
+                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
+                "era_tas_ms": {"mean": 250.0, "std": 40.0},
+            },
+        )
 
         x = self._base_inputs()
         x["fdm_gamma_rad"] = torch.tensor([0.03, 0.03])
@@ -187,7 +201,13 @@ class TestGammaDiffLearnableDefault:
 
     def test_gamma_diff_mixed_known_unknown(self) -> None:
         """Mixed known/unknown: target where known=1, default where known=0."""
-        layer = TrajectoryLayer(col_map=self._col_map)
+        layer = TrajectoryLayer(
+            col_map=self._col_map,
+            input_stats={
+                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
+                "era_tas_ms": {"mean": 250.0, "std": 40.0},
+            },
+        )
 
         x = self._base_inputs()
         x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.02])  # [filled, real]
@@ -195,14 +215,20 @@ class TestGammaDiffLearnableDefault:
 
         output = layer(x)
 
-        # idx 0: unknown → gamma_default(0.0) - 0.05 = -0.05
-        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(-0.05), atol=1e-6)
-        # idx 1: known → 0.02 - (-0.03) = 0.05
+        # idx 0: unknown → gamma_default(small) - 0.05 ≈ -0.05
+        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(-0.05), atol=0.2)
+        # idx 1: known → 0.02 - (-0.03) = 0.05 (exact, net bypassed)
         assert torch.isclose(output["fdm_gamma_diff_rad"][1], torch.tensor(0.05), atol=1e-6)
 
     def test_gamma_default_is_learnable(self) -> None:
         """gamma_default_net is an nn.Module with trainable parameters."""
-        layer = TrajectoryLayer(col_map=self._col_map)
+        layer = TrajectoryLayer(
+            col_map=self._col_map,
+            input_stats={
+                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
+                "era_tas_ms": {"mean": 250.0, "std": 40.0},
+            },
+        )
         assert hasattr(layer, "gamma_default_net")
         params = list(layer.gamma_default_net.parameters())
         assert len(params) > 0

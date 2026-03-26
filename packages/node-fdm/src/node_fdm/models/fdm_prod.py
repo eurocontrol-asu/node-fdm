@@ -66,12 +66,20 @@ class FlightDynamicsModelProd(nn.Module):
                     neurons_num=neurons_num,
                 )
             else:
-                layer = layer_cls(**layer_spec.config)
+                # Pass input_stats for layers that support normalization
+                # (e.g. TrajectoryLayer → GammaDefaultNet).
+                import inspect
+
+                sig = inspect.signature(layer_cls.__init__)
+                if "input_stats" in sig.parameters:
+                    layer = layer_cls(**layer_spec.config, input_stats=stats_dict)
+                else:
+                    layer = layer_cls(**layer_spec.config)
 
             self.layers_dict[layer_spec.name] = layer
 
-            # Load checkpoint for trainable layers
-            if layer_spec.trainable:
+            # Load checkpoint for all layers that have one
+            if True:
                 checkpoint_path = self.model_path / f"{layer_spec.name}.pt"
                 if checkpoint_path.exists():
                     checkpoint = torch.load(

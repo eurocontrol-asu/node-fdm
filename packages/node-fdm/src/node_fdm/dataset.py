@@ -111,6 +111,7 @@ def compute_stats(
             "mean": vals.mean().item(),
             "std": vals.std().item() + 1e-6,
             "max": vals.abs().max().item(),
+            "p999": torch.quantile(vals.abs(), 0.999).item(),
         }
 
     # Append extra E1 columns if provided

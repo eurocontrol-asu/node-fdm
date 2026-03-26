@@ -82,7 +82,11 @@ class TrajectoryLayer(nn.Module):
           via ``nan_to_num`` before differencing.
     """
 
-    def __init__(self, col_map: dict[str, str] | None = None) -> None:
+    def __init__(
+        self,
+        col_map: dict[str, str] | None = None,
+        input_stats: dict[str, dict[str, float]] | None = None,
+    ) -> None:
         """Initialize the trajectory layer.
 
         Args:
@@ -92,10 +96,29 @@ class TrajectoryLayer(nn.Module):
                 ``"tas_diff"``, ``"gamma_sel"``, ``"gamma_diff"``) to
                 actual column names in the input dict.  Missing keys fall
                 back to ``DEFAULT_COL_MAP`` (OpenSky naming).
+            input_stats: Optional column statistics ``{col_name: {"mean": ...,
+                "std": ...}}``.  Used to build normalization buffers for
+                :class:`GammaDefaultNet`.  The mapping uses actual column
+                names (not canonical names); the ``col_map`` resolves them.
         """
         super().__init__()
         self.col_map = {**DEFAULT_COL_MAP, **(col_map or {})}
-        self.gamma_default_net = GammaDefaultNet(hidden_dim=8, num_layers=1)
+
+        # Build GammaDefaultNet input stats from col_map → canonical keys
+        gamma_net_stats: dict[str, dict[str, float]] | None = None
+        if input_stats:
+            c = self.col_map
+            gamma_net_stats = {}
+            # alt → col_map["alt"], tas → col_map["tas"], vz → col_map["vz"]
+            for canonical, col_name in [("alt", c["alt"]), ("tas", c["tas"]), ("vz", c["vz"])]:
+                if col_name in input_stats:
+                    gamma_net_stats[canonical] = input_stats[col_name]
+
+        self.gamma_default_net = GammaDefaultNet(
+            hidden_dim=8,
+            num_layers=1,
+            input_stats=gamma_net_stats,
+        )
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Compute derived trajectory quantities from input mapping.

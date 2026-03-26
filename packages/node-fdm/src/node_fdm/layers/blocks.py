@@ -118,38 +118,64 @@ class GammaDefaultNet(nn.Module):
     speed (``vz = tas * sin(gamma)``) is used instead to convey
     climb/descent intent without creating a direct feedback path.
 
-    Zero-initialized so that a fresh network outputs 0.0 (preserving
-    the old scalar-default behavior).
+    When ``input_stats`` is provided, inputs are z-score normalized
+    before the MLP to prevent tanh saturation on raw physical values
+    (alt ~10,000, TAS ~230).  Without normalization the MLP output
+    is O(10³), tanh saturates to ±1, and gradients vanish.
     """
 
     _INPUT_DIM: int = 3  # alt, tas, vz
 
     _MAX_GAMMA_RAD: float = 0.18  # ≈ 10°, physical upper bound
 
+    _mean_alt: torch.Tensor
+    _std_alt: torch.Tensor
+    _mean_tas: torch.Tensor
+    _std_tas: torch.Tensor
+    _mean_vz: torch.Tensor
+    _std_vz: torch.Tensor
+    _scale: torch.Tensor
+
     def __init__(
         self,
         hidden_dim: int = 32,
         num_layers: int = 1,
+        input_stats: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Initialize the gamma default network.
 
         Args:
             hidden_dim: Hidden layer width.
             num_layers: Number of hidden layers.
+            input_stats: Optional mapping ``{"alt": {"mean": ..., "std": ...},
+                "tas": ..., "vz": ...}`` for input z-score normalization.
+                Keys are canonical names (``"alt"``, ``"tas"``, ``"vz"``).
         """
         super().__init__()
         self.register_buffer("_scale", torch.tensor(self._MAX_GAMMA_RAD))
-        self.mlp = MLPBlock(
-            input_dim=self._INPUT_DIM,
-            hidden_dim=hidden_dim,
-            output_dim=1,
-            num_layers=num_layers,
-        )
-        # Zero-init the last linear layer so fresh net outputs ≈ 0.
-        last_linear = self.mlp.net[-1]
-        if isinstance(last_linear, nn.Linear):
-            nn.init.zeros_(last_linear.weight)
-            nn.init.zeros_(last_linear.bias)
+
+        # Register normalization buffers (default: no-op identity)
+        _keys = ("alt", "tas", "vz")
+        for key in _keys:
+            mean = 0.0
+            std = 1.0
+            if input_stats and key in input_stats:
+                mean = input_stats[key].get("mean", 0.0)
+                std = input_stats[key].get("std", 1.0)
+            self.register_buffer(f"_mean_{key}", torch.tensor(mean, dtype=torch.float32))
+            self.register_buffer(f"_std_{key}", torch.tensor(std, dtype=torch.float32))
+
+        # Custom MLP with SiLU activation (smooth, no dead neurons unlike ReLU)
+        # and Xavier init for balanced gradients.  No small-init needed since
+        # inputs are z-score normalized and tanh bounds the output.
+        layers: list[nn.Module] = []
+        prev_dim = self._INPUT_DIM
+        for _ in range(num_layers):
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.SiLU())
+            prev_dim = hidden_dim
+        layers.append(nn.Linear(hidden_dim, 1))
+        self.mlp = nn.Sequential(*layers)
 
     def forward(
         self,
@@ -167,9 +193,11 @@ class GammaDefaultNet(nn.Module):
         Returns:
             Scalar correction per sample, shape ``(batch,)``.
         """
-        x = torch.stack([alt, tas, vz], dim=-1)  # (batch, 3)
-        scale: torch.Tensor = self._scale  # type: ignore[assignment]
-        out: torch.Tensor = torch.tanh(self.mlp(x).squeeze(-1)) * scale
+        alt_n = (alt - self._mean_alt) / self._std_alt
+        tas_n = (tas - self._mean_tas) / self._std_tas
+        vz_n = (vz - self._mean_vz) / self._std_vz
+        x = torch.stack([alt_n, tas_n, vz_n], dim=-1)  # (batch, 3)
+        out: torch.Tensor = torch.tanh(self.mlp(x).squeeze(-1)) * self._scale
         return out
 
 

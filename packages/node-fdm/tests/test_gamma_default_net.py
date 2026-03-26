@@ -24,14 +24,16 @@ class TestGammaDefaultNetOutput:
         out = net(alt, gamma, tas)
         assert out.shape == (4,)
 
-    def test_zero_init_output(self) -> None:
-        """Fresh GammaDefaultNet with random inputs → all outputs ≈ 0.0."""
+    def test_small_init_output(self) -> None:
+        """Fresh GammaDefaultNet with normalized inputs → outputs small and bounded."""
         net = GammaDefaultNet()
         alt = torch.randn(8)
         gamma = torch.randn(8)
         tas = torch.randn(8)
         out = net(alt, gamma, tas)
-        assert torch.allclose(out, torch.zeros_like(out), atol=1e-7)
+        # Output bounded by ±MAX_GAMMA_RAD (0.18)
+        assert (out.abs() <= 0.18 + 1e-6).all()
+        assert torch.isfinite(out).all()
 
     def test_gradient_flow(self) -> None:
         """Forward + .sum().backward() → alt.grad is not None."""
@@ -69,6 +71,10 @@ def _make_trajectory_layer() -> TrajectoryLayer:
             "gamma_known": "gamma_known",
             "gamma_diff": "gamma_diff_rad",
         },
+        input_stats={
+            "altitude_m": {"mean": 5000.0, "std": 3000.0},
+            "tas_ms": {"mean": 200.0, "std": 40.0},
+        },
     )
 
 
@@ -86,16 +92,19 @@ class TestTrajectoryLayerGammaIntegration:
     """Functional tests for gamma_diff with GammaDefaultNet."""
 
     def test_gamma_diff_unknown_uses_net(self) -> None:
-        """known=0, fresh layer → gamma_diff ≈ 0.0 - gamma (zero-init)."""
+        """known=0, fresh layer → gamma_diff ≈ net_output - gamma (small-init)."""
         layer = _make_trajectory_layer()
         inputs = _base_inputs(4)
         inputs["gamma_sel_rad"] = torch.full((4,), 0.1)
         inputs["gamma_known"] = torch.zeros(4)
         out = layer(inputs)
         gamma = inputs["gamma_rad"]
-        # Zero-init net outputs ~0, so gamma_diff ≈ 0.0 - gamma
-        expected = torch.zeros(4) - gamma
-        assert torch.allclose(out["gamma_diff_rad"], expected, atol=1e-5)
+        diff = out["gamma_diff_rad"]
+        # Small-init net outputs near 0, so gamma_diff ≈ small - gamma
+        assert torch.allclose(diff, -gamma, atol=0.2)
+        # Target (0.1) is NOT used (would give 0.1 - 0.05 = 0.05)
+        target_diff = torch.full((4,), 0.1) - gamma
+        assert not torch.allclose(diff, target_diff, atol=1e-3)
 
     def test_gamma_diff_known_bypasses_net(self) -> None:
         """known=1, modified net weights → gamma_diff = target - gamma (net ignored)."""
@@ -123,9 +132,9 @@ class TestTrajectoryLayerGammaIntegration:
         out = layer(inputs)
         gamma = inputs["gamma_rad"]
         diff = out["gamma_diff_rad"]
-        # idx0: unknown → net(≈0) - gamma
-        assert torch.allclose(diff[0:1], (torch.zeros(1) - gamma[0:1]), atol=1e-5)
-        # idx1: known → target - gamma
+        # idx0: unknown → net(small) - gamma ≈ -gamma
+        assert torch.allclose(diff[0:1], -gamma[0:1], atol=0.2)
+        # idx1: known → target - gamma (exact)
         assert torch.allclose(diff[1:2], (target[1:2] - gamma[1:2]), atol=1e-5)
 
     def test_net_is_trainable(self) -> None:
@@ -168,9 +177,12 @@ class TestGammaDefaultNetEdgeCases:
         inputs["gamma_known"] = torch.zeros(4)
         out = layer(inputs)
         gamma = inputs["gamma_rad"]
-        # Zero-init net → gamma_diff ≈ 0.0 - gamma
-        expected = torch.zeros(4) - gamma
-        assert torch.allclose(out["gamma_diff_rad"], expected, atol=1e-5)
+        diff = out["gamma_diff_rad"]
+        # Small-init net → gamma_diff ≈ small - gamma
+        assert torch.allclose(diff, -gamma, atol=0.2)
+        # Verify net IS being used (diff ≠ target - gamma)
+        target_diff = torch.full((4,), 0.1) - gamma
+        assert not torch.allclose(diff, target_diff, atol=1e-3)
 
     def test_extreme_altitude(self) -> None:
         """alt=15000 m → no NaN/Inf (clamped by normalization)."""

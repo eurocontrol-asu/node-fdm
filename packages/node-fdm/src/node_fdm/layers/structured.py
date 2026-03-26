@@ -33,6 +33,8 @@ class StructuredLayer(nn.Module):
         activations: dict[str, type[nn.Module] | None] | None = None,
         normalize_modes: dict[str, str | None] | None = None,
         denormalize_modes: dict[str, str | None] | None = None,
+        scale_dict: dict[str, float] | None = None,
+        cap_dict: dict[str, float] | None = None,
     ) -> None:
         """Initialize structured layer.
 
@@ -74,7 +76,12 @@ class StructuredLayer(nn.Module):
         self.heads = MultiLayerDict(self.output_cols, head_factory)
 
         self.denormalizer = OutputDenormalizer(
-            output_mean_dict, output_std_dict, output_max_dict, modes=denormalize_modes
+            output_mean_dict,
+            output_std_dict,
+            output_max_dict,
+            modes=denormalize_modes,
+            scale_dict=scale_dict,
+            cap_dict=cap_dict,
         )
 
     def normalize_input(self, x_dict: dict[str, torch.Tensor]) -> list[torch.Tensor]:

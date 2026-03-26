@@ -18,13 +18,13 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `models.projected_integrator` | `ClampedEuler`, `ClampedRK4` — fixed-step solvers with state projection after each step; `_clamp_columns` (hard), `_soft_clamp_columns` (tanh-based) |
 | `models.fdm_prod` | `FlightDynamicsModelProd` — load pretrained weights for inference |
 | `layers.blocks` | `MLPBlock`, `Backbone`, `Head`, `MultiLayerDict`, `GammaDefaultNet` |
-| `layers.normalizers` | `InputNormalizer`, `OutputDenormalizer` |
+| `layers.normalizers` | `InputNormalizer`, `OutputDenormalizer` (modes: `normal_clamp`, `max`, `scaled`) |
 | `layers.structured` | `StructuredLayer` — normalize → backbone → heads → denormalize |
 | `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed, TAS diff, gamma diff (learnable default, `gamma_known` mask) |
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
 | `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, optional tracking loss on autopilot targets (`lambda_tracking`), projected integration via `ClampedEuler`/`ClampedRK4` when `x_bounds` present, `grad_clip_norm` default 10.0, model weights + optimizer checkpoint save/load |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
-| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1); `compute_stats` with NaN-safe e1 handling |
+| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1); `compute_stats` with p99.9 percentile (`p999`) and NaN-safe e1 handling |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame (NaN/inf filtered in x, u, e, dx, and e1 columns) |
 | `losses` | `get_loss` factory |
 | `callbacks` | `TrainingCallback` protocol + `ConsoleCallback` |

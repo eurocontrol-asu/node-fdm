@@ -71,6 +71,8 @@ class OutputDenormalizer(nn.Module):
         max_dict: dict[str, float],
         modes: dict[str, str | None] | None = None,
         max_ratio: float = 1.2,
+        scale_dict: dict[str, float] | None = None,
+        cap_dict: dict[str, float] | None = None,
     ) -> None:
         """Register normalization statistics per column.
 
@@ -79,9 +81,11 @@ class OutputDenormalizer(nn.Module):
             std_dict: Mapping column name → std.
             max_dict: Mapping column name → max absolute value.
             modes: Mapping column name → denormalize mode
-                (``"normal_clamp"``, ``"max"``, or ``None``).
+                (``"normal_clamp"``, ``"max"``, ``"scaled"``, or ``None``).
                 Defaults to ``"normal_clamp"`` for all columns.
             max_ratio: Clamping ratio applied to max values.
+            scale_dict: Mapping column name → scale for ``"scaled"`` mode.
+            cap_dict: Mapping column name → cap for ``"scaled"`` mode.
         """
         super().__init__()
         self.max_ratio = max_ratio
@@ -90,6 +94,12 @@ class OutputDenormalizer(nn.Module):
             self.register_buffer(f"mean_{k}", torch.tensor(mean_dict[k], dtype=torch.float32))
             self.register_buffer(f"std_{k}", torch.tensor(std_dict[k], dtype=torch.float32))
             self.register_buffer(f"max_{k}", torch.tensor(max_dict[k], dtype=torch.float32))
+        _scale = scale_dict or {}
+        _cap = cap_dict or {}
+        for k in _scale:
+            self.register_buffer(f"scale_{k}", torch.tensor(_scale[k], dtype=torch.float32))
+        for k in _cap:
+            self.register_buffer(f"cap_{k}", torch.tensor(_cap[k], dtype=torch.float32))
 
     def forward(self, x: torch.Tensor, col: str) -> torch.Tensor:
         """Denormalize output tensor for the given column.
@@ -108,6 +118,10 @@ class OutputDenormalizer(nn.Module):
             maxv: torch.Tensor = getattr(self, f"max_{col}")
             value = mean + x * std
             return torch.clamp(value, min=-self.max_ratio * maxv, max=self.max_ratio * maxv)
+        if mode == "scaled":
+            scale: torch.Tensor = getattr(self, f"scale_{col}")
+            cap: torch.Tensor = getattr(self, f"cap_{col}")
+            return torch.clamp(x * scale, min=-cap, max=cap)
         if mode == "max":
             maxv_val: torch.Tensor = getattr(self, f"max_{col}")
             return x * maxv_val

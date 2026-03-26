@@ -16,6 +16,7 @@ from pydantic import BaseModel
 
 from node_fdm.architectures.registry import get
 from node_fdm.models.fdm_prod import FlightDynamicsModelProd
+from node_fdm.models.projected_integrator import _clamp_columns, _soft_clamp_columns
 
 __all__ = [
     "ColumnStats",
@@ -155,6 +156,10 @@ class NodeFDMPredictor:
         n_steps = u_seq.shape[0]
         results: dict[str, list[float]] = {col: [] for col in self.spec.x_cols}
 
+        # Resolve physical bounds from architecture spec
+        x_bounds = self._resolve_bounds(self.spec.x_bounds, self.spec.x_cols)
+        dx_bounds = self._resolve_bounds(self.spec.dx_bounds, self.spec.dx_cols)
+
         x_t = torch.tensor(x_init, dtype=torch.float32, device=self.device).unsqueeze(0)
 
         with torch.no_grad():
@@ -171,24 +176,46 @@ class NodeFDMPredictor:
                 ).unsqueeze(0)
 
                 if self.meta.method == "rk4":
-                    x_t = self._rk4_step(x_t, u_t, e_t)
+                    x_t = self._rk4_step(x_t, u_t, e_t, dx_bounds)
                 else:
-                    x_t = self._euler_step(x_t, u_t, e_t)
+                    x_t = self._euler_step(x_t, u_t, e_t, dx_bounds)
+
+                # Project state onto physical domain after each step
+                if x_bounds:
+                    x_t = _clamp_columns(x_t, x_bounds)
 
                 for j, col in enumerate(self.spec.x_cols):
                     results[col].append(x_t[0, j].item())
 
         return {col: np.array(vals) for col, vals in results.items()}
 
+    @staticmethod
+    def _resolve_bounds(
+        named_bounds: dict[str, tuple[float, float]],
+        cols: list[str] | list[tuple[int, str]],
+    ) -> dict[int, tuple[float, float]]:
+        """Convert named bounds to column-index bounds."""
+        if not named_bounds:
+            return {}
+        result: dict[int, tuple[float, float]] = {}
+        for i, col in enumerate(cols):
+            name: str = col[1] if isinstance(col, tuple) else col  # type: ignore[assignment]
+            if name in named_bounds:
+                result[i] = named_bounds[name]
+        return result
+
     def _euler_step(
         self,
         x_t: torch.Tensor,
         u_t: torch.Tensor,
         e_t: torch.Tensor,
+        dx_bounds: dict[int, tuple[float, float]] | None = None,
     ) -> torch.Tensor:
         """Advance state by one Euler step."""
         self.model.reset_history()
         dx = self.model(x_t, u_t, e_t)
+        if dx_bounds:
+            dx = _soft_clamp_columns(dx, dx_bounds)
         x_next = x_t.clone()
         for j, (coeff, _col) in enumerate(self.spec.dx_cols):
             x_next[0, j] = x_t[0, j] + coeff * self.meta.step * dx[0, j]
@@ -199,30 +226,39 @@ class NodeFDMPredictor:
         x_t: torch.Tensor,
         u_t: torch.Tensor,
         e_t: torch.Tensor,
+        dx_bounds: dict[int, tuple[float, float]] | None = None,
     ) -> torch.Tensor:
         """Advance state by one classical RK4 step."""
         dt = self.meta.step
 
         self.model.reset_history()
         k1 = self.model(x_t, u_t, e_t)
+        if dx_bounds:
+            k1 = _soft_clamp_columns(k1, dx_bounds)
 
         x2 = x_t.clone()
         for j, (coeff, _col) in enumerate(self.spec.dx_cols):
             x2[0, j] = x_t[0, j] + 0.5 * coeff * dt * k1[0, j]
         self.model.reset_history()
         k2 = self.model(x2, u_t, e_t)
+        if dx_bounds:
+            k2 = _soft_clamp_columns(k2, dx_bounds)
 
         x3 = x_t.clone()
         for j, (coeff, _col) in enumerate(self.spec.dx_cols):
             x3[0, j] = x_t[0, j] + 0.5 * coeff * dt * k2[0, j]
         self.model.reset_history()
         k3 = self.model(x3, u_t, e_t)
+        if dx_bounds:
+            k3 = _soft_clamp_columns(k3, dx_bounds)
 
         x4 = x_t.clone()
         for j, (coeff, _col) in enumerate(self.spec.dx_cols):
             x4[0, j] = x_t[0, j] + coeff * dt * k3[0, j]
         self.model.reset_history()
         k4 = self.model(x4, u_t, e_t)
+        if dx_bounds:
+            k4 = _soft_clamp_columns(k4, dx_bounds)
 
         x_next = x_t.clone()
         for j, (coeff, _col) in enumerate(self.spec.dx_cols):
