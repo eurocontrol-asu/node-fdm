@@ -462,6 +462,59 @@ class TestResumeEdgeCases:
             assert "e1_cols" in data_kwargs, "e1_cols not passed to get_train_val_data"
             assert data_kwargs["e1_cols"] == ["fdm_tas_diff_ms", "fdm_alt_diff_m"]
 
+    def test_resume_unknown_architecture(self, tmp_path: Path) -> None:
+        """Meta with unknown architecture_name → SystemExit with known archs listed."""
+        from node_fdm_pipeline.commands.resume import run_resume
+
+        model_dir = tmp_path / "models" / "bogus_arch_A320"
+        _make_meta_json(model_dir, architecture_name="bogus_arch")
+        config = _make_config(tmp_path)
+
+        with pytest.raises(SystemExit, match="Unknown architecture_name"):
+            run_resume(model=model_dir, config=config, device="cpu")
+
+    def test_resume_missing_delta_table(self, tmp_path: Path) -> None:
+        """Valid meta but missing delta table → SystemExit."""
+        from node_fdm_pipeline.commands.resume import run_resume
+
+        model_dir = tmp_path / "models" / "opensky_2025_A320"
+        _make_meta_json(model_dir, architecture_name="opensky_2025")
+
+        # Config pointing to non-existent delta table
+        data_dir = tmp_path / "data_no_delta"
+        data_dir.mkdir()
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+
+        with (
+            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
+            pytest.raises(SystemExit, match="Delta table not found"),
+        ):
+            run_resume(model=model_dir, config=config, device="cpu")
+
+    def test_resume_empty_dataset_for_typecode(self, tmp_path: Path) -> None:
+        """No data rows for inferred typecode → SystemExit."""
+        from node_fdm_pipeline.commands.resume import run_resume
+
+        # Model dir implies typecode "B777" but delta only has A320
+        model_dir = tmp_path / "models" / "opensky_2025_B777"
+        _make_meta_json(model_dir, architecture_name="opensky_2025")
+        config = _make_config(tmp_path)  # creates delta with A320 only
+
+        with (
+            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
+            pytest.raises(SystemExit, match="No data for typecode"),
+        ):
+            run_resume(model=model_dir, config=config, device="cpu")
+
     def test_resume_e1_cols_has_gamma_diff(self, tmp_path: Path) -> None:
         """Resuming adsb model passes fdm_gamma_diff_rad in e1_cols to loader."""
         from node_fdm_pipeline.commands.resume import run_resume
