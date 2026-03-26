@@ -20,7 +20,7 @@ from node_fdm.models.fdm_prod import FlightDynamicsModelProd
 from node_fdm.models.projected_integrator import (
     ClampedEuler,
     ClampedRK4,
-    _soft_clamp_columns,
+    _clamp_columns,
 )
 
 __all__ = [
@@ -189,7 +189,7 @@ class NodeFDMPredictor:
             self.model.reset_history()
             func = BatchNeuralODE(self.model, u_t, e_t, t_grid, dx_bounds=dx_bounds_idx)
 
-            project_fn = (lambda x: _soft_clamp_columns(x, x_bounds_idx)) if x_bounds_idx else None
+            project_fn = (lambda x: _clamp_columns(x, x_bounds_idx)) if x_bounds_idx else None
             solver_kwargs = {"atol": 1e-6, "rtol": 1e-3, "step_size": step}
 
             if self.meta.method == "rk4":

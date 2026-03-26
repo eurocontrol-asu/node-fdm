@@ -29,7 +29,7 @@ from node_fdm.models.fdm import FlightDynamicsModel
 from node_fdm.models.projected_integrator import (
     ClampedEuler,
     ClampedRK4,
-    _soft_clamp_columns,
+    _clamp_columns,
 )
 
 __all__ = [
@@ -410,7 +410,7 @@ class ODETrainer:
 
         if x_bounds_idx:
             # Use projected integrator for bounded specs
-            project_fn = lambda x: _soft_clamp_columns(x, x_bounds_idx)  # noqa: E731
+            project_fn = lambda x: _clamp_columns(x, x_bounds_idx)  # noqa: E731
             method = self.config.method
             solver_kwargs = {
                 "atol": 1e-6,
