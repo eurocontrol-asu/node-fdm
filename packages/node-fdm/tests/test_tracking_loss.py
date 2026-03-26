@@ -202,9 +202,9 @@ class TestTrackingLoss:
         loss_base = trainer_base._compute_batch_loss(batch_base)
 
         # Tracking adds penalty even with known=0 (gamma_default target)
-        assert (
-            loss > loss_base
-        ), f"Tracking should add penalty even with known=0: {loss.item()} vs {loss_base.item()}"
+        assert loss > loss_base, (
+            f"Tracking should add penalty even with known=0: {loss.item()} vs {loss_base.item()}"
+        )
 
     def test_tracking_loss_larger_lambda_larger_loss(self, tmp_path: Path) -> None:
         """Bigger lambda_tracking → bigger total loss."""
@@ -330,6 +330,6 @@ class TestTrackingLossEdgeCases:
         # No NaN
         assert torch.isfinite(loss_large), f"Large λ should not produce NaN: {loss_large.item()}"
         # Loss should be much larger with λ=1000
-        assert (
-            loss_large > loss_small * 10
-        ), f"λ=1000 should dominate: {loss_large.item()} vs {loss_small.item()}"
+        assert loss_large > loss_small * 10, (
+            f"λ=1000 should dominate: {loss_large.item()} vs {loss_small.item()}"
+        )

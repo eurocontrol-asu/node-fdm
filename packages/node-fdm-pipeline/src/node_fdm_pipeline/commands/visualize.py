@@ -24,7 +24,7 @@ def _require_viz() -> None:
         SystemExit: If matplotlib or altair are not installed.
     """
     try:
-        import altair as _alt  # noqa: F401
+        import altair as _alt  # noqa: F401  # type: ignore[import-not-found,unused-ignore]
         import matplotlib as _mpl  # noqa: F401
     except ImportError:
         msg = (
@@ -186,7 +186,7 @@ def run_plot_performance(
 
     _require_viz()
 
-    import altair as alt
+    import altair as alt  # type: ignore[import-not-found,unused-ignore]
     import polars as pl
 
     figure_dir = cfg.paths.resolve("figure_dir")
@@ -313,7 +313,7 @@ def run_plot_example(
 
     _require_viz()
 
-    import altair as alt
+    import altair as alt  # type: ignore[import-not-found,unused-ignore]
     import polars as pl
 
     figure_dir = cfg.paths.resolve("figure_dir")

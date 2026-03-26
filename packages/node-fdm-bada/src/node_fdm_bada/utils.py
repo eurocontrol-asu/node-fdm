@@ -7,7 +7,6 @@ Physical constants and ISA functions are imported from ``node_fdm_data``.
 from __future__ import annotations
 
 import numpy as np
-
 from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, R
 from node_fdm_data.physics.isa import isa_pressure
 

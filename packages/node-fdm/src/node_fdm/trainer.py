@@ -317,7 +317,7 @@ class ODETrainer:
             # IQR is robust to the cruise-dominated distribution that
             # makes std too small for gamma (→ 100% of loss) and too
             # large for altitude (→ 0% of loss).
-            stds.append(stats.get("iqr", stats["std"]))
+            stds.append(stats.get("iqr", stats["std"]) / 5.0)
         return (
             torch.tensor(means, device=self.device),
             torch.tensor(stds, device=self.device),

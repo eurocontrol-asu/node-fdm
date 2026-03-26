@@ -98,9 +98,9 @@ class TestLoadModelWeights:
             layer = trainer2.model.layers_dict[name]
             restored = layer.state_dict()
             for key, orig_tensor in original_states[name].items():
-                assert torch.equal(
-                    restored[key], orig_tensor
-                ), f"Layer {name!r} param {key!r} not restored correctly"
+                assert torch.equal(restored[key], orig_tensor), (
+                    f"Layer {name!r} param {key!r} not restored correctly"
+                )
 
     def test_load_model_weights_missing_checkpoint(self, tmp_path: Path) -> None:
         """Call load_model_weights with no .pt files → raises FileNotFoundError or logs warning."""

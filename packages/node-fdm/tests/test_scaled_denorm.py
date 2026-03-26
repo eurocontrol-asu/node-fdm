@@ -212,64 +212,41 @@ class TestStructuredLayerScaledPassthrough:
 
 
 class TestFdmAdsbScaledDenorm:
-    """Full FDM with node_adsb_v1 and scaled denorm covers wider d_gamma range."""
+    """Scaled denorm achievable range exceeds old normal_clamp range."""
 
     def test_d_gamma_output_range(self) -> None:
-        """d_gamma output range covers [-0.03, 0.03], not limited to [-0.003, 0.003]."""
-        from node_fdm.architectures.adsb import NODE_ADSB_V1
-        from node_fdm.models.fdm import FlightDynamicsModel
+        """Scaled mode with p999=0.0087, cap=0.03 covers wider range than old std=0.00116.
 
-        # Build stats dict with p999 for all columns used by the architecture
-        dx_col_names = [c for _, c in NODE_ADSB_V1.dx_cols]
-        all_cols = (
-            NODE_ADSB_V1.x_cols
-            + NODE_ADSB_V1.u_cols
-            + NODE_ADSB_V1.e0_cols
-            + NODE_ADSB_V1.e1_cols
-            + dx_col_names
-        )
-        stats_dict: dict[str, dict[str, float]] = {}
-        for col in all_cols:
-            stats_dict[col] = {"mean": 0.0, "std": 1.0, "max": 3.0, "p999": 2.5}
-
-        # Override d_gamma stats to match realistic flight data
-        stats_dict["fdm_d_gamma_rads"] = {
-            "mean": 0.0,
-            "std": 0.00116,
-            "max": 0.025,
-            "p999": 0.0087,
-        }
-
-        model = FlightDynamicsModel(
-            spec=NODE_ADSB_V1,
-            stats_dict=stats_dict,
-            model_params=(1, 1, 16),  # small model for test speed
+        Tests the OutputDenormalizer directly with deterministic inputs to
+        verify the achievable range, rather than relying on random network
+        initialization which can produce near-zero outputs.
+        """
+        # Build a denormalizer matching the NODE_ADSB_V1 d_gamma config:
+        # scale = p999 = 0.0087, cap = dx_bounds upper = 0.03
+        denorm = OutputDenormalizer(
+            mean_dict={"fdm_d_gamma_rads": 0.0},
+            std_dict={"fdm_d_gamma_rads": 0.00116},
+            max_dict={"fdm_d_gamma_rads": 0.025},
+            modes={"fdm_d_gamma_rads": "scaled"},
+            scale_dict={"fdm_d_gamma_rads": 0.0087},
+            cap_dict={"fdm_d_gamma_rads": 0.03},
         )
 
-        # Forward pass with extreme inputs to push d_gamma to its limits
-        batch = 64
-        n_x = len(NODE_ADSB_V1.x_cols)
-        n_u = len(NODE_ADSB_V1.u_cols)
-        n_e = len(NODE_ADSB_V1.e0_cols)
+        # Feed a range of raw network outputs (z-values) through scaled mode
+        z = torch.tensor([-5.0, -3.5, -1.0, 0.0, 1.0, 3.5, 5.0])
+        out = denorm(z, "fdm_d_gamma_rads")
 
-        torch.manual_seed(0)
-        x = torch.randn(batch, n_x) * 3.0
-        u = torch.randn(batch, n_u) * 3.0
-        e = torch.randn(batch, n_e) * 3.0
-
-        with torch.no_grad():
-            dx = model(x, u, e)
-
-        # Extract d_gamma column (dx_cols is list[tuple[int, str]])
-        dx_col_names = [name for _, name in NODE_ADSB_V1.dx_cols]
-        d_gamma_idx = dx_col_names.index("fdm_d_gamma_rads")
-        d_gamma = dx[:, d_gamma_idx]
-
-        # With scaled mode (p999=0.0087), the network can produce values
-        # up to ±0.03 (the dx_bounds cap). With old std=0.00116, max would
-        # be ~0.003. Check that the achievable range exceeds the old limit.
-        max_abs = d_gamma.abs().max().item()
+        # Verify achievable range: max abs output = cap = 0.03
+        max_abs = out.abs().max().item()
         assert max_abs > 0.003, f"d_gamma max |{max_abs:.6f}| should exceed 0.003 with scaled mode"
+        # Verify capping works: 5.0 * 0.0087 = 0.0435 → clamped to 0.03
+        assert torch.isclose(out[-1], torch.tensor(0.03)), "Large z should be capped"
+        assert torch.isclose(out[0], torch.tensor(-0.03)), "Large negative z should be capped"
+
+        # Compare: old normal_clamp max was ~1.2 * 0.025 * tanh ≈ 0.003
+        # New scaled max is 0.03 -- 10x wider range
+        old_max = 1.2 * 0.025  # normal_clamp theoretical max
+        assert max_abs >= old_max * 0.9, "Scaled range should match or exceed old clamp range"
 
 
 # ===================================================================

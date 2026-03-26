@@ -213,7 +213,7 @@ def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
         return df
 
     try:
-        from traffic.core import Flight
+        from traffic.core import Flight  # type: ignore[import-not-found,unused-ignore]
     except ImportError:
         return df
 

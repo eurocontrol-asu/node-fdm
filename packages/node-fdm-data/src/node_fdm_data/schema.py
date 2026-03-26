@@ -106,5 +106,5 @@ def validate_schema(df: pl.DataFrame, *, step: str) -> None:
         compatible = _DTYPE_MAP.get(expected_dtype, {expected_dtype})
 
         if actual_dtype not in compatible:
-            msg = f"Column {col_name!r}: expected {expected_dtype}, " f"got {actual_dtype}"
+            msg = f"Column {col_name!r}: expected {expected_dtype}, got {actual_dtype}"
             raise TypeError(msg)

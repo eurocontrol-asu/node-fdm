@@ -83,9 +83,9 @@ class TestStructuredInputs:
         """U_ODE_COLS + E1_COLS must not contain absolute control columns."""
         raw_controls = {"fdm_vz_sel_ms", "fdm_alt_target_m", "fdm_tas_target_ms"}
         ode_inputs = set(adsb.U_ODE_COLS) | set(adsb.E1_COLS)
-        assert (
-            not ode_inputs & raw_controls
-        ), f"Raw controls leaked into ODE inputs: {ode_inputs & raw_controls}"
+        assert not ode_inputs & raw_controls, (
+            f"Raw controls leaked into ODE inputs: {ode_inputs & raw_controls}"
+        )
 
 
 class TestUColsV3:

@@ -420,9 +420,9 @@ class TestGammaTargetNoNearZero:
         # No detected gamma_sel segment should have near-zero value
         # (cruise gamma ~ 0 must be filtered out by min_abs_value)
         if len(valid) > 0:
-            assert np.all(
-                np.abs(valid) > 0.005
-            ), f"gamma_sel contains near-zero values: {valid[np.abs(valid) <= 0.005]}"
+            assert np.all(np.abs(valid) > 0.005), (
+                f"gamma_sel contains near-zero values: {valid[np.abs(valid) <= 0.005]}"
+            )
 
 
 class TestGammaDiffNanFilledZero:
@@ -456,9 +456,9 @@ class TestGammaDiffNanFilledZero:
 
         # Where target was NaN, diff should be 0 (not NaN)
         nan_mask = np.isnan(gamma_target)
-        assert not np.any(
-            np.isnan(diff[nan_mask])
-        ), "gamma_diff should be 0 where gamma_target is NaN"
+        assert not np.any(np.isnan(diff[nan_mask])), (
+            "gamma_diff should be 0 where gamma_target is NaN"
+        )
         np.testing.assert_allclose(diff[nan_mask], 0.0, atol=1e-10)
 
 

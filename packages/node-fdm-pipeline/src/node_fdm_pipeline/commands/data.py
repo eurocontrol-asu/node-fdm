@@ -257,7 +257,7 @@ def download(  # noqa: PLR0915
 
             if decoded_flights:
                 merged = Traffic.from_flights(decoded_flights)
-                df = pl.from_pandas(merged.data)  # type: ignore[union-attr]
+                df = pl.from_pandas(merged.data)
             else:
                 df = pl.from_pandas(history.data)
         else:
