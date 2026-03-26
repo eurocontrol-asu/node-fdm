@@ -255,12 +255,18 @@ class ODETrainer:
         self.save_meta()
         log.debug("model_saved", epoch=epoch)
 
-    def load_model_weights(self) -> None:
+    def load_model_weights(self, *, reset_loss: bool = False) -> None:
         """Load layer weights from checkpoints saved by :meth:`save_layer_checkpoint`.
 
         For each layer in ``model.layers_name``, loads the corresponding
         ``.pt`` file, extracts ``layer_state``, and restores it.  Also
-        restores ``best_val_loss`` from the checkpoint.
+        restores ``best_val_loss`` from the checkpoint unless *reset_loss*
+        is ``True``, in which case ``best_val_loss`` stays at ``inf`` so
+        that the first improving epoch triggers a save.
+
+        Args:
+            reset_loss: If ``True``, ignore the saved ``best_val_loss``
+                and keep the initial ``inf`` value.
 
         Raises:
             FileNotFoundError: If a layer checkpoint file is missing.
@@ -272,8 +278,13 @@ class ODETrainer:
                 raise FileNotFoundError(msg)
             ckpt = torch.load(ckpt_path, weights_only=True)
             self.model.layers_dict[name].load_state_dict(ckpt["layer_state"])
-            self.best_val_loss = ckpt.get("best_val_loss", self.best_val_loss)
-        log.debug("model_weights_loaded", layers=list(self.model.layers_name))
+            if not reset_loss:
+                self.best_val_loss = ckpt.get("best_val_loss", self.best_val_loss)
+        log.debug(
+            "model_weights_loaded",
+            layers=list(self.model.layers_name),
+            reset_loss=reset_loss,
+        )
 
     def load_optimizer_state(self) -> None:
         """Load optimizer state from checkpoint if available.

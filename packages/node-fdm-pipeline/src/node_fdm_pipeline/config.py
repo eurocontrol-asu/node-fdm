@@ -12,6 +12,7 @@ __all__ = [
     "BadaConfig",
     "CasFilterConfig",
     "ComputingConfig",
+    "EKFSmoothConfig",
     "FlagConfig",
     "GammaFilterConfig",
     "MachFilterConfig",
@@ -19,6 +20,7 @@ __all__ = [
     "PipelineConfig",
     "PreprocessConfig",
     "SelectedParamConfig",
+    "TasFilterConfig",
     "VzFilterConfig",
 ]
 
@@ -145,6 +147,18 @@ class PreprocessConfig(BaseModel, frozen=True):
     smooth: bool = True
 
 
+class EKFSmoothConfig(BaseModel, frozen=True):
+    """EKF smoothing configuration for flight dynamics parameters.
+
+    Controls the Extended Kalman Filter + RTS smoother that cleans
+    TAS, gamma, and altitude after BDS/ERA5 merging.
+    """
+
+    reject_sigma: float = 3.0
+    rolling_window: int = 17
+    enabled: bool = True
+
+
 class FlagConfig(BaseModel, frozen=True):
     """Validity flag thresholds for pipeline v3 étape 2."""
 
@@ -190,6 +204,7 @@ class PipelineConfig(BaseModel, frozen=True):
     preprocess: PreprocessConfig = PreprocessConfig()
     flag: FlagConfig = FlagConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()
+    ekf_smooth: EKFSmoothConfig = EKFSmoothConfig()
 
     @field_validator("typecodes", mode="before")
     @classmethod

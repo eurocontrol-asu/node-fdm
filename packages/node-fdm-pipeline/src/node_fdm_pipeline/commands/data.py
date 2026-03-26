@@ -29,6 +29,7 @@ __all__ = [
     "identify",
     "preprocess",
     "segments",
+    "smooth",
     "split",
 ]
 
@@ -493,6 +494,17 @@ def preprocess(
     from node_fdm_data.preprocessing.resample import preprocess_flights
 
     df = read_delta_table(delta_table)
+
+    # Guard: identify must have run before preprocess (Bug 2 fix)
+    if "meta_flight_id" not in df.columns or df["meta_flight_id"].is_null().all():
+        log.error("preprocess_missing_identify", msg="meta_flight_id is missing or all null")
+        print(  # noqa: T201
+            "Error: 'identify' must be run before 'preprocess'. "
+            "Run 'fdm identify --config ...' first.",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     rows_before = len(df)
     flights_before = df["meta_flight_id"].n_unique()
 
@@ -518,10 +530,14 @@ def preprocess(
             [pl.col(c).cast(pl.Float64) for c in null_cols],
         )
 
-    # Overwrite entire table (row count changes with resampling)
+    # Partition-scoped overwrite (row count changes with resampling)
     delta_write_options: dict[str, object] = {"schema_mode": "merge"}
     if "meta_batch_date" in result.columns:
         delta_write_options["partition_by"] = ["meta_batch_date"]
+        if delta_table.exists():
+            dates = result["meta_batch_date"].unique().sort().to_list()
+            quoted = ", ".join(f"'{d}'" for d in dates)
+            delta_write_options["predicate"] = f"meta_batch_date IN ({quoted})"
 
     result.write_delta(
         str(delta_table),
@@ -720,6 +736,69 @@ def derive(
         "derive_done",
         rows=len(df),
         derived_cols=derived_cols,
+    )
+
+
+def smooth(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Merge BDS+ERA5 and apply EKF smoothing (étape 4.5).
+
+    Reads the Delta Table produced by ``derive``, merges BDS and ERA5
+    airspeed columns, then applies an Extended Kalman Filter + RTS
+    smoother to produce cleaned ``ekf_*`` output columns.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.preprocessing.kalman import smooth_flights
+    from node_fdm_data.preprocessing.merge import merge_bds_era5
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+    ekf_cfg = cfg.ekf_smooth
+
+    log.info("smooth_start", table=str(delta_table), enabled=ekf_cfg.enabled)
+
+    if dry_run:
+        log.info("smooth_dry_run", msg="Config valid, would run EKF smoothing")
+        return
+
+    if not ekf_cfg.enabled:
+        log.info("smooth_disabled", msg="EKF smoothing disabled in config")
+        return
+
+    df = read_delta_table(delta_table)
+
+    # Drop existing EKF output columns for idempotency
+    ekf_existing = [c for c in df.columns if c.startswith("ekf_")]
+    if ekf_existing:
+        log.info("smooth_drop_existing", columns=ekf_existing)
+        df = df.drop(ekf_existing)
+
+    # Step 1: merge BDS + ERA5
+    df = merge_bds_era5(df)
+
+    # Step 2: EKF smooth
+    df = smooth_flights(
+        df,
+        reject_sigma=ekf_cfg.reject_sigma,
+        rolling_window=ekf_cfg.rolling_window,
+    )
+
+    write_columns(df, delta_table)
+
+    ekf_cols = [c for c in df.columns if c.startswith("ekf_")]
+    log.info(
+        "smooth_done",
+        rows=len(df),
+        ekf_cols=ekf_cols,
     )
 
 

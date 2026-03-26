@@ -28,6 +28,7 @@ def run_resume(
     method: str | None = None,
     model_name: str | None = None,
     lambda_tracking: float | None = None,
+    reset_loss: bool = False,
 ) -> None:
     """Resume training from a saved model checkpoint.
 
@@ -48,6 +49,7 @@ def run_resume(
         method: Override ODE integration method (``"euler"`` or ``"rk4"``).
         model_name: Custom output model name (default: same as source model).
         lambda_tracking: Tracking loss weight (0=disabled).
+        reset_loss: Ignore saved best_val_loss and start fresh from inf.
     """
     import polars as pl
     from node_fdm.loader import get_train_val_data
@@ -154,7 +156,7 @@ def run_resume(
         model_dir=models_dir,
         device=device,
     )
-    trainer.load_model_weights()
+    trainer.load_model_weights(reset_loss=reset_loss)
     trainer.load_optimizer_state()
     trainer.train()
 

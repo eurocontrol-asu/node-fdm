@@ -172,6 +172,13 @@ def resume(
             help="Tracking loss weight on autopilot targets (0=disabled)",
         ),
     ] = None,
+    reset_loss: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name="--reset-loss",
+            help="Ignore saved best_val_loss and start fresh from inf",
+        ),
+    ] = False,
 ) -> None:
     """Resume training from an existing model checkpoint."""
     from node_fdm_pipeline.commands.resume import run_resume
@@ -189,6 +196,7 @@ def resume(
         method=method,
         model_name=model_name,
         lambda_tracking=lambda_tracking,
+        reset_loss=reset_loss,
     )
 
 
@@ -373,6 +381,24 @@ def derive(
     from node_fdm_pipeline.commands.data import derive as derive_fn
 
     derive_fn(config=config, dry_run=dry_run)
+
+
+@app.command
+def smooth(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Merge BDS+ERA5 airspeeds and apply EKF smoothing — étape 4.5."""
+    from node_fdm_pipeline.commands.data import smooth as smooth_fn
+
+    smooth_fn(config=config, dry_run=dry_run)
 
 
 @app.command
