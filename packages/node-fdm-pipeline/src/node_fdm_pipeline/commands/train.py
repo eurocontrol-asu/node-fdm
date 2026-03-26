@@ -100,6 +100,7 @@ def run_training(
             method=method,
             num_workers=4,
             lambda_tracking=lambda_tracking or 0.0,
+            grad_clip_norm=10.0,
         )
 
         data_df = full_df.filter(pl.col("meta_aircraft_type") == acft)

@@ -13,7 +13,7 @@ import structlog
 import torch
 import torch.nn as nn
 
-from node_fdm.architectures.registry import ArchitectureSpec, resolve_layer_class
+from node_fdm.architectures.registry import ArchitectureSpec, LayerSpec, resolve_layer_class
 
 __all__ = [
     "FlightDynamicsModelProd",
@@ -58,8 +58,7 @@ class FlightDynamicsModelProd(nn.Module):
 
             if layer_spec.trainable:
                 layer = self._create_structured_layer(
-                    layer_spec.input_cols,
-                    layer_spec.output_cols,
+                    layer_spec,
                     layer_cls,
                     backbone_depth=backbone_depth,
                     head_depth=head_depth,
@@ -99,8 +98,7 @@ class FlightDynamicsModelProd(nn.Module):
 
     def _create_structured_layer(
         self,
-        input_cols: list[str],
-        output_cols: list[str],
+        layer_spec: LayerSpec,
         layer_cls: type[nn.Module],
         *,
         backbone_depth: int,
@@ -109,9 +107,11 @@ class FlightDynamicsModelProd(nn.Module):
     ) -> nn.Module:
         """Build a structured layer with normalization stats.
 
+        Mirrors :meth:`FlightDynamicsModel._create_structured_layer` to
+        ensure the production model has identical denormalization config.
+
         Args:
-            input_cols: Columns consumed by the layer.
-            output_cols: Columns produced by the layer.
+            layer_spec: Layer specification with input/output columns and config.
             layer_cls: Layer class to instantiate.
             backbone_depth: Backbone network depth.
             head_depth: Head network depth.
@@ -120,6 +120,9 @@ class FlightDynamicsModelProd(nn.Module):
         Returns:
             Configured layer instance.
         """
+        input_cols = layer_spec.input_cols
+        output_cols = layer_spec.output_cols
+
         input_mean = {
             col: self.stats_dict[col]["mean"] for col in input_cols if col in self.stats_dict
         }
@@ -136,6 +139,17 @@ class FlightDynamicsModelProd(nn.Module):
             col: self.stats_dict[col]["max"] for col in output_cols if col in self.stats_dict
         }
 
+        # Scaled denormalization: use p999 as scale, dx_bounds as cap
+        raw_modes = layer_spec.config.get("denormalize_modes", {})
+        denormalize_modes: dict[str, str] = dict(raw_modes) if isinstance(raw_modes, dict) else {}
+        scale_dict: dict[str, float] = {}
+        cap_dict: dict[str, float] = {}
+        for col, mode in denormalize_modes.items():
+            if mode == "scaled" and col in self.stats_dict:
+                scale_dict[col] = self.stats_dict[col].get("p999", self.stats_dict[col]["std"])
+                if col in self.spec.dx_bounds:
+                    cap_dict[col] = max(abs(v) for v in self.spec.dx_bounds[col])
+
         return layer_cls(
             input_cols=input_cols,
             input_stats=(input_mean, input_std),
@@ -145,6 +159,9 @@ class FlightDynamicsModelProd(nn.Module):
             backbone_depth=backbone_depth,
             head_dim=neurons_num // 2,
             head_depth=head_depth,
+            denormalize_modes=denormalize_modes or None,
+            scale_dict=scale_dict or None,
+            cap_dict=cap_dict or None,
         )
 
     def reset_history(self) -> None:

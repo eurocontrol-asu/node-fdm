@@ -96,7 +96,13 @@ class Head(MLPBlock):
         num_layers: int = 1,
         last_activation: type[nn.Module] | None = None,
     ) -> None:
-        """Initialize head with optional activation."""
+        """Initialize head with optional activation.
+
+        The last linear layer is zero-initialized so that a fresh
+        Neural ODE predicts dx ≈ 0 (identity dynamics).  This is
+        critical for stable training: large initial derivatives cause
+        the ODE to diverge within the first integration window.
+        """
         super().__init__(
             input_dim,
             hidden_dim,
@@ -104,6 +110,11 @@ class Head(MLPBlock):
             num_layers=num_layers,
             last_activation=last_activation,
         )
+        # Zero-init last linear so fresh model predicts dx ≈ 0
+        last_linear = self.net[-1]
+        if isinstance(last_linear, nn.Linear):
+            nn.init.zeros_(last_linear.weight)
+            nn.init.zeros_(last_linear.bias)
 
 
 class GammaDefaultNet(nn.Module):

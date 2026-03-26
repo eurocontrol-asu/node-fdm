@@ -39,6 +39,7 @@ class ColumnStats(BaseModel, frozen=True):
     mean: float
     std: float
     max: float
+    p999: float = 0.0
 
 
 class ModelMeta(BaseModel):
@@ -111,7 +112,7 @@ class NodeFDMPredictor:
 
         # Build stats_dict in the format expected by FlightDynamicsModelProd
         stats_plain: dict[str, dict[str, float]] = {
-            col: {"mean": s.mean, "std": s.std, "max": s.max}
+            col: {"mean": s.mean, "std": s.std, "max": s.max, "p999": s.p999}
             for col, s in self.meta.stats_dict.items()
         }
 
