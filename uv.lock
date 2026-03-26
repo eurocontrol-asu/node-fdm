@@ -2754,6 +2754,7 @@ dependencies = [
     { name = "deltalake" },
     { name = "numpy" },
     { name = "polars" },
+    { name = "pydantic" },
     { name = "scipy" },
 ]
 
@@ -2780,6 +2781,7 @@ requires-dist = [
     { name = "deltalake", specifier = ">=0.18" },
     { name = "numpy", specifier = ">=1.26" },
     { name = "polars", specifier = ">=1.0" },
+    { name = "pydantic", specifier = ">=2.0" },
     { name = "scipy", specifier = ">=1.13" },
 ]
 
