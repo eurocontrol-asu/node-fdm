@@ -183,8 +183,8 @@ class TestComputeStatsExtra:
 
         assert stats_original == stats_no_extra
 
-    def test_compute_stats_extra_overrides(self) -> None:
-        """Extra col with same name as existing col overwrites the value."""
+    def test_compute_stats_extra_no_overwrite(self) -> None:
+        """Extra col with same name as existing col keeps original stats."""
         # Use "e1" which already exists in _e_cols
         e1_cols = ["e1"]
         samples = [
@@ -207,8 +207,8 @@ class TestComputeStatsExtra:
             e1_cols=e1_cols,
         )
 
-        # The e1 key should reflect the extra value (99.0), not the original (1.0)
-        assert stats["e1"]["mean"] == pytest.approx(99.0, abs=1e-4)
+        # The e1 key should keep the base stats (1.0), not the e1 value (99.0)
+        assert stats["e1"]["mean"] == pytest.approx(1.0, abs=1e-4)
 
     def test_compute_stats_empty_extra(self) -> None:
         """Empty extra_data tensor — stats dict unchanged."""
@@ -308,12 +308,12 @@ class TestComputeStatsExtended:
         ]
         stats = compute_stats(samples, self._x_cols, self._u_cols, self._e_cols, self._dx_cols)
         for col in self._x_cols + self._u_cols + self._e_cols + self._dx_cols:
-            assert stats[col]["mean"] == pytest.approx(val, abs=1e-4), (
-                f"{col}: mean should be {val}, got {stats[col]['mean']}"
-            )
-            assert stats[col]["std"] == pytest.approx(1e-6, abs=1e-7), (
-                f"{col}: std should be ~1e-6 for constant data, got {stats[col]['std']}"
-            )
+            assert stats[col]["mean"] == pytest.approx(
+                val, abs=1e-4
+            ), f"{col}: mean should be {val}, got {stats[col]['mean']}"
+            assert stats[col]["std"] == pytest.approx(
+                1e-6, abs=1e-7
+            ), f"{col}: std should be ~1e-6 for constant data, got {stats[col]['std']}"
 
     def test_constant_column_std_epsilon(self) -> None:
         """All identical values — std = 1e-6 (not 0)."""
@@ -330,9 +330,9 @@ class TestComputeStatsExtended:
         stats = compute_stats(samples, self._x_cols, self._u_cols, self._e_cols, self._dx_cols)
         for col in self._x_cols + self._u_cols + self._e_cols + self._dx_cols:
             assert stats[col]["std"] > 0, f"{col}: std must not be zero"
-            assert stats[col]["std"] == pytest.approx(1e-6, abs=1e-7), (
-                f"{col}: std should be epsilon (1e-6), got {stats[col]['std']}"
-            )
+            assert stats[col]["std"] == pytest.approx(
+                1e-6, abs=1e-7
+            ), f"{col}: std should be epsilon (1e-6), got {stats[col]['std']}"
 
     def test_compute_stats_zero_inflated(self) -> None:
         """90% zeros + 10% nonzero — std must NOT collapse to ~1e-6 (AXM-745).

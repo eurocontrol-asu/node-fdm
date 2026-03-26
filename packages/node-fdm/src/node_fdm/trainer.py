@@ -156,10 +156,10 @@ class ODETrainer:
         }
         self.stats_dict = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
 
-        # Model stats: computed without e1 so that tracking targets
-        # stored in FlightSample.e1 cannot overwrite base column stats
-        # (e1_cols may overlap with dx_cols).
-        model_stats = compute_stats(_samples, **_stats_args)
+        # Model stats: include e1 so StructuredLayer inputs are normalized.
+        # compute_stats skips e1 columns already covered by DX, so no
+        # overwrite risk for overlapping columns like fdm_d_vz_ms.
+        model_stats = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
 
         self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(
             self.device

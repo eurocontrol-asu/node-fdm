@@ -126,6 +126,8 @@ def compute_stats(
             # (loader may skip missing columns)
             n_e1 = e1_all.shape[1]
             for i, col in enumerate(e1_cols[:n_e1]):
+                if col in stats:
+                    continue  # DX/E stats take precedence over E1
                 vals = e1_all[:, i]
                 finite_mask = vals.isfinite()
                 clean = vals[finite_mask] if not finite_mask.all() else vals
