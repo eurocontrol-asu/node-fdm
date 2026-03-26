@@ -25,6 +25,7 @@ def run_resume(
     shift: int | None = None,
     overwrite: bool = False,
     device: str = "cpu",
+    method: str | None = None,
     lambda_tracking: float | None = None,
 ) -> None:
     """Resume training from a saved model checkpoint.
@@ -43,6 +44,7 @@ def run_resume(
         shift: Override shift between windows.
         overwrite: Save back into the same model directory.
         device: PyTorch device string.
+        method: Override ODE integration method (``"euler"`` or ``"rk4"``).
         lambda_tracking: Tracking loss weight (0=disabled).
     """
     import polars as pl
@@ -110,7 +112,7 @@ def run_resume(
         seq_len=effective_seq_len,
         batch_size=batch_size or meta.batch_size,
         epochs=epochs or 200,
-        method=meta.method,
+        method=method or meta.method,
         num_workers=4,
         lambda_tracking=lambda_tracking or 0.0,
     )

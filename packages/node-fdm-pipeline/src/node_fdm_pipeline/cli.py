@@ -143,6 +143,10 @@ def resume(
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
     ] = "cpu",
+    method: Annotated[
+        str | None,
+        cyclopts.Parameter(help="Override ODE integration method: euler or rk4"),
+    ] = None,
     lambda_tracking: Annotated[
         float | None,
         cyclopts.Parameter(
@@ -164,6 +168,7 @@ def resume(
         shift=shift,
         overwrite=overwrite,
         device=device,
+        method=method,
         lambda_tracking=lambda_tracking,
     )
 
