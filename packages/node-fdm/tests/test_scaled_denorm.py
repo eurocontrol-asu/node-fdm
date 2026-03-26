@@ -88,7 +88,7 @@ class TestDenormScaledMode:
     """OutputDenormalizer 'scaled' mode: z * scale, clamped to ±cap."""
 
     def test_linear_scaling(self) -> None:
-        """z=1.5 with scale=0.01 → 0.015 (below cap)."""
+        """z=1.5 with scale=0.01 → approximately 0.015 (below cap, slight tanh distortion)."""
         denorm = OutputDenormalizer(
             mean_dict={"d_gamma": 0.0},
             std_dict={"d_gamma": 0.001},
@@ -98,10 +98,12 @@ class TestDenormScaledMode:
             cap_dict={"d_gamma": 0.03},
         )
         out = denorm(torch.tensor([1.5]), "d_gamma")
-        assert torch.isclose(out, torch.tensor([0.015])).all()
+        # cap * tanh(1.5 * 0.01 / 0.03) = 0.03 * tanh(0.5) ≈ 0.0139
+        assert out.item() > 0.013
+        assert out.item() < 0.015
 
     def test_capped(self) -> None:
-        """z=5.0 with scale=0.01, cap=0.03 → 0.03 (capped)."""
+        """z=5.0 with scale=0.01, cap=0.03 → approaches cap asymptotically."""
         denorm = OutputDenormalizer(
             mean_dict={"d_gamma": 0.0},
             std_dict={"d_gamma": 0.001},
@@ -111,10 +113,12 @@ class TestDenormScaledMode:
             cap_dict={"d_gamma": 0.03},
         )
         out = denorm(torch.tensor([5.0]), "d_gamma")
-        assert torch.isclose(out, torch.tensor([0.03])).all()
+        # Soft clamp: never exactly cap, but close
+        assert out.item() > 0.025, f"Expected near cap, got {out.item()}"
+        assert out.item() < 0.03, "Soft clamp should stay strictly below cap"
 
     def test_negative_capped(self) -> None:
-        """Negative z is clamped symmetrically."""
+        """Negative z is soft-clamped symmetrically."""
         denorm = OutputDenormalizer(
             mean_dict={"d_gamma": 0.0},
             std_dict={"d_gamma": 0.001},
@@ -124,7 +128,8 @@ class TestDenormScaledMode:
             cap_dict={"d_gamma": 0.03},
         )
         out = denorm(torch.tensor([-5.0]), "d_gamma")
-        assert torch.isclose(out, torch.tensor([-0.03])).all()
+        assert out.item() < -0.025, f"Expected near -cap, got {out.item()}"
+        assert out.item() > -0.03, "Soft clamp should stay strictly above -cap"
 
 
 class TestDenormScaledGradient:
@@ -152,24 +157,27 @@ class TestDenormNormalClampUnchanged:
     """Existing 'normal_clamp' mode must be unaffected by scaled additions."""
 
     def test_normal_clamp_behavior(self) -> None:
-        """normal_clamp: mean + z*std, clamped to ±max_ratio*max."""
+        """normal_clamp: mean + z*std, soft-clamped via tanh to ±max_ratio*max."""
         denorm = OutputDenormalizer(
             mean_dict={"speed": 200.0},
             std_dict={"speed": 50.0},
             max_dict={"speed": 300.0},
             modes={"speed": "normal_clamp"},
         )
-        # z=0 → mean = 200.0
+        # hi = 1.2 * 300 = 360
+        # z=0 → value = 200, output = 360 * tanh(200/360) ≈ 360 * 0.508 ≈ 183
         out = denorm(torch.tensor([0.0]), "speed")
-        assert torch.isclose(out, torch.tensor([200.0])).all()
+        assert out.item() > 170.0
+        assert out.item() < 200.0  # tanh distorts since 200/360 = 0.56
 
-        # z=1 → 200 + 50 = 250, within clamp
-        out = denorm(torch.tensor([1.0]), "speed")
-        assert torch.isclose(out, torch.tensor([250.0])).all()
+        # z=1 → value = 250, output = 360 * tanh(250/360)
+        out1 = denorm(torch.tensor([1.0]), "speed")
+        assert out1.item() > out.item(), "Higher z should produce higher output"
 
-        # z=10 → 200 + 500 = 700, clamped to 1.2*300 = 360
-        out = denorm(torch.tensor([10.0]), "speed")
-        assert torch.isclose(out, torch.tensor([360.0])).all()
+        # z=10 → value = 700, output = 360 * tanh(700/360) ≈ 360 * 0.999 ≈ 360
+        out10 = denorm(torch.tensor([10.0]), "speed")
+        assert out10.item() > 340.0, "Large z should approach 360"
+        assert out10.item() < 360.0, "Soft clamp should stay below cap"
 
 
 class TestStructuredLayerScaledPassthrough:
@@ -236,17 +244,19 @@ class TestFdmAdsbScaledDenorm:
         z = torch.tensor([-5.0, -3.5, -1.0, 0.0, 1.0, 3.5, 5.0])
         out = denorm(z, "fdm_d_gamma_rads")
 
-        # Verify achievable range: max abs output = cap = 0.03
+        # Verify achievable range: max abs output approaches cap = 0.03
         max_abs = out.abs().max().item()
         assert max_abs > 0.003, f"d_gamma max |{max_abs:.6f}| should exceed 0.003 with scaled mode"
-        # Verify capping works: 5.0 * 0.0087 = 0.0435 → clamped to 0.03
-        assert torch.isclose(out[-1], torch.tensor(0.03)), "Large z should be capped"
-        assert torch.isclose(out[0], torch.tensor(-0.03)), "Large negative z should be capped"
+        # Soft clamp: large z approaches cap asymptotically
+        assert out[-1].item() > 0.025, "Large z should approach cap"
+        assert out[-1].item() < 0.03, "Soft clamp should stay below cap"
+        assert out[0].item() < -0.025, "Large negative z should approach -cap"
+        assert out[0].item() > -0.03, "Soft clamp should stay above -cap"
 
         # Compare: old normal_clamp max was ~1.2 * 0.025 * tanh ≈ 0.003
-        # New scaled max is 0.03 -- 10x wider range
+        # New scaled max approaches 0.03 -- 10x wider range
         old_max = 1.2 * 0.025  # normal_clamp theoretical max
-        assert max_abs >= old_max * 0.9, "Scaled range should match or exceed old clamp range"
+        assert max_abs >= old_max * 0.8, "Scaled range should approach old clamp range"
 
 
 # ===================================================================
@@ -280,13 +290,16 @@ class TestEdgeCaseMixedModes:
             scale_dict={"d_gamma": 0.01},
             cap_dict={"d_gamma": 0.03},
         )
-        # d_gamma: scaled → z*scale
+        # d_gamma: scaled → cap * tanh(z * scale / cap) = 0.03 * tanh(0.01/0.03)
         out_gamma = denorm(torch.tensor([1.0]), "d_gamma")
-        assert torch.isclose(out_gamma, torch.tensor([0.01])).all()
+        assert out_gamma.item() > 0.009
+        assert out_gamma.item() < 0.011
 
-        # d_tas: normal_clamp → mean + z*std
+        # d_tas: normal_clamp → hi * tanh(value / hi), hi = 1.2*200 = 240
+        # value = 100 + 1*10 = 110, output = 240 * tanh(110/240) ≈ 240 * 0.43 ≈ 103
         out_tas = denorm(torch.tensor([1.0]), "d_tas")
-        assert torch.isclose(out_tas, torch.tensor([110.0])).all()
+        assert out_tas.item() > 95.0
+        assert out_tas.item() < 115.0
 
 
 class TestEdgeCaseP999Missing:

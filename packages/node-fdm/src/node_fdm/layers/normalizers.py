@@ -117,11 +117,12 @@ class OutputDenormalizer(nn.Module):
             std: torch.Tensor = getattr(self, f"std_{col}")
             maxv: torch.Tensor = getattr(self, f"max_{col}")
             value = mean + x * std
-            return torch.clamp(value, min=-self.max_ratio * maxv, max=self.max_ratio * maxv)
+            hi = self.max_ratio * maxv
+            return hi * torch.tanh(value / hi)
         if mode == "scaled":
             scale: torch.Tensor = getattr(self, f"scale_{col}")
             cap: torch.Tensor = getattr(self, f"cap_{col}")
-            return torch.clamp(x * scale, min=-cap, max=cap)
+            return cap * torch.tanh(x * scale / cap)
         if mode == "max":
             maxv_val: torch.Tensor = getattr(self, f"max_{col}")
             return x * maxv_val

@@ -137,7 +137,7 @@ class TestProjectedIntegration:
 
         actual_fn: Callable[[torch.Tensor], torch.Tensor] | None
         if project_fn == "default":
-            actual_fn = lambda y: _clamp_columns(y, bounds)  # noqa: E731
+            actual_fn = lambda y: _soft_clamp_columns(y, bounds)  # noqa: E731
         elif isinstance(project_fn, str):
             actual_fn = None
         else:
@@ -147,7 +147,7 @@ class TestProjectedIntegration:
         return solver.integrate(t)
 
     def test_projected_euler_stays_bounded(self) -> None:
-        """Random model, 60 steps, tight bounds -> all states in trajectory within bounds."""
+        """Random model, 60 steps, tight bounds -> all states approximately within bounds."""
         torch.manual_seed(42)
         func = _LinearDeriv(scale=5.0)  # aggressive derivative to force divergence
         y0 = torch.randn(4, 3)  # batch=4, state_dim=3
@@ -155,16 +155,17 @@ class TestProjectedIntegration:
 
         traj = self._integrate(func, y0, t, method="euler")
 
-        # traj shape: (time, batch, state_dim)
-        assert (traj[..., 0] >= -1.0 - 1e-6).all()
-        assert (traj[..., 0] <= 1.0 + 1e-6).all()
-        assert (traj[..., 1] >= -2.0 - 1e-6).all()
-        assert (traj[..., 1] <= 2.0 + 1e-6).all()
-        assert (traj[..., 2] >= -3.0 - 1e-6).all()
-        assert (traj[..., 2] <= 3.0 + 1e-6).all()
+        # Soft clamp: values asymptotically approach but never exceed bounds
+        # tanh saturation means values stay strictly within (lo, hi)
+        assert (traj[..., 0] > -1.0).all()
+        assert (traj[..., 0] < 1.0).all()
+        assert (traj[..., 1] > -2.0).all()
+        assert (traj[..., 1] < 2.0).all()
+        assert (traj[..., 2] > -3.0).all()
+        assert (traj[..., 2] < 3.0).all()
 
     def test_projected_rk4_stays_bounded(self) -> None:
-        """Same as above with RK4 -> all states within bounds."""
+        """Same as above with RK4 -> all states approximately within bounds."""
         torch.manual_seed(42)
         func = _LinearDeriv(scale=5.0)
         y0 = torch.randn(4, 3)
@@ -172,12 +173,12 @@ class TestProjectedIntegration:
 
         traj = self._integrate(func, y0, t, method="rk4")
 
-        assert (traj[..., 0] >= -1.0 - 1e-6).all()
-        assert (traj[..., 0] <= 1.0 + 1e-6).all()
-        assert (traj[..., 1] >= -2.0 - 1e-6).all()
-        assert (traj[..., 1] <= 2.0 + 1e-6).all()
-        assert (traj[..., 2] >= -3.0 - 1e-6).all()
-        assert (traj[..., 2] <= 3.0 + 1e-6).all()
+        assert (traj[..., 0] > -1.0).all()
+        assert (traj[..., 0] < 1.0).all()
+        assert (traj[..., 1] > -2.0).all()
+        assert (traj[..., 1] < 2.0).all()
+        assert (traj[..., 2] > -3.0).all()
+        assert (traj[..., 2] < 3.0).all()
 
     def test_projected_euler_no_project(self) -> None:
         """project_fn=None -> identical to standard Euler."""
@@ -215,7 +216,7 @@ class TestProjectedIntegration:
         t = torch.linspace(0, 1, 11)
 
         bounds = {0: (-5.0, 5.0), 1: (-5.0, 5.0), 2: (-5.0, 5.0)}
-        project_fn = lambda y: _clamp_columns(y, bounds)  # noqa: E731
+        project_fn = lambda y: _soft_clamp_columns(y, bounds)  # noqa: E731
 
         solver = _make_solver(func, y0, method="euler", project_fn=project_fn)
         traj = solver.integrate(t)
@@ -233,29 +234,30 @@ class TestProjectedIntegration:
 
 class TestProjectedEdgeCases:
     def test_state_already_in_bounds(self) -> None:
-        """State already within [lo, hi] everywhere -> project_fn is identity, no effect."""
+        """State at origin within [lo, hi] everywhere -> soft clamp ≈ identity."""
         x = torch.tensor([[0.0, 0.0, 0.0]])
         bounds = {0: (-1.0, 1.0), 1: (-2.0, 2.0), 2: (-3.0, 3.0)}
 
-        out = _clamp_columns(x, bounds)
-        assert torch.equal(out, x)
+        out = _soft_clamp_columns(x, bounds)
+        assert torch.allclose(out, x, atol=1e-6)
 
     def test_single_step_integration(self) -> None:
-        """seq_len=2, one step -> projection applied once, correct output."""
+        """seq_len=2, one step -> projection applied once, output near bound."""
         dx = torch.tensor([10.0, 0.0, 0.0])  # large step in col 0 only
         func = _ConstDeriv(dx)
         y0 = torch.zeros(1, 3)
         t = torch.tensor([0.0, 1.0])  # single step
 
         bounds = {0: (-1.0, 1.0)}
-        project_fn = lambda y: _clamp_columns(y, bounds)  # noqa: E731
+        project_fn = lambda y: _soft_clamp_columns(y, bounds)  # noqa: E731
 
         solver = _make_solver(func, y0, method="euler", project_fn=project_fn)
         traj = solver.integrate(t)
 
-        # After one Euler step: y = 0 + 1.0 * 10 = 10 -> clamped to 1.0
+        # After one Euler step: y = 0 + 1.0 * 10 = 10 -> soft-clamped near 1.0
         assert traj.shape == (2, 1, 3)
-        assert torch.isclose(traj[1, 0, 0], torch.tensor(1.0), atol=1e-6)
+        assert traj[1, 0, 0] > 0.99, f"Expected near 1.0, got {traj[1, 0, 0]}"
+        assert traj[1, 0, 0] < 1.0, "Soft clamp should stay strictly below bound"
 
     def test_batch_size_one(self) -> None:
         """Single sample batch -> works without dimension errors."""
@@ -264,11 +266,11 @@ class TestProjectedEdgeCases:
         t = torch.linspace(0, 1, 11)
 
         bounds = {0: (-1.0, 1.0), 1: (-1.0, 1.0), 2: (-1.0, 1.0)}
-        project_fn = lambda y: _clamp_columns(y, bounds)  # noqa: E731
+        project_fn = lambda y: _soft_clamp_columns(y, bounds)  # noqa: E731
 
         solver = _make_solver(func, y0, method="euler", project_fn=project_fn)
         traj = solver.integrate(t)
 
         assert traj.shape == (11, 1, 3)
-        assert (traj[..., 0] >= -1.0 - 1e-6).all()
-        assert (traj[..., 0] <= 1.0 + 1e-6).all()
+        assert (traj[..., 0] > -1.0).all()
+        assert (traj[..., 0] < 1.0).all()
