@@ -140,11 +140,13 @@ class ODETrainer:
 
         self.callbacks: Sequence[TrainingCallback] = callbacks or [ConsoleCallback()]
 
-        # Compute stats from training data
-        # Only compute stats for U columns that enter the StructuredLayer (U_ODE),
-        # not all U_COLS (which include targets consumed by TrajectoryLayer).
-        ode_layer = next(ly for ly in self.spec.layers if ly.trainable)
-        u_ode_cols = [c for c in self.spec.u_cols if c in ode_layer.input_cols]
+        # Compute stats from training data.
+        # U_ODE_COLS from the architecture spec (empty for adsb).
+        # Do NOT reconstruct from input_cols — passthrough flags like
+        # fdm_gamma_target_known appear in input_cols but are not ODE
+        # controls and must not enter compute_stats (which indexes the
+        # u tensor by position, causing column misalignment).
+        u_ode_cols = list(getattr(self.spec, "u_ode_cols", []) or [])
         dx_col_names = [col for _, col in self.spec.dx_cols]
         e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
         _samples = list(train_dataset)  # type: ignore[call-overload]
