@@ -13,6 +13,7 @@ from node_fdm_data.preprocessing.resample import (
     interpolate_group_by_subsegments,
     preprocess_flights,
     resample_flight,
+    smooth_position_subsegments,
 )
 
 
@@ -518,3 +519,254 @@ class TestResamplePreservesStringIdentifiers:
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
         assert "raw_icao24" in result.columns
         assert result["raw_icao24"].null_count() == len(result)
+
+
+# ---------------------------------------------------------------------------
+# smooth_position_subsegments — AC1
+# ---------------------------------------------------------------------------
+
+
+class TestSmoothPositionNoTraffic:
+    """smooth_position_subsegments returns df unchanged when traffic is absent."""
+
+    def test_no_traffic_installed(self, mocker: Any) -> None:
+        """Import failure inside try/except → df returned unchanged."""
+        # Setting a sys.modules entry to None causes ImportError on import
+        mocker.patch.dict("sys.modules", {"traffic.core": None})
+
+        ts_start = datetime(2025, 1, 1)
+        n = 20
+        df = pl.DataFrame(
+            {
+                "raw_timestamp": [ts_start + timedelta(seconds=i * 4) for i in range(n)],
+                "raw_lat_deg": [48.0 + i * 0.001 for i in range(n)],
+                "raw_lon_deg": [2.0 + i * 0.001 for i in range(n)],
+            }
+        )
+        result = smooth_position_subsegments(df)
+        assert result["raw_lat_deg"].to_list() == df["raw_lat_deg"].to_list()
+        assert result["raw_lon_deg"].to_list() == df["raw_lon_deg"].to_list()
+
+
+class TestSmoothPositionWithTraffic:
+    """smooth_position_subsegments applies filter when traffic is available."""
+
+    def test_smoothed_values_updated(self, mocker: Any) -> None:
+        """Mock Flight.filter('aggressive') → lat/lon values change."""
+        import pandas as pd
+
+        ts_start = datetime(2025, 1, 1)
+        n = 15  # > 10 threshold for smoothing
+        timestamps = [ts_start + timedelta(seconds=i * 4) for i in range(n)]
+        lats = [48.0 + i * 0.001 for i in range(n)]
+        lons = [2.0 + i * 0.001 for i in range(n)]
+
+        # Run detection uses shift() → first row gets null run_id.
+        # The smoothing loop receives n-1 indices for a contiguous block.
+        n_run = n - 1
+        smoothed_lats = [lats[i + 1] + 0.0001 for i in range(n_run)]
+        smoothed_lons = [lons[i + 1] + 0.0001 for i in range(n_run)]
+
+        smoothed_data = pd.DataFrame({"latitude": smoothed_lats, "longitude": smoothed_lons})
+        mock_smoothed = mocker.MagicMock()
+        mock_smoothed.data = smoothed_data
+        mock_smoothed.__len__.return_value = n_run
+
+        mock_flight_instance = mocker.MagicMock()
+        mock_flight_instance.filter.return_value = mock_smoothed
+
+        mock_flight_cls = mocker.MagicMock(return_value=mock_flight_instance)
+        mock_traffic_core = mocker.MagicMock(Flight=mock_flight_cls)
+        mocker.patch.dict("sys.modules", {"traffic.core": mock_traffic_core})
+
+        df = pl.DataFrame(
+            {
+                "raw_timestamp": timestamps,
+                "raw_lat_deg": lats,
+                "raw_lon_deg": lons,
+            }
+        )
+        result = smooth_position_subsegments(df)
+
+        # Row 0 unchanged (excluded from run), rows 1..n-1 smoothed
+        assert result["raw_lat_deg"][0] == lats[0]
+        for i in range(n_run):
+            assert abs(result["raw_lat_deg"][i + 1] - smoothed_lats[i]) < 1e-8
+            assert abs(result["raw_lon_deg"][i + 1] - smoothed_lons[i]) < 1e-8
+
+        mock_flight_instance.filter.assert_called_once_with("aggressive")
+
+
+class TestSmoothPositionNoPositionCols:
+    """smooth_position_subsegments with missing position cols → unchanged."""
+
+    def test_no_lat_lon_columns(self) -> None:
+        """DataFrame without raw_lat_deg → returns unchanged."""
+        ts_start = datetime(2025, 1, 1)
+        df = pl.DataFrame(
+            {
+                "raw_timestamp": [ts_start + timedelta(seconds=i) for i in range(10)],
+                "raw_alt_ft": [35000.0] * 10,
+            }
+        )
+        result = smooth_position_subsegments(df)
+        assert result.equals(df)
+
+
+class TestSmoothPositionAllNull:
+    """smooth_position_subsegments with all-null position → unchanged."""
+
+    def test_all_null_lat_lon(self) -> None:
+        """All lat/lon null → returns unchanged (no runs to smooth)."""
+        ts_start = datetime(2025, 1, 1)
+        n = 20
+        df = pl.DataFrame(
+            {
+                "raw_timestamp": [ts_start + timedelta(seconds=i * 4) for i in range(n)],
+                "raw_lat_deg": pl.Series("raw_lat_deg", [None] * n, dtype=pl.Float64),
+                "raw_lon_deg": pl.Series("raw_lon_deg", [None] * n, dtype=pl.Float64),
+            }
+        )
+        result = smooth_position_subsegments(df)
+        assert result["raw_lat_deg"].null_count() == n
+        assert result["raw_lon_deg"].null_count() == n
+
+
+class TestSmoothPositionShortRun:
+    """Runs shorter than 10 points are skipped by smooth_position_subsegments."""
+
+    def test_short_run_not_smoothed(self, mocker: Any) -> None:
+        """Run of 5 non-null points → filter never called."""
+        mocker.patch.dict(
+            "sys.modules",
+            {"traffic.core": mocker.MagicMock()},
+        )
+        mock_flight_cls = mocker.patch(
+            "node_fdm_data.preprocessing.resample.Flight",
+            create=True,
+        )
+
+        ts_start = datetime(2025, 1, 1)
+        n = 5
+        df = pl.DataFrame(
+            {
+                "raw_timestamp": [ts_start + timedelta(seconds=i * 4) for i in range(n)],
+                "raw_lat_deg": [48.0 + i * 0.001 for i in range(n)],
+                "raw_lon_deg": [2.0 + i * 0.001 for i in range(n)],
+            }
+        )
+        result = smooth_position_subsegments(df)
+        mock_flight_cls.assert_not_called()
+        assert result["raw_lat_deg"].to_list() == df["raw_lat_deg"].to_list()
+
+
+# ---------------------------------------------------------------------------
+# interpolate_group_by_subsegments — single-point segment — AC2
+# ---------------------------------------------------------------------------
+
+
+class TestInterpolateSinglePointSegment:
+    """Single-point segment assigns value at matching grid point."""
+
+    def test_single_point_on_grid(self) -> None:
+        """1-row segment whose timestamp matches a grid point → value set."""
+        ts_start = datetime(2025, 1, 1)
+        grid_ts = pl.Series(
+            "raw_timestamp",
+            [ts_start + timedelta(seconds=i * 4) for i in range(5)],
+        )
+        # Original has one data point at grid point index 2 (t=8s)
+        original = pl.DataFrame(
+            {
+                "raw_timestamp": [ts_start + timedelta(seconds=8)],
+                "raw_lat_deg": [48.123],
+            }
+        )
+        # seg_ids: single segment with ID 0
+        seg_ids = pl.Series("seg_id", [0], dtype=pl.Int32)
+
+        col_values, gap_flag = interpolate_group_by_subsegments(
+            original,
+            grid_ts,
+            ["raw_lat_deg"],
+            seg_ids,
+        )
+        # The grid point at t=8s (index 2) should have the value
+        assert col_values["raw_lat_deg"][2] == 48.123
+        assert gap_flag[2] is False
+        # Other points remain null / gap
+        assert col_values["raw_lat_deg"][0] is None
+        assert gap_flag[0] is True
+
+    def test_single_point_off_grid(self) -> None:
+        """1-row segment whose timestamp is NOT on the grid → not assigned."""
+        ts_start = datetime(2025, 1, 1)
+        grid_ts = pl.Series(
+            "raw_timestamp",
+            [ts_start + timedelta(seconds=i * 4) for i in range(5)],
+        )
+        # Point at t=5s — not on a grid boundary
+        original = pl.DataFrame(
+            {
+                "raw_timestamp": [ts_start + timedelta(seconds=5)],
+                "raw_lat_deg": [48.123],
+            }
+        )
+        seg_ids = pl.Series("seg_id", [0], dtype=pl.Int32)
+
+        col_values, gap_flag = interpolate_group_by_subsegments(
+            original,
+            grid_ts,
+            ["raw_lat_deg"],
+            seg_ids,
+        )
+        # No grid point matches → all None, all gap
+        assert all(v is None for v in col_values["raw_lat_deg"])
+        assert gap_flag.all()
+
+
+# ---------------------------------------------------------------------------
+# resample_flight smooth=True path — AC3
+# ---------------------------------------------------------------------------
+
+
+class TestResampleSmoothPath:
+    """resample_flight with smooth=True calls smooth_position_subsegments."""
+
+    def test_smooth_true_invokes_smoothing(self, mocker: Any) -> None:
+        """smooth=True → smooth_position_subsegments is called."""
+        spy = mocker.patch(
+            "node_fdm_data.preprocessing.resample.smooth_position_subsegments",
+            side_effect=lambda df: df,
+        )
+        df = _make_flight("f1", 600)
+        resample_flight(df, rate_s=4, max_gap_s=30, smooth=True)
+        spy.assert_called_once()
+
+    def test_smooth_false_skips_smoothing(self, mocker: Any) -> None:
+        """smooth=False → smooth_position_subsegments is NOT called."""
+        spy = mocker.patch(
+            "node_fdm_data.preprocessing.resample.smooth_position_subsegments",
+            side_effect=lambda df: df,
+        )
+        df = _make_flight("f1", 600)
+        resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
+        spy.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# preprocess_flights — single flight — edge case
+# ---------------------------------------------------------------------------
+
+
+class TestPreprocessSingleFlight:
+    """partition_by returns 1 group → processed normally."""
+
+    def test_single_flight(self) -> None:
+        """Single long flight → resampled without error."""
+        df = _make_flight("solo", 600)
+        result = preprocess_flights(df, min_duration_s=240, smooth=False)
+        assert len(result) > 0
+        assert result["meta_flight_id"].unique().to_list() == ["solo"]
+        diffs = result["raw_timestamp"].diff().dt.total_seconds().drop_nulls()
+        assert (diffs == 4.0).all()
