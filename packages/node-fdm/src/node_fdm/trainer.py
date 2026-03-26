@@ -311,9 +311,13 @@ class ODETrainer:
         means: list[float] = []
         stds: list[float] = []
         for col in self.spec.x_cols:
-            stats = self.stats_dict.get(col, {"mean": 0.0, "std": 1.0})
+            stats = self.stats_dict.get(col, {"mean": 0.0, "std": 1.0, "iqr": 1.0})
             means.append(stats["mean"])
-            stds.append(stats["std"])
+            # Use IQR 0.5-99.5 for loss normalization when available.
+            # IQR is robust to the cruise-dominated distribution that
+            # makes std too small for gamma (→ 100% of loss) and too
+            # large for altitude (→ 0% of loss).
+            stds.append(stats.get("iqr", stats["std"]))
         return (
             torch.tensor(means, device=self.device),
             torch.tensor(stds, device=self.device),
