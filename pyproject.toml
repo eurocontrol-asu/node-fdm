@@ -17,6 +17,8 @@ dependencies = [
     "node-fdm",
     "node-fdm-bada",
     "node-fdm-pipeline",
+    "matplotlib>=3.10.8",
+    "traffic>=2.10",
 ]
 
 [project.urls]
