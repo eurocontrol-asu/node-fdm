@@ -3,12 +3,10 @@
 AXM-806: initial gamma_diff support.
 AXM-810: NaN-aware gamma_diff — NaN target yields zero diff, not -gamma.
 
-Validates that:
-- TrajectoryLayer computes gamma difference (target - current) when gamma_sel is in col_map.
-- Output includes fdm_gamma_diff_rad when properly configured.
-- Backward compatibility: no gamma_diff output when gamma_sel not in col_map.
-- NODE_ADSB_V1 spec includes fdm_gamma_diff_rad in StructuredLayer input_cols.
-- NaN-aware: NaN gamma_target → gamma_diff = 0 (not -gamma).
+After removing GammaDefaultNet:
+- known=1: gamma_diff = target - gamma
+- known=0: gamma_diff = 0
+- gamma_known flag is passed through to output
 """
 
 from __future__ import annotations
@@ -99,6 +97,11 @@ class TestAdsbGammaDiffSpec:
         assert "gamma_sel" in trajectory_col_map
         assert trajectory_col_map["gamma_sel"] == "fdm_gamma_target_rad"
 
+    def test_adsb_structured_input_has_gamma_known(self) -> None:
+        """fdm_gamma_target_known flag in StructuredLayer input_cols."""
+        spec = get("node_adsb_v1")
+        assert "fdm_gamma_target_known" in spec.layers[1].input_cols
+
 
 # ---------------------------------------------------------------------------
 # Functional tests
@@ -131,12 +134,12 @@ class TestAdsbForwardPassWithGammaDiff:
 
 
 # ---------------------------------------------------------------------------
-# Edge cases
+# Known / Unknown gamma_diff tests
 # ---------------------------------------------------------------------------
 
 
-class TestGammaDiffLearnableDefault:
-    """Gamma diff uses known mask + learnable default when target is unknown."""
+class TestGammaDiffKnownUnknown:
+    """gamma_diff = known * (target - gamma); 0 when unknown."""
 
     _col_map: ClassVar[dict[str, str]] = {
         "tas": "era_tas_ms",
@@ -156,38 +159,22 @@ class TestGammaDiffLearnableDefault:
             "fdm_long_wind_ms": torch.tensor([10.0, 5.0]),
         }
 
-    def test_gamma_diff_unknown_uses_default(self) -> None:
-        """known=0 → gamma_diff ≈ gamma_default - gamma (learnable)."""
-        layer = TrajectoryLayer(
-            col_map=self._col_map,
-            input_stats={
-                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
-                "era_tas_ms": {"mean": 250.0, "std": 40.0},
-            },
-        )
+    def test_gamma_diff_unknown_is_zero(self) -> None:
+        """known=0 → gamma_diff = 0."""
+        layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
-        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.0])  # filled value (was NaN)
-        x["fdm_gamma_target_known"] = torch.tensor([0.0, 0.0])  # unknown
+        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.0])
+        x["fdm_gamma_target_known"] = torch.tensor([0.0, 0.0])
 
         output = layer(x)
 
         assert "fdm_gamma_diff_rad" in output
-        # Small-init net outputs near 0, so gamma_diff ≈ small - gamma
-        gamma = torch.tensor([0.05, -0.03])
-        diff = output["fdm_gamma_diff_rad"]
-        assert torch.allclose(diff, -gamma, atol=0.2)
-        assert torch.isfinite(diff).all()
+        assert torch.allclose(output["fdm_gamma_diff_rad"], torch.zeros(2), atol=1e-6)
 
     def test_gamma_diff_known_uses_target(self) -> None:
         """known=1 → gamma_diff = target - gamma."""
-        layer = TrajectoryLayer(
-            col_map=self._col_map,
-            input_stats={
-                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
-                "era_tas_ms": {"mean": 250.0, "std": 40.0},
-            },
-        )
+        layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
         x["fdm_gamma_rad"] = torch.tensor([0.03, 0.03])
@@ -200,39 +187,30 @@ class TestGammaDiffLearnableDefault:
         assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
 
     def test_gamma_diff_mixed_known_unknown(self) -> None:
-        """Mixed known/unknown: target where known=1, default where known=0."""
-        layer = TrajectoryLayer(
-            col_map=self._col_map,
-            input_stats={
-                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
-                "era_tas_ms": {"mean": 250.0, "std": 40.0},
-            },
-        )
+        """Mixed: target where known=1, zero where known=0."""
+        layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
-        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.02])  # [filled, real]
-        x["fdm_gamma_target_known"] = torch.tensor([0.0, 1.0])  # [unknown, known]
+        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.02])
+        x["fdm_gamma_target_known"] = torch.tensor([0.0, 1.0])
 
         output = layer(x)
 
-        # idx 0: unknown → gamma_default(small) - 0.05 ≈ -0.05
-        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(-0.05), atol=0.2)
-        # idx 1: known → 0.02 - (-0.03) = 0.05 (exact, net bypassed)
+        # idx 0: unknown → 0
+        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(0.0), atol=1e-6)
+        # idx 1: known → 0.02 - (-0.03) = 0.05
         assert torch.isclose(output["fdm_gamma_diff_rad"][1], torch.tensor(0.05), atol=1e-6)
 
-    def test_gamma_default_is_learnable(self) -> None:
-        """gamma_default_net is an nn.Module with trainable parameters."""
-        layer = TrajectoryLayer(
-            col_map=self._col_map,
-            input_stats={
-                "raw_alt_m": {"mean": 5000.0, "std": 3000.0},
-                "era_tas_ms": {"mean": 250.0, "std": 40.0},
-            },
-        )
-        assert hasattr(layer, "gamma_default_net")
-        params = list(layer.gamma_default_net.parameters())
-        assert len(params) > 0
-        assert all(p.requires_grad for p in params)
+    def test_no_trainable_parameters(self) -> None:
+        """TrajectoryLayer has no trainable parameters (GammaNet removed)."""
+        layer = TrajectoryLayer(col_map=self._col_map)
+        params = list(layer.parameters())
+        assert len(params) == 0
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
 
 
 class TestTrajectoryGammaDiffEdgeCases:

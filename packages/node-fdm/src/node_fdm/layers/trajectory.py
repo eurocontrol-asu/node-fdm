@@ -15,7 +15,6 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from node_fdm.layers.blocks import GammaDefaultNet
 from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, T0, R
 
 __all__ = [
@@ -93,36 +92,14 @@ class TrajectoryLayer(nn.Module):
             col_map: Mapping from canonical names (``"tas"``, ``"gamma"``,
                 ``"alt"``, ``"wind"``, ``"alt_sel"``, ``"vz"``, ``"gs"``,
                 ``"mach"``, ``"cas"``, ``"alt_diff"``, ``"tas_sel"``,
-                ``"tas_diff"``, ``"gamma_sel"``, ``"gamma_diff"``) to
-                actual column names in the input dict.  Missing keys fall
-                back to ``DEFAULT_COL_MAP`` (OpenSky naming).
-            input_stats: Optional column statistics ``{col_name: {"mean": ...,
-                "std": ...}}``.  Used to build normalization buffers for
-                :class:`GammaDefaultNet`.  The mapping uses actual column
-                names (not canonical names); the ``col_map`` resolves them.
+                ``"tas_diff"``, ``"gamma_sel"``, ``"gamma_diff"``,
+                ``"gamma_known"``) to actual column names in the input
+                dict.  Missing keys fall back to ``DEFAULT_COL_MAP``.
+            input_stats: Optional column statistics (unused, kept for
+                backward-compatible call-sites).
         """
         super().__init__()
         self.col_map = {**DEFAULT_COL_MAP, **(col_map or {})}
-
-        # Build GammaDefaultNet input stats from col_map → canonical keys
-        gamma_net_stats: dict[str, dict[str, float]] | None = None
-        if input_stats:
-            c = self.col_map
-            gamma_net_stats = {}
-            for canonical, col_name in [
-                ("alt", c["alt"]),
-                ("tas", c["tas"]),
-                ("vz", c["vz"]),
-                ("alt_diff", c.get("alt_diff", "")),
-            ]:
-                if col_name and col_name in input_stats:
-                    gamma_net_stats[canonical] = input_stats[col_name]
-
-        self.gamma_default_net = GammaDefaultNet(
-            hidden_dim=8,
-            num_layers=1,
-            input_stats=gamma_net_stats,
-        )
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Compute derived trajectory quantities from input mapping.
@@ -192,20 +169,24 @@ class TrajectoryLayer(nn.Module):
             tas_target = torch.nan_to_num(x[tas_sel_col], nan=0.0)
             output[c["tas_diff"]] = tas_target - tas
 
-        # Gamma difference from selected gamma target (learnable default)
+        # Gamma difference from selected gamma target
+        # When known=1: gamma_diff = target - gamma (FMS consigne)
+        # When known=0: gamma_diff = 0 (no target, StructuredLayer uses
+        #   alt_diff + gamma_known flag to decide d_gamma)
         gamma_sel_col = c.get("gamma_sel", "")
-        gamma_known_col = c.get("gamma_known", "")
         if gamma_sel_col and gamma_sel_col in x:
             target = x[gamma_sel_col]
+            gamma_known_col = c.get("gamma_known", "")
             if gamma_known_col and gamma_known_col in x:
                 known = x[gamma_known_col]
-                vz = output[c["vz"]]
-                ad = output.get(c["alt_diff"], torch.zeros_like(alt))
-                gamma_pred = self.gamma_default_net(alt, tas, vz, ad)
-                gamma_diff = known * (target - gamma) + (1 - known) * (gamma_pred - gamma)
+                gamma_diff = known * (target - gamma)
             else:
-                # Fallback: no mask available, assume all known
                 gamma_diff = target - gamma
             output[c["gamma_diff"]] = gamma_diff
+
+        # Pass through gamma_known flag for the StructuredLayer
+        gamma_known_col = c.get("gamma_known", "")
+        if gamma_known_col and gamma_known_col in x:
+            output[gamma_known_col] = x[gamma_known_col]
 
         return output

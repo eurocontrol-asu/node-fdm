@@ -26,7 +26,7 @@ from node_fdm.trainer import ODETrainer, TrainingConfig
 _SPEC = get("node_adsb_v1")
 _DX_COL_NAMES = [col for _, col in _SPEC.dx_cols]
 _ODE_LAYER = next(ly for ly in _SPEC.layers if ly.trainable)
-_U_ODE_COLS = [c for c in _SPEC.u_cols if c in _ODE_LAYER.input_cols]
+_U_ODE_COLS: list[str] = []  # node_adsb_v1 feeds no U_COLS to the ODE layer
 
 
 def _make_samples(n: int = 20, seq_len: int = 10) -> list[FlightSample]:

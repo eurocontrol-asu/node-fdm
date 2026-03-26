@@ -34,7 +34,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
             name="trajectory",
             layer_class="node_fdm.layers.trajectory.TrajectoryLayer",
             input_cols=X_COLS + U_COLS + E0_COLS,
-            output_cols=E1_COLS,
+            output_cols=[*E1_COLS, "fdm_gamma_target_known"],
             trainable=False,
             config={
                 "col_map": {
@@ -59,7 +59,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
         LayerSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
-            input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS,
+            input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS + ["fdm_gamma_target_known"],
             output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms"],
             trainable=True,
             config={"denormalize_modes": {"fdm_d_gamma_rads": "scaled", "fdm_d_tas_ms": "scaled"}},

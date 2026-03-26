@@ -65,6 +65,7 @@ class StructuredLayer(nn.Module):
         _activations = activations or {}
 
         def head_factory(col: str) -> Head:
+            """Build a Head module for the given output column."""
             return Head(
                 backbone_dim,
                 hidden_dim=head_dim,
