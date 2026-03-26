@@ -635,8 +635,7 @@ def enrich(
     except ImportError:
         log.error(
             "fastmeteo_missing",
-            msg="fastmeteo is required for ERA5 enrichment. "
-            "Install with: pip install fastmeteo",
+            msg="fastmeteo is required for ERA5 enrichment. Install with: pip install fastmeteo",
         )
         raise SystemExit(1) from None
 

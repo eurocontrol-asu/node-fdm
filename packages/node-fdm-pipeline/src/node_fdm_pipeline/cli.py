@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Annotated
 
 import cyclopts
+import structlog
 
 __all__ = [
     "app",
     "main",
 ]
+
+log = structlog.get_logger()
 
 app = cyclopts.App(
     name="fdm",
@@ -78,6 +81,13 @@ def train(
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
     ] = "cpu",
+    model_name: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--model-name",
+            help="Custom model name (default: {arch}_{typecode})",
+        ),
+    ] = None,
     lambda_tracking: Annotated[
         float | None,
         cyclopts.Parameter(
@@ -100,6 +110,7 @@ def train(
         seq_len=seq_len,
         shift=shift,
         device=device,
+        model_name=model_name,
         lambda_tracking=lambda_tracking,
     )
 

@@ -28,6 +28,7 @@ def run_training(
     seq_len: int | None = None,
     shift: int | None = None,
     device: str = "cpu",
+    model_name: str | None = None,
     lambda_tracking: float | None = None,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
@@ -43,6 +44,7 @@ def run_training(
         seq_len: Override sequence length for training windows.
         shift: Override shift between windows (defaults to seq_len).
         device: PyTorch device string (e.g. ``"cpu"``, ``"cuda:0"``).
+        model_name: Custom model name (default: ``{arch}_{typecode}``).
     """
     import polars as pl
     from node_fdm.loader import get_train_val_data
@@ -88,7 +90,7 @@ def run_training(
 
         training_config = TrainingConfig(
             architecture_name=info.name,
-            model_name=f"{info.name}_{acft}",
+            model_name=model_name or f"{info.name}_{acft}",
             model_params=(3, 2, 48),
             step=4.0,
             shift=shift or effective_seq_len,
