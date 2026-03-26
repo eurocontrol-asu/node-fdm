@@ -75,7 +75,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
     dx_bounds={
         "fdm_d_vz_ms": (-50.0, 50.0),
         "fdm_d_gamma_rads": (-0.03, 0.03),
-        "fdm_d_tas_ms": (-5.0, 5.0),
+        "fdm_d_tas_ms": (-12.5, 12.5),
     },
 )
 
