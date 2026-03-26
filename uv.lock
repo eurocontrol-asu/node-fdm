@@ -307,10 +307,12 @@ name = "axm-fdm-workspace"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [
+    { name = "matplotlib" },
     { name = "node-fdm" },
     { name = "node-fdm-bada" },
     { name = "node-fdm-data" },
     { name = "node-fdm-pipeline" },
+    { name = "traffic" },
 ]
 
 [package.dev-dependencies]
@@ -320,10 +322,12 @@ dev = [
 
 [package.metadata]
 requires-dist = [
+    { name = "matplotlib", specifier = ">=3.10.8" },
     { name = "node-fdm", editable = "packages/node-fdm" },
     { name = "node-fdm-bada", editable = "packages/node-fdm-bada" },
     { name = "node-fdm-data", editable = "packages/node-fdm-data" },
     { name = "node-fdm-pipeline", editable = "packages/node-fdm-pipeline" },
+    { name = "traffic", specifier = ">=2.10" },
 ]
 
 [package.metadata.requires-dev]
@@ -2756,7 +2760,9 @@ dependencies = [
 [package.dev-dependencies]
 dev = [
     { name = "mypy" },
+    { name = "pandas" },
     { name = "pre-commit" },
+    { name = "pyarrow" },
     { name = "pytest" },
     { name = "pytest-cov" },
     { name = "pytest-mock" },
@@ -2780,7 +2786,9 @@ requires-dist = [
 [package.metadata.requires-dev]
 dev = [
     { name = "mypy", specifier = ">=1.13" },
+    { name = "pandas", specifier = ">=2.0" },
     { name = "pre-commit", specifier = ">=4.0" },
+    { name = "pyarrow", specifier = ">=17.0" },
     { name = "pytest", specifier = ">=8.0" },
     { name = "pytest-cov", specifier = ">=4.0" },
     { name = "pytest-mock", specifier = ">=3.0" },
