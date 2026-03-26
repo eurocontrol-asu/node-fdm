@@ -45,7 +45,7 @@ fdm evaluate --arch opensky --config config.yaml
 
 ## Development
 
-<!-- 102 tests -->
+<!-- 167 tests -->
 ```bash
 uv run pytest packages/node-fdm-pipeline/ -q
 uv run ruff check packages/node-fdm-pipeline/

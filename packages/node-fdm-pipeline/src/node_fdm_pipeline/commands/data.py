@@ -168,7 +168,7 @@ def _rename_to_v3(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
     return df.with_columns(pl.lit(batch_date).alias("meta_batch_date"))
 
 
-def download(  # noqa: PLR0915
+def download(  # noqa: PLR0912, PLR0915
     *,
     config: Path,
     start_date: str,
@@ -257,7 +257,10 @@ def download(  # noqa: PLR0915
 
             if decoded_flights:
                 merged = Traffic.from_flights(decoded_flights)
-                df = pl.from_pandas(merged.data)
+                if merged is not None:
+                    df = pl.from_pandas(merged.data)
+                else:
+                    df = pl.from_pandas(history.data)
             else:
                 df = pl.from_pandas(history.data)
         else:

@@ -17,6 +17,7 @@ from node_fdm_pipeline.commands.data import (
     download,
     flag,
     identify,
+    preprocess,
     segments,
 )
 
@@ -325,6 +326,27 @@ class TestJoinFlightlistInline:
             }
         )
         result = _join_flightlist_inline(df, fl)
+        assert result["meta_departure"].null_count() == len(result)
+
+    def test_join_empty_flightlist(self) -> None:
+        """Empty flightlist DataFrame → meta columns are null."""
+        import pandas as pd
+
+        df = self._make_batch_df()
+        fl = pd.DataFrame(
+            {"icao24": [], "callsign": [], "departure": [], "arrival": [], "typecode": []}
+        )
+        result = _join_flightlist_inline(df, fl)
+        assert result["meta_departure"].null_count() == len(result)
+
+    def test_join_flightlist_missing_columns(self) -> None:
+        """Flightlist without departure/arrival/typecode → meta columns are null."""
+        import pandas as pd
+
+        df = self._make_batch_df()
+        fl = pd.DataFrame({"icao24": ["abc123"], "callsign": ["TEST01"]})
+        result = _join_flightlist_inline(df, fl)
+        assert "meta_departure" in result.columns
         assert result["meta_departure"].null_count() == len(result)
 
 
@@ -1090,3 +1112,272 @@ typecodes:
         assert len(check_cols) > 0, "No SI/derivative columns produced"
         for col in check_cols:
             assert first[col].to_list() == second[col].to_list(), f"{col} changed on re-run"
+
+
+# ---------------------------------------------------------------------------
+# download mock tests (AC1)
+# ---------------------------------------------------------------------------
+
+
+class TestDownloadMock:
+    """Tests for download with mocked OpenSky API."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path) -> Path:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(exist_ok=True)
+        (data_dir / "aircraft_db.csv").write_text(
+            "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
+        )
+        config = tmp_path / "config.yaml"
+        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        return config
+
+    def test_download_mock(self, tmp_path: Path) -> None:
+        """Full download with mocked OpenSky writes Delta table columns."""
+        from unittest.mock import MagicMock
+
+        import pandas as pd
+
+        config = self._make_config(tmp_path)
+
+        history_data = pd.DataFrame(
+            {
+                "timestamp": pd.date_range("2025-01-01 12:00", periods=5, freq="s"),
+                "icao24": ["abc123"] * 5,
+                "callsign": ["TEST01"] * 5,
+                "latitude": [48.0] * 5,
+                "longitude": [2.0] * 5,
+                "altitude": [35000.0] * 5,
+                "groundspeed": [440.0] * 5,
+                "track": [90.0] * 5,
+                "vertical_rate": [100.0] * 5,
+            }
+        )
+        mock_history = MagicMock()
+        mock_history.data = history_data
+
+        mock_opensky = MagicMock()
+        mock_opensky.history.return_value = mock_history
+        mock_opensky.extended.return_value = None
+        mock_opensky.flightlist.return_value = None
+
+        mock_traffic_data = MagicMock()
+        mock_traffic_data.opensky = mock_opensky
+
+        written: list[pl.DataFrame] = []
+
+        with (
+            patch("node_fdm_pipeline.commands.data._require_traffic"),
+            patch.dict(
+                "sys.modules",
+                {
+                    "traffic": MagicMock(),
+                    "traffic.core": MagicMock(),
+                    "traffic.data": mock_traffic_data,
+                },
+            ),
+            patch(
+                "node_fdm_data.delta.write_columns",
+                side_effect=lambda df, _p: written.append(df),
+            ),
+        ):
+            download(
+                config=config,
+                start_date="2025-01-01",
+                end_date="2025-01-02",
+            )
+
+        assert len(written) == 1
+        df = written[0]
+        raw_cols = [c for c in df.columns if c.startswith("raw_")]
+        assert len(raw_cols) > 0
+        assert "meta_batch_date" in df.columns
+        assert "meta_departure" in df.columns
+        assert "meta_arrival" in df.columns
+        assert "meta_aircraft_type" in df.columns
+
+    def test_download_empty_history(self, tmp_path: Path) -> None:
+        """OpenSky returns None for history → no data written."""
+        from unittest.mock import MagicMock
+
+        config = self._make_config(tmp_path)
+
+        mock_opensky = MagicMock()
+        mock_opensky.history.return_value = None
+
+        mock_traffic_data = MagicMock()
+        mock_traffic_data.opensky = mock_opensky
+
+        mock_write = MagicMock()
+
+        with (
+            patch("node_fdm_pipeline.commands.data._require_traffic"),
+            patch.dict(
+                "sys.modules",
+                {
+                    "traffic": MagicMock(),
+                    "traffic.core": MagicMock(),
+                    "traffic.data": mock_traffic_data,
+                },
+            ),
+            patch("node_fdm_data.delta.write_columns", mock_write),
+        ):
+            download(
+                config=config,
+                start_date="2025-01-01",
+                end_date="2025-01-02",
+            )
+
+        mock_write.assert_not_called()
+
+
+# ---------------------------------------------------------------------------
+# preprocess mock tests (AC2)
+# ---------------------------------------------------------------------------
+
+
+class TestPreprocessPipeline:
+    """Tests for the preprocess function with mocked dependencies."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path) -> Path:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(exist_ok=True)
+        config = tmp_path / "config.yaml"
+        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        return config
+
+    def test_preprocess_pipeline(self, tmp_path: Path) -> None:
+        """Preprocess reads delta, resamples, and writes back."""
+        from datetime import UTC
+        from datetime import datetime as dt
+
+        config = self._make_config(tmp_path)
+
+        n = 10
+        df_input = pl.DataFrame(
+            {
+                "raw_timestamp": [dt(2025, 1, 1, 12, 0, i, tzinfo=UTC) for i in range(n)],
+                "raw_icao24": ["abc123"] * n,
+                "raw_callsign": ["TEST01"] * n,
+                "raw_lat_deg": [48.0 + i * 0.001 for i in range(n)],
+                "raw_lon_deg": [2.0] * n,
+                "raw_alt_ft": [35000.0] * n,
+                "meta_batch_date": ["20250101"] * n,
+                "meta_flight_id": ["abc123_TEST01_s0"] * n,
+            }
+        )
+
+        df_processed = df_input.head(5)
+
+        with (
+            patch("node_fdm_data.delta.read_delta_table", return_value=df_input),
+            patch(
+                "node_fdm_data.preprocessing.resample.preprocess_flights",
+                return_value=df_processed,
+            ),
+        ):
+            preprocess(config=config, dry_run=False)
+
+        delta_table = tmp_path / "data" / "flights.delta"
+        assert delta_table.exists()
+        result = pl.read_delta(str(delta_table))
+        assert len(result) == 5
+
+    def test_preprocess_dry_run(self, tmp_path: Path) -> None:
+        """Preprocess --dry-run validates config without modifying data."""
+        config = self._make_config(tmp_path)
+        preprocess(config=config, dry_run=True)
+
+
+# ---------------------------------------------------------------------------
+# convert mock tests (AC3)
+# ---------------------------------------------------------------------------
+
+
+class TestConvertToSI:
+    """Tests for the convert function with mocked dependencies."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path) -> Path:
+        data_dir = tmp_path / "data"
+        data_dir.mkdir(exist_ok=True)
+        config = tmp_path / "config.yaml"
+        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        return config
+
+    def test_convert_pipeline(self, tmp_path: Path) -> None:
+        """Convert reads delta, applies SI + derivatives, writes back."""
+        config = self._make_config(tmp_path)
+
+        df_input = pl.DataFrame(
+            {
+                "raw_alt_ft": [35000.0, 35100.0],
+                "raw_gs_kt": [440.0, 441.0],
+                "meta_batch_date": ["20250101", "20250101"],
+            }
+        )
+
+        df_si = df_input.with_columns(pl.col("raw_alt_ft").alias("raw_alt_m"))
+        df_deriv = df_si.with_columns(pl.lit(0.0).alias("fdm_d_alt_ms"))
+
+        written: list[pl.DataFrame] = []
+
+        with (
+            patch("node_fdm_data.delta.read_delta_table", return_value=df_input),
+            patch("node_fdm_data.preprocessing.convert.convert_si", return_value=df_si),
+            patch(
+                "node_fdm_data.preprocessing.convert.compute_derivatives",
+                return_value=df_deriv,
+            ),
+            patch(
+                "node_fdm_data.delta.write_columns",
+                side_effect=lambda df, _p: written.append(df),
+            ),
+            patch("node_fdm_data.preprocessing.convert.SI_CONVERSIONS", []),
+            patch("node_fdm_data.preprocessing.convert.SI_DERIVATIVES", []),
+        ):
+            convert(config=config, dry_run=False)
+
+        assert len(written) == 1
+        result = written[0]
+        assert "raw_alt_m" in result.columns
+        assert "fdm_d_alt_ms" in result.columns
+
+    def test_convert_empty_table(self, tmp_path: Path) -> None:
+        """Convert with empty delta table processes without crash."""
+        config = self._make_config(tmp_path)
+
+        df_empty = pl.DataFrame(
+            {
+                "raw_alt_ft": pl.Series([], dtype=pl.Float64),
+                "meta_batch_date": pl.Series([], dtype=pl.Utf8),
+            }
+        )
+
+        written: list[pl.DataFrame] = []
+
+        with (
+            patch("node_fdm_data.delta.read_delta_table", return_value=df_empty),
+            patch("node_fdm_data.preprocessing.convert.convert_si", return_value=df_empty),
+            patch(
+                "node_fdm_data.preprocessing.convert.compute_derivatives",
+                return_value=df_empty,
+            ),
+            patch(
+                "node_fdm_data.delta.write_columns",
+                side_effect=lambda df, _p: written.append(df),
+            ),
+            patch("node_fdm_data.preprocessing.convert.SI_CONVERSIONS", []),
+            patch("node_fdm_data.preprocessing.convert.SI_DERIVATIVES", []),
+        ):
+            convert(config=config, dry_run=False)
+
+        assert len(written) == 1
+        assert len(written[0]) == 0
+
+    def test_convert_dry_run(self, tmp_path: Path) -> None:
+        """Convert --dry-run validates config without modifying data."""
+        config = self._make_config(tmp_path)
+        convert(config=config, dry_run=True)
