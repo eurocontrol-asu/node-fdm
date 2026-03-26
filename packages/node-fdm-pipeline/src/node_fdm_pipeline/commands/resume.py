@@ -26,6 +26,7 @@ def run_resume(
     overwrite: bool = False,
     device: str = "cpu",
     method: str | None = None,
+    model_name: str | None = None,
     lambda_tracking: float | None = None,
 ) -> None:
     """Resume training from a saved model checkpoint.
@@ -45,6 +46,7 @@ def run_resume(
         overwrite: Save back into the same model directory.
         device: PyTorch device string.
         method: Override ODE integration method (``"euler"`` or ``"rk4"``).
+        model_name: Custom output model name (default: same as source model).
         lambda_tracking: Tracking loss weight (0=disabled).
     """
     import polars as pl
@@ -103,7 +105,7 @@ def run_resume(
 
     training_config = TrainingConfig(
         architecture_name=meta.architecture_name,
-        model_name=model_name,
+        model_name=model_name or model.name,
         model_params=meta.model_params,
         step=meta.step,
         shift=effective_shift,

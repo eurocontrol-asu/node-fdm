@@ -158,6 +158,13 @@ def resume(
         str | None,
         cyclopts.Parameter(help="Override ODE integration method: euler or rk4"),
     ] = None,
+    model_name: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--model-name",
+            help="Custom output model name (default: same as source model)",
+        ),
+    ] = None,
     lambda_tracking: Annotated[
         float | None,
         cyclopts.Parameter(
@@ -180,6 +187,7 @@ def resume(
         overwrite=overwrite,
         device=device,
         method=method,
+        model_name=model_name,
         lambda_tracking=lambda_tracking,
     )
 
