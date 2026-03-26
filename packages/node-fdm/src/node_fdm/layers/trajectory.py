@@ -109,9 +109,13 @@ class TrajectoryLayer(nn.Module):
         if input_stats:
             c = self.col_map
             gamma_net_stats = {}
-            # alt → col_map["alt"], tas → col_map["tas"], vz → col_map["vz"]
-            for canonical, col_name in [("alt", c["alt"]), ("tas", c["tas"]), ("vz", c["vz"])]:
-                if col_name in input_stats:
+            for canonical, col_name in [
+                ("alt", c["alt"]),
+                ("tas", c["tas"]),
+                ("vz", c["vz"]),
+                ("alt_diff", c.get("alt_diff", "")),
+            ]:
+                if col_name and col_name in input_stats:
                     gamma_net_stats[canonical] = input_stats[col_name]
 
         self.gamma_default_net = GammaDefaultNet(
@@ -196,7 +200,8 @@ class TrajectoryLayer(nn.Module):
             if gamma_known_col and gamma_known_col in x:
                 known = x[gamma_known_col]
                 vz = output[c["vz"]]
-                gamma_pred = self.gamma_default_net(alt, tas, vz)
+                ad = output.get(c["alt_diff"], torch.zeros_like(alt))
+                gamma_pred = self.gamma_default_net(alt, tas, vz, ad)
                 gamma_diff = known * (target - gamma) + (1 - known) * (gamma_pred - gamma)
             else:
                 # Fallback: no mask available, assume all known

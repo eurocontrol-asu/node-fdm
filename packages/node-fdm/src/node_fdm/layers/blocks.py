@@ -120,22 +120,28 @@ class Head(MLPBlock):
 class GammaDefaultNet(nn.Module):
     """Context-aware default gamma predictor.
 
-    Takes altitude, TAS, and vertical speed as inputs and produces a
-    bounded scalar correction per batch element.  Output is clamped to
-    ±``max_gamma_rad`` (default 0.18 rad ≈ 10°) via tanh.
+    Takes altitude, TAS, vertical speed, and altitude difference
+    (alt_target - alt) as inputs and produces a bounded default gamma
+    per batch element.  Output is clamped to ±``max_gamma_rad``
+    (default 0.18 rad ≈ 10°) via tanh.
+
+    ``alt_diff`` carries the climb/descend intent: negative means
+    "above target → descend", positive means "below target → climb".
+    Without it the net cannot determine flight direction from state
+    alone (an aircraft at 5 000 m could be climbing or descending).
 
     Gamma is intentionally excluded from inputs to avoid a feedback
     loop (the net's output influences gamma via gamma_diff).  Vertical
     speed (``vz = tas * sin(gamma)``) is used instead to convey
-    climb/descent intent without creating a direct feedback path.
+    current climb/descent rate without creating a direct feedback path.
 
     When ``input_stats`` is provided, inputs are z-score normalized
     before the MLP to prevent tanh saturation on raw physical values
-    (alt ~10,000, TAS ~230).  Without normalization the MLP output
+    (alt ~10 000, TAS ~230).  Without normalization the MLP output
     is O(10³), tanh saturates to ±1, and gradients vanish.
     """
 
-    _INPUT_DIM: int = 3  # alt, tas, vz
+    _INPUT_DIM: int = 4  # alt, tas, vz, alt_diff
 
     _MAX_GAMMA_RAD: float = 0.18  # ≈ 10°, physical upper bound
 
@@ -145,6 +151,8 @@ class GammaDefaultNet(nn.Module):
     _std_tas: torch.Tensor
     _mean_vz: torch.Tensor
     _std_vz: torch.Tensor
+    _mean_alt_diff: torch.Tensor
+    _std_alt_diff: torch.Tensor
     _scale: torch.Tensor
 
     def __init__(
@@ -159,14 +167,14 @@ class GammaDefaultNet(nn.Module):
             hidden_dim: Hidden layer width.
             num_layers: Number of hidden layers.
             input_stats: Optional mapping ``{"alt": {"mean": ..., "std": ...},
-                "tas": ..., "vz": ...}`` for input z-score normalization.
-                Keys are canonical names (``"alt"``, ``"tas"``, ``"vz"``).
+                "tas": ..., "vz": ..., "alt_diff": ...}`` for input
+                z-score normalization.  Keys are canonical names.
         """
         super().__init__()
         self.register_buffer("_scale", torch.tensor(self._MAX_GAMMA_RAD))
 
         # Register normalization buffers (default: no-op identity)
-        _keys = ("alt", "tas", "vz")
+        _keys = ("alt", "tas", "vz", "alt_diff")
         for key in _keys:
             mean = 0.0
             std = 1.0
@@ -193,21 +201,24 @@ class GammaDefaultNet(nn.Module):
         alt: torch.Tensor,
         tas: torch.Tensor,
         vz: torch.Tensor,
+        alt_diff: torch.Tensor,
     ) -> torch.Tensor:
-        """Predict default gamma correction from flight context.
+        """Predict default gamma from flight context.
 
         Args:
             alt: Altitude tensor of shape ``(batch,)``.
             tas: True airspeed tensor of shape ``(batch,)``.
             vz: Vertical speed tensor of shape ``(batch,)``.
+            alt_diff: Altitude difference (target - current) ``(batch,)``.
 
         Returns:
-            Scalar correction per sample, shape ``(batch,)``.
+            Scalar gamma per sample, shape ``(batch,)``.
         """
         alt_n = (alt - self._mean_alt) / self._std_alt
         tas_n = (tas - self._mean_tas) / self._std_tas
         vz_n = (vz - self._mean_vz) / self._std_vz
-        x = torch.stack([alt_n, tas_n, vz_n], dim=-1)  # (batch, 3)
+        alt_diff_n = (alt_diff - self._mean_alt_diff) / self._std_alt_diff
+        x = torch.stack([alt_n, tas_n, vz_n, alt_diff_n], dim=-1)  # (batch, 4)
         out: torch.Tensor = torch.tanh(self.mlp(x).squeeze(-1)) * self._scale
         return out
 

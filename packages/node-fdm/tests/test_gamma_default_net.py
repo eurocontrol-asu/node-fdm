@@ -21,7 +21,7 @@ class TestGammaDefaultNetOutput:
         alt = torch.randn(4)
         gamma = torch.randn(4)
         tas = torch.randn(4)
-        out = net(alt, gamma, tas)
+        out = net(alt, gamma, tas, torch.randn(4))
         assert out.shape == (4,)
 
     def test_small_init_output(self) -> None:
@@ -30,7 +30,7 @@ class TestGammaDefaultNetOutput:
         alt = torch.randn(8)
         gamma = torch.randn(8)
         tas = torch.randn(8)
-        out = net(alt, gamma, tas)
+        out = net(alt, gamma, tas, torch.randn(8))
         # Output bounded by ±MAX_GAMMA_RAD (0.18)
         assert (out.abs() <= 0.18 + 1e-6).all()
         assert torch.isfinite(out).all()
@@ -41,7 +41,7 @@ class TestGammaDefaultNetOutput:
         alt = torch.randn(4, requires_grad=True)
         gamma = torch.randn(4)
         tas = torch.randn(4)
-        out = net(alt, gamma, tas)
+        out = net(alt, gamma, tas, torch.randn(4))
         out.sum().backward()
         assert alt.grad is not None
 
@@ -85,6 +85,7 @@ def _base_inputs(batch: int = 4) -> dict[str, torch.Tensor]:
         "gamma_rad": torch.full((batch,), 0.05),
         "altitude_m": torch.full((batch,), 5000.0),
         "long_wind_ms": torch.zeros(batch),
+        "alt_sel_m": torch.full((batch,), 6000.0),
     }
 
 
@@ -188,18 +189,18 @@ class TestGammaDefaultNetEdgeCases:
         """alt=15000 m → no NaN/Inf (clamped by normalization)."""
         net = GammaDefaultNet()
         alt = torch.full((4,), 15000.0)
-        gamma = torch.randn(4)
         tas = torch.randn(4)
-        out = net(alt, gamma, tas)
+        vz = torch.randn(4)
+        out = net(alt, tas, vz, torch.randn(4))
         assert torch.isfinite(out).all()
 
     def test_zero_tas(self) -> None:
         """tas=0 → no division by zero (multiplicative scaling only)."""
         net = GammaDefaultNet()
         alt = torch.randn(4)
-        gamma = torch.randn(4)
         tas = torch.zeros(4)
-        out = net(alt, gamma, tas)
+        vz = torch.randn(4)
+        out = net(alt, tas, vz, torch.randn(4))
         assert torch.isfinite(out).all()
 
     def test_no_gamma_sel_column(self) -> None:

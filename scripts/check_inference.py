@@ -134,11 +134,13 @@ tas_target = u_arr[:, tas_target_idx]
 # Compute per-timestep gamma_default from the net on TRUE trajectory
 gamma_target_raw = u_arr[:, gamma_target_idx]
 vz_true = tas_true * np.sin(gamma_true)
+alt_diff_true = alt_target - alt_true
 with torch.no_grad():
     gamma_default_true = gamma_net(
         torch.from_numpy(alt_true),
         torch.from_numpy(tas_true),
         torch.from_numpy(vz_true),
+        torch.from_numpy(alt_diff_true),
     ).numpy()
 
 # Effective gamma target: real target where known, net output where unknown
@@ -149,11 +151,13 @@ gamma_target = np.where(gamma_known == 1.0, gamma_target_raw, np.nan)  # gaps wh
 # Also compute net output on PREDICTED trajectory (for the diff subplot)
 n_pred = len(gamma_pred)
 vz_pred = tas_pred * np.sin(gamma_pred)
+alt_diff_pred = alt_target[:n_pred] - alt_pred
 with torch.no_grad():
     gamma_default_pred = gamma_net(
         torch.from_numpy(alt_pred.astype(np.float32)),
         torch.from_numpy(tas_pred.astype(np.float32)),
         torch.from_numpy(vz_pred.astype(np.float32)),
+        torch.from_numpy(alt_diff_pred.astype(np.float32)),
     ).numpy()
 
 # Stats for display
