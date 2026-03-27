@@ -29,7 +29,7 @@ _ADSB_E0_COLS = ["era_mach"]
 _ADSB_E1_COLS: list[str] = []
 _ADSB_DX_COLS: list[tuple[int, str]] = [
     (1, "fdm_d_gamma_rads"),
-    (1, "fdm_d_tas_ms"),
+    (1, "fdm_d_tas_ms2"),
 ]
 
 _ADSB_SPEC = ArchitectureSpec(
@@ -44,7 +44,7 @@ _ADSB_SPEC = ArchitectureSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
             input_cols=_ADSB_X_COLS + _ADSB_U_COLS + _ADSB_E0_COLS,
-            output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms"],
+            output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms2"],
             trainable=True,
         ),
     ],
@@ -54,7 +54,7 @@ _ADSB_SPEC = ArchitectureSpec(
     },
     dx_bounds={
         "fdm_d_gamma_rads": (-0.01, 0.01),
-        "fdm_d_tas_ms": (-5.0, 5.0),
+        "fdm_d_tas_ms2": (-5.0, 5.0),
     },
 )
 
@@ -341,7 +341,7 @@ class TestEdgeCases:
             },
             dx_bounds={
                 "fdm_d_gamma_rads": (-0.0001, 0.0001),
-                "fdm_d_tas_ms": (-0.01, 0.01),
+                "fdm_d_tas_ms2": (-0.01, 0.01),
             },
         )
         with warnings.catch_warnings():

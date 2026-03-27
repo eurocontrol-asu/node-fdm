@@ -96,7 +96,7 @@ GROUPS: list[tuple[str, str, list[tuple[str, str, dict[str, object]]]]] = [
         "Derivatives",
         "",
         [
-            ("fdm_d_tas_ms", "d(TAS)/dt [m/s²]", {"lw": 0.8}),
+            ("fdm_d_tas_ms2", "d(TAS)/dt [m/s²]", {"lw": 0.8}),
             ("fdm_d_vz_ms", "d(Vz)/dt [m/s²]", {"lw": 0.8}),
             ("fdm_d_gamma_rads", "d(gamma)/dt [rad/s]", {"lw": 0.8}),
         ],

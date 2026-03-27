@@ -79,5 +79,5 @@ E1_COLS: list[str] = [
 DX_COLS: list[tuple[int, str]] = [
     (1, "fdm_d_alt_ms"),
     (1, "fdm_d_gamma_rads"),
-    (1, "fdm_d_tas_ms"),
+    (1, "fdm_d_tas_ms2"),
 ]

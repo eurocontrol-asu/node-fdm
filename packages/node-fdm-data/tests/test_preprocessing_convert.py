@@ -249,7 +249,7 @@ class TestComputeDerivatives:
         """First value of each derivative uses backward_fill + fill_null(0.0)."""
         result = compute_derivatives(two_flights_df, dt=4.0)
         # First row should NOT be 0.0 — it's backward_fill of second row
-        for col in ("fdm_d_alt_ms", "fdm_d_gamma_rads", "fdm_d_tas_ms"):
+        for col in ("fdm_d_alt_ms", "fdm_d_gamma_rads", "fdm_d_tas_ms2"):
             assert col in result.columns
             # First value of flight A = second value (backward fill)
             a = result.filter(pl.col("meta_flight_id") == "A")
@@ -286,4 +286,4 @@ class TestComputeDerivatives:
         # diff of single row = null → backward_fill still null → fill_null(0.0)
         assert result["fdm_d_alt_ms"][0] == pytest.approx(0.0)
         assert result["fdm_d_gamma_rads"][0] == pytest.approx(0.0)
-        assert result["fdm_d_tas_ms"][0] == pytest.approx(0.0)
+        assert result["fdm_d_tas_ms2"][0] == pytest.approx(0.0)

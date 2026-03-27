@@ -60,9 +60,11 @@ NODE_ADSB_V1 = ArchitectureSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
             input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS + ["fdm_gamma_target_known"],
-            output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms"],
+            output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms2"],
             trainable=True,
-            config={"denormalize_modes": {"fdm_d_gamma_rads": "scaled", "fdm_d_tas_ms": "scaled"}},
+            config={
+                "denormalize_modes": {"fdm_d_gamma_rads": "scaled", "fdm_d_tas_ms2": "scaled"}
+            },
         ),
     ],
     preprocessing_fn="node_fdm_data.preprocessing.opensky.flight_processing",
@@ -75,7 +77,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
     dx_bounds={
         "fdm_d_alt_ms": (-50.0, 50.0),
         "fdm_d_gamma_rads": (-0.03, 0.03),
-        "fdm_d_tas_ms": (-12.5, 12.5),
+        "fdm_d_tas_ms2": (-12.5, 12.5),
     },
 )
 

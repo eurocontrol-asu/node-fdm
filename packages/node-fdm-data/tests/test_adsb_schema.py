@@ -44,7 +44,7 @@ class TestAdsbSchema:
         assert adsb.DX_COLS == [
             (1, "fdm_d_alt_ms"),
             (1, "fdm_d_gamma_rads"),
-            (1, "fdm_d_tas_ms"),
+            (1, "fdm_d_tas_ms2"),
         ]
 
 
