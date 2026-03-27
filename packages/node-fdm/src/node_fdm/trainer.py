@@ -160,7 +160,7 @@ class ODETrainer:
 
         # Model stats: include e1 so StructuredLayer inputs are normalized.
         # compute_stats skips e1 columns already covered by DX, so no
-        # overwrite risk for overlapping columns like fdm_d_vz_ms.
+        # overwrite risk for overlapping columns like fdm_d_alt_ms.
         model_stats = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
 
         self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(

@@ -43,7 +43,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "alt": "raw_alt_m",
                     "wind": "fdm_long_wind_ms",
                     "alt_sel": "fdm_alt_target_m",
-                    "vz": "fdm_d_vz_ms",
+                    "vz": "fdm_d_alt_ms",
                     "gs": "raw_gs_ms",
                     "mach": "era_mach",
                     "cas": "fdm_cas_ms",
@@ -73,7 +73,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
         "era_tas_ms": (0.0, 350.0),
     },
     dx_bounds={
-        "fdm_d_vz_ms": (-50.0, 50.0),
+        "fdm_d_alt_ms": (-50.0, 50.0),
         "fdm_d_gamma_rads": (-0.03, 0.03),
         "fdm_d_tas_ms": (-12.5, 12.5),
     },

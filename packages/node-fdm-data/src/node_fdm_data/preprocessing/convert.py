@@ -50,7 +50,7 @@ SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
 
 # Derivative table: (source_si_col, target_deriv_col)
 SI_DERIVATIVES: list[tuple[str, str]] = [
-    ("raw_alt_m", "fdm_d_vz_ms"),
+    ("raw_alt_m", "fdm_d_alt_ms"),
     ("fdm_gamma_rad", "fdm_d_gamma_rads"),
     ("era_tas_ms", "fdm_d_tas_ms"),
 ]
@@ -64,7 +64,7 @@ DELTA_DIFFS: list[tuple[str, str, str]] = [
 ]
 
 DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
-    "fdm_d_vz_ms": (-75.0, 75.0),
+    "fdm_d_alt_ms": (-75.0, 75.0),
     "fdm_d_gamma_rads": (-0.025, 0.025),
     "fdm_d_tas_ms": (-12.5, 12.5),
 }

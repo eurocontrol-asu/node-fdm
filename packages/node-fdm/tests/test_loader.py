@@ -183,7 +183,7 @@ class TestGetTrainValData:
                         "fdm_ades_dist_m": float(rng.uniform(0, 500000)),
                         "era_temp_K": 220.0,
                         "raw_gs_ms": float(np.linspace(100, 250, n)[j]),
-                        "fdm_d_vz_ms": float(rng.uniform(-1, 1)),
+                        "fdm_d_alt_ms": float(rng.uniform(-1, 1)),
                         "fdm_d_gamma_rads": float(rng.uniform(-0.01, 0.01)),
                         "fdm_d_tas_ms": float(rng.uniform(-1, 1)),
                     }

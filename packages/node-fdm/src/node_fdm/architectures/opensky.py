@@ -34,7 +34,7 @@ OPENSKY_2025 = ArchitectureSpec(
                     "alt": "raw_alt_m",
                     "wind": "fdm_long_wind_ms",
                     "alt_sel": "fdm_mcp_alt_sel_m",
-                    "vz": "fdm_d_vz_ms",
+                    "vz": "fdm_d_alt_ms",
                     "gs": "raw_gs_ms",
                     "mach": "era_mach",
                     "cas": "bds_ias_ms",

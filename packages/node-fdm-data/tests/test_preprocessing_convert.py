@@ -15,7 +15,7 @@ from node_fdm_data.preprocessing.convert import (
 try:
     from node_fdm_data.preprocessing.convert import DERIVATIVE_BOUNDS
 except ImportError:
-    DERIVATIVE_BOUNDS = {"fdm_d_vz_ms": (-75.0, 75.0)}
+    DERIVATIVE_BOUNDS = {"fdm_d_alt_ms": (-75.0, 75.0)}
 
 
 class TestConvertSI:
@@ -209,9 +209,9 @@ class TestComputeDerivatives:
         a = result.filter(pl.col("meta_flight_id") == "A")
         # raw_alt_m = [0, 100, 300] → diff = [null, 100, 200] → /4 = [null, 25, 50]
         # backward_fill → [25, 25, 50]
-        assert a["fdm_d_vz_ms"][0] == pytest.approx(25.0)
-        assert a["fdm_d_vz_ms"][1] == pytest.approx(25.0)
-        assert a["fdm_d_vz_ms"][2] == pytest.approx(50.0)
+        assert a["fdm_d_alt_ms"][0] == pytest.approx(25.0)
+        assert a["fdm_d_alt_ms"][1] == pytest.approx(25.0)
+        assert a["fdm_d_alt_ms"][2] == pytest.approx(50.0)
 
     def test_derivatives_clipped(self) -> None:
         """Aberrant derivatives are clipped to physical bounds."""
@@ -224,8 +224,8 @@ class TestComputeDerivatives:
             }
         )
         result = compute_derivatives(df, dt=4.0)
-        _, hi = DERIVATIVE_BOUNDS["fdm_d_vz_ms"]
-        assert result["fdm_d_vz_ms"][2] == pytest.approx(hi)  # 75.0
+        _, hi = DERIVATIVE_BOUNDS["fdm_d_alt_ms"]
+        assert result["fdm_d_alt_ms"][2] == pytest.approx(hi)  # 75.0
 
     def test_derivatives_per_flight(self, two_flights_df: pl.DataFrame) -> None:
         """Derivatives restart for each meta_flight_id (no cross-flight bleed)."""
@@ -234,22 +234,22 @@ class TestComputeDerivatives:
         # Flight A: diff(raw_alt_m) = [null, 100, 200] → /4 → [null, 25, 50]
         # backward_fill → [25, 25, 50]
         a = result.filter(pl.col("meta_flight_id") == "A")
-        assert a["fdm_d_vz_ms"][0] == pytest.approx(25.0)  # backward fill
-        assert a["fdm_d_vz_ms"][1] == pytest.approx(25.0)
-        assert a["fdm_d_vz_ms"][2] == pytest.approx(50.0)
+        assert a["fdm_d_alt_ms"][0] == pytest.approx(25.0)  # backward fill
+        assert a["fdm_d_alt_ms"][1] == pytest.approx(25.0)
+        assert a["fdm_d_alt_ms"][2] == pytest.approx(50.0)
 
         # Flight B: diff(raw_alt_m) = [null, 200, 300] → /4 → [null, 50, 75]
         # backward_fill → [50, 50, 75]
         b = result.filter(pl.col("meta_flight_id") == "B")
-        assert b["fdm_d_vz_ms"][0] == pytest.approx(50.0)  # backward fill
-        assert b["fdm_d_vz_ms"][1] == pytest.approx(50.0)
-        assert b["fdm_d_vz_ms"][2] == pytest.approx(75.0)
+        assert b["fdm_d_alt_ms"][0] == pytest.approx(50.0)  # backward fill
+        assert b["fdm_d_alt_ms"][1] == pytest.approx(50.0)
+        assert b["fdm_d_alt_ms"][2] == pytest.approx(75.0)
 
     def test_derivatives_first_value(self, two_flights_df: pl.DataFrame) -> None:
         """First value of each derivative uses backward_fill + fill_null(0.0)."""
         result = compute_derivatives(two_flights_df, dt=4.0)
         # First row should NOT be 0.0 — it's backward_fill of second row
-        for col in ("fdm_d_vz_ms", "fdm_d_gamma_rads", "fdm_d_tas_ms"):
+        for col in ("fdm_d_alt_ms", "fdm_d_gamma_rads", "fdm_d_tas_ms"):
             assert col in result.columns
             # First value of flight A = second value (backward fill)
             a = result.filter(pl.col("meta_flight_id") == "A")
@@ -270,7 +270,7 @@ class TestComputeDerivatives:
             }
         )
         result = compute_derivatives(df)
-        assert "fdm_d_vz_ms" not in result.columns
+        assert "fdm_d_alt_ms" not in result.columns
 
     def test_single_row_flight(self) -> None:
         """A single-row flight produces 0.0 derivatives (fill_null fallback)."""
@@ -284,6 +284,6 @@ class TestComputeDerivatives:
         )
         result = compute_derivatives(df)
         # diff of single row = null → backward_fill still null → fill_null(0.0)
-        assert result["fdm_d_vz_ms"][0] == pytest.approx(0.0)
+        assert result["fdm_d_alt_ms"][0] == pytest.approx(0.0)
         assert result["fdm_d_gamma_rads"][0] == pytest.approx(0.0)
         assert result["fdm_d_tas_ms"][0] == pytest.approx(0.0)

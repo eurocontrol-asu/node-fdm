@@ -6,7 +6,7 @@ pass through unnormalized — breaking the O(1) input assumption.
 
 Validates that:
 - model_stats includes E1 column statistics after the fix.
-- Overlapping columns (e.g. fdm_d_vz_ms in both DX and E1) keep DX stats.
+- Overlapping columns (e.g. fdm_d_alt_ms in both DX and E1) keep DX stats.
 - StructuredLayer normalizes ALL inputs (including E1) to O(1) magnitude.
 """
 
@@ -97,7 +97,7 @@ class TestE1StatsNoOverwriteDx:
     """When a column appears in both DX and E1, DX stats must be preserved."""
 
     def test_e1_stats_no_overwrite_dx(self) -> None:
-        """fdm_d_vz_ms is in both dx_cols and e1_cols.
+        """fdm_d_alt_ms is in both dx_cols and e1_cols.
 
         compute_stats with e1_cols must keep the DX-derived statistics
         (computed first from the main data tensor), not overwrite them
@@ -134,9 +134,9 @@ class TestE1StatsNoOverwriteDx:
             e1_cols=_SPEC.e1_cols,
         )
 
-        overlap_col = "fdm_d_vz_ms"
-        assert overlap_col in _DX_COL_NAMES, "Test assumption: fdm_d_vz_ms in dx_cols"
-        assert overlap_col in _SPEC.e1_cols, "Test assumption: fdm_d_vz_ms in e1_cols"
+        overlap_col = "fdm_d_alt_ms"
+        assert overlap_col in _DX_COL_NAMES, "Test assumption: fdm_d_alt_ms in dx_cols"
+        assert overlap_col in _SPEC.e1_cols, "Test assumption: fdm_d_alt_ms in e1_cols"
 
         # Stats must reflect the DX distribution, not E1
         assert abs(stats[overlap_col]["mean"] - dx_value) < 1.0, (

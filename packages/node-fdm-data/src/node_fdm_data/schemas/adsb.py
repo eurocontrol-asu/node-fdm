@@ -64,7 +64,7 @@ E0_COLS: list[str] = [
 # Environment at t (e1) — derived by trajectory layer
 # ---------------------------------------------------------------------------
 E1_COLS: list[str] = [
-    "fdm_d_vz_ms",
+    "fdm_d_alt_ms",
     "era_mach",
     "raw_gs_ms",
     "fdm_cas_ms",
@@ -77,7 +77,7 @@ E1_COLS: list[str] = [
 # Derivatives (dx) — sign and target column
 # ---------------------------------------------------------------------------
 DX_COLS: list[tuple[int, str]] = [
-    (1, "fdm_d_vz_ms"),
+    (1, "fdm_d_alt_ms"),
     (1, "fdm_d_gamma_rads"),
     (1, "fdm_d_tas_ms"),
 ]

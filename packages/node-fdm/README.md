@@ -51,7 +51,7 @@ spec = get("opensky_2025")
 print(spec.x_cols)   # ['distance_m', 'altitude_ft', 'gamma_rad', 'tas_kt']
 print(spec.layers)   # [LayerSpec(name='structured', ...), LayerSpec(name='trajectory', ...)]
 print(spec.x_bounds) # {} (no bounds) or {'raw_alt_m': (0.0, 15000.0), ...}
-print(spec.dx_bounds) # {} (no bounds) or {'fdm_d_vz_ms': (-10.0, 10.0), ...}
+print(spec.dx_bounds) # {} (no bounds) or {'fdm_d_alt_ms': (-10.0, 10.0), ...}
 
 # List all registered architectures
 print(list(REGISTRY.keys()))  # ['opensky_2025', 'qar', 'node_adsb_v1']
