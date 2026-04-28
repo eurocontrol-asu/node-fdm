@@ -49,6 +49,110 @@ class GammaFilterConfig(BaseModel):
     smooth_method: str = "savgol"
 
 
+def _interpolate_nans(y: np.ndarray, nan_mask: np.ndarray) -> np.ndarray | None:
+    valid = ~nan_mask
+    n_valid = int(valid.sum())
+    if n_valid >= 2:  # noqa: PLR2004
+        y[nan_mask] = np.interp(
+            np.flatnonzero(nan_mask),
+            np.flatnonzero(valid),
+            y[valid],
+        )
+        return y
+    if n_valid == 1:
+        y[nan_mask] = y[valid][0]
+        return y
+    return None
+
+
+def _smooth(y: np.ndarray, window: int, method: str) -> np.ndarray:
+    if method == "savgol":
+        win = min(window, len(y) - (len(y) % 2 == 0))
+        if win >= 3:  # noqa: PLR2004
+            smoothed: np.ndarray = savgol_filter(y, window_length=win, polyorder=2, mode="interp")
+            return smoothed
+        return y
+    return np.convolve(y, np.ones(window) / window, mode="same")
+
+
+def _make_segment(start: int, end_idx: int, y: np.ndarray) -> dict[str, Any]:
+    return {
+        "start_idx": start,
+        "end_idx": end_idx,
+        "var_mean": float(np.mean(y[start : end_idx + 1])),
+    }
+
+
+def _prepare_values(
+    values: np.ndarray,
+    smooth_window: int | None,
+    smooth_method: str,
+) -> np.ndarray | None:
+    y = np.array(values, dtype=np.float64, copy=True)
+    nan_mask = np.isnan(y)
+    has_nan = bool(nan_mask.any())
+    if has_nan:
+        interpolated = _interpolate_nans(y, nan_mask)
+        if interpolated is None:
+            return None
+        y = interpolated
+    if smooth_window is not None and smooth_window > 1:
+        y = _smooth(y, smooth_window, smooth_method)
+    if has_nan:
+        y[nan_mask] = np.nan
+    return y
+
+
+def _resolve_alt(alt_values: np.ndarray | None, *, use_alt: bool) -> np.ndarray | None:
+    if not use_alt:
+        return None
+    if alt_values is None:
+        msg = "alt_values required when use_alt=True"
+        raise ValueError(msg)
+    return np.asarray(alt_values, dtype=np.float64)
+
+
+def _point_passes(
+    i: int,
+    s: bool,
+    y: np.ndarray,
+    alt: np.ndarray | None,
+    alt_threshold: float,
+    min_abs_value: float | None,
+) -> bool:
+    if not s:
+        return False
+    if alt is not None and alt[i] <= alt_threshold:
+        return False
+    if min_abs_value is not None and np.abs(y[i]) <= min_abs_value:
+        return False
+    return True
+
+
+def _collect_segments(
+    y: np.ndarray,
+    stable: np.ndarray,
+    alt: np.ndarray | None,
+    alt_threshold: float,
+    min_abs_value: float | None,
+    min_len: int,
+) -> list[dict[str, Any]]:
+    segments: list[dict[str, Any]] = []
+    start: int | None = None
+    for i, s in enumerate(stable):
+        if _point_passes(i, bool(s), y, alt, alt_threshold, min_abs_value):
+            if start is None:
+                start = i
+            continue
+        if start is not None:
+            if i - start >= min_len:
+                segments.append(_make_segment(start, i - 1, y))
+            start = None
+    if start is not None and len(y) - start >= min_len:
+        segments.append(_make_segment(start, len(y) - 1, y))
+    return segments
+
+
 def detect_constant_segments(
     values: np.ndarray,
     *,
@@ -85,80 +189,13 @@ def detect_constant_segments(
         List of segment dicts, each with keys ``start_idx``,
         ``end_idx``, ``var_mean``.
     """
-    y = np.array(values, dtype=np.float64, copy=True)
-    nan_mask = np.isnan(y)
-
-    # Interpolate NaNs before smoothing (savgol can't handle them)
-    if nan_mask.any():
-        valid = ~nan_mask
-        if valid.sum() >= 2:  # noqa: PLR2004
-            y[nan_mask] = np.interp(
-                np.flatnonzero(nan_mask),
-                np.flatnonzero(valid),
-                y[valid],
-            )
-        elif valid.sum() == 1:
-            y[nan_mask] = y[valid][0]
-        else:
-            return []  # all NaN → no segments
-
-    # Smooth if requested
-    if smooth_window is not None and smooth_window > 1:
-        if smooth_method == "savgol":
-            win = min(smooth_window, len(y) - (len(y) % 2 == 0))
-            if win >= 3:  # noqa: PLR2004
-                y = savgol_filter(y, window_length=win, polyorder=2, mode="interp")
-        else:  # rolling
-            y = np.convolve(y, np.ones(smooth_window) / smooth_window, mode="same")
-
-    # Restore NaN positions — they break segment continuity
-    if nan_mask.any():
-        y[nan_mask] = np.nan
-
-    # Altitude array
-    alt: np.ndarray | None = None
-    if use_alt:
-        if alt_values is None:
-            msg = "alt_values required when use_alt=True"
-            raise ValueError(msg)
-        alt = np.asarray(alt_values, dtype=np.float64)
-
-    # Detect stable points
+    y = _prepare_values(values, smooth_window, smooth_method)
+    if y is None:
+        return []
+    alt = _resolve_alt(alt_values, use_alt=use_alt)
     dy = np.abs(np.diff(y))
     stable = np.concatenate(([False], dy < tol))
-
-    segments: list[dict[str, Any]] = []
-    start: int | None = None
-
-    for i, s in enumerate(stable):
-        cond_alt = (not use_alt) or (alt is not None and alt[i] > alt_threshold)
-        cond_abs = (min_abs_value is None) or (np.abs(y[i]) > min_abs_value)
-        cond = s and cond_alt and cond_abs
-
-        if cond and start is None:
-            start = i
-        elif (not cond) and start is not None:
-            if i - start >= min_len:
-                segments.append(
-                    {
-                        "start_idx": start,
-                        "end_idx": i - 1,
-                        "var_mean": float(np.mean(y[start:i])),
-                    }
-                )
-            start = None
-
-    # Close trailing segment
-    if start is not None and len(y) - start >= min_len:
-        segments.append(
-            {
-                "start_idx": start,
-                "end_idx": len(y) - 1,
-                "var_mean": float(np.mean(y[start:])),
-            }
-        )
-
-    return segments
+    return _collect_segments(y, stable, alt, alt_threshold, min_abs_value, min_len)
 
 
 def add_segment_column(
@@ -298,9 +335,16 @@ def build_selected_params(  # noqa: PLR0915
         df = add_segment_column(df, alt_segs, "fdm_alt_sel_ft")
 
     # --- Gamma from altitude hold (gamma=0 where alt plateau detected) ---
+    # First N timesteps of each segment are relaxed (NaN) so the model can
+    # freely correct altitude errors during the capture phase.
+    alt_hold_relax = int(config.get("alt_hold_relax", 15))
     if "fdm_alt_sel_ft" in df.columns:
         alt_sel = df["fdm_alt_sel_ft"].to_numpy()
         gamma_from_alt = np.where(np.isnan(alt_sel), np.nan, 0.0)
+        if alt_hold_relax > 0 and alt_cfg is not None:
+            for seg in alt_segs:
+                end = min(seg["start_idx"] + alt_hold_relax, seg["end_idx"] + 1)
+                gamma_from_alt[seg["start_idx"] : end] = np.nan
         df = df.with_columns(pl.Series("fdm_gamma_from_alt_rad", gamma_from_alt))
 
     # --- MCP altitude backfill (independent of alt segments) ---
