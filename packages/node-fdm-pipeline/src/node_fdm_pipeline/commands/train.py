@@ -7,13 +7,142 @@ and trains Neural ODE models per aircraft typecode.
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import structlog
+
+if TYPE_CHECKING:
+    import polars as pl
 
 __all__ = ["run_training"]
 
 log = structlog.get_logger()
+
+
+@dataclass(frozen=True)
+class _TrainOverrides:
+    epochs: int | None
+    batch_size: int | None
+    lr: float | None
+    method: str
+    seq_len: int | None
+    shift: int | None
+    model_name: str | None
+    lambda_tracking: float | None
+
+
+@dataclass(frozen=True)
+class _TrainContext:
+    info: Any
+    full_df: pl.DataFrame
+    dx_col_names: list[str]
+    models_dir: Path
+    device: str
+    overrides: _TrainOverrides
+
+
+def _load_delta_df(cfg: Any) -> tuple[Any, Path]:
+    import polars as pl
+
+    delta_table = cfg.paths.resolve("delta_table")
+    if not delta_table.exists():
+        log.error("train_missing_delta", path=str(delta_table))
+        msg = f"Delta table not found at {delta_table}. Run the pipeline first."
+        raise SystemExit(msg)
+
+    models_dir = cfg.paths.resolve("models_dir")
+    models_dir.mkdir(parents=True, exist_ok=True)
+
+    full_df = pl.read_delta(str(delta_table)).filter(pl.col("fdm_flag_valid"))
+    return full_df, models_dir
+
+
+def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
+    from node_fdm.trainer import TrainingConfig
+
+    ov = ctx.overrides
+    effective_seq_len = ov.seq_len or 60
+    return TrainingConfig(
+        architecture_name=ctx.info.name,
+        model_name=ov.model_name or f"{ctx.info.name}_{acft}",
+        model_params=(3, 2, 48),
+        step=4.0,
+        shift=ov.shift or effective_seq_len,
+        lr=ov.lr or 1e-3,
+        weight_decay=1e-4,
+        seq_len=effective_seq_len,
+        batch_size=ov.batch_size or 512,
+        epochs=ov.epochs or 800,
+        method=ov.method,
+        num_workers=4,
+        lambda_tracking=ov.lambda_tracking or 0.0,
+        grad_clip_norm=10.0,
+    )
+
+
+def _maybe_adjust_epochs(
+    training_config: Any,
+    train_ds: Any,
+    acft: str,
+    epochs_override: int | None,
+) -> Any:
+    if epochs_override is not None:
+        return training_config
+
+    n_step_per_epoch = max(len(train_ds) // training_config.batch_size, 1)
+    coeff = min(50 / n_step_per_epoch, 10.0)
+    adjusted_epochs = int(training_config.epochs * coeff)
+    log.info(
+        "train_epoch_adjust",
+        typecode=acft,
+        original_epochs=training_config.epochs,
+        adjusted_epochs=adjusted_epochs,
+        n_step_per_epoch=n_step_per_epoch,
+        coeff=round(coeff, 3),
+    )
+    return training_config.model_copy(update={"epochs": adjusted_epochs})
+
+
+def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
+    import polars as pl
+    from node_fdm.loader import get_train_val_data
+    from node_fdm.trainer import ODETrainer
+
+    log.info("train_typecode", typecode=acft)
+
+    training_config = _build_training_config(ctx, acft)
+    data_df = ctx.full_df.filter(pl.col("meta_aircraft_type") == acft)
+
+    if len(data_df) == 0:
+        log.warning("train_empty_dataset", typecode=acft)
+        return
+
+    train_ds, val_ds = get_train_val_data(
+        data_df=data_df,
+        x_cols=ctx.info.x_cols,
+        u_cols=ctx.info.u_cols,
+        e_cols=ctx.info.e0_cols,
+        e1_cols=ctx.info.e1_cols,
+        dx_cols=ctx.dx_col_names,
+        seq_len=training_config.seq_len,
+        shift=training_config.shift,
+        train_limit=5000,
+        val_limit=5000,
+    )
+
+    training_config = _maybe_adjust_epochs(training_config, train_ds, acft, ctx.overrides.epochs)
+
+    trainer = ODETrainer(
+        config=training_config,
+        train_dataset=train_ds,
+        val_dataset=val_ds,
+        model_dir=ctx.models_dir,
+        device=ctx.device,
+    )
+    trainer.train()
+    log.info("train_typecode_done", typecode=acft)
 
 
 def run_training(
@@ -46,109 +175,35 @@ def run_training(
         device: PyTorch device string (e.g. ``"cpu"``, ``"cuda:0"``).
         model_name: Custom model name (default: ``{arch}_{typecode}``).
     """
-    import polars as pl
-    from node_fdm.loader import get_train_val_data
-    from node_fdm.trainer import ODETrainer, TrainingConfig
-
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
 
     cfg = PipelineConfig.from_yaml(config)
     info = resolve_architecture(arch)
-
-    # Trigger architecture auto-registration
     importlib.import_module(info.architecture_import)
 
     typecodes = [typecode] if typecode else cfg.typecodes
+    full_df, models_dir = _load_delta_df(cfg)
 
-    delta_table = cfg.paths.resolve("delta_table")
-    if not delta_table.exists():
-        log.error("train_missing_delta", path=str(delta_table))
-        msg = f"Delta table not found at {delta_table}. Run the pipeline first."
-        raise SystemExit(msg)
-
-    models_dir = cfg.paths.resolve("models_dir")
-    models_dir.mkdir(parents=True, exist_ok=True)
-
-    # Read Delta Table once, filter on fdm_flag_valid (AC2)
-    full_df = pl.read_delta(str(delta_table))
-    full_df = full_df.filter(pl.col("fdm_flag_valid"))
-
-    dx_col_names = [col for _, col in info.dx_cols]
-
-    log.info(
-        "train_start",
-        arch=arch,
-        typecodes=typecodes,
+    ctx = _TrainContext(
+        info=info,
+        full_df=full_df,
+        dx_col_names=[col for _, col in info.dx_cols],
+        models_dir=models_dir,
         device=device,
+        overrides=_TrainOverrides(
+            epochs=epochs,
+            batch_size=batch_size,
+            lr=lr,
+            method=method,
+            seq_len=seq_len,
+            shift=shift,
+            model_name=model_name,
+            lambda_tracking=lambda_tracking,
+        ),
     )
 
+    log.info("train_start", arch=arch, typecodes=typecodes, device=device)
     for acft in typecodes:
-        log.info("train_typecode", typecode=acft)
-
-        effective_seq_len = seq_len or 60
-
-        training_config = TrainingConfig(
-            architecture_name=info.name,
-            model_name=model_name or f"{info.name}_{acft}",
-            model_params=(3, 2, 48),
-            step=4.0,
-            shift=shift or effective_seq_len,
-            lr=lr or 1e-3,
-            weight_decay=1e-4,
-            seq_len=effective_seq_len,
-            batch_size=batch_size or 512,
-            epochs=epochs or 800,
-            method=method,
-            num_workers=4,
-            lambda_tracking=lambda_tracking or 0.0,
-            grad_clip_norm=10.0,
-        )
-
-        data_df = full_df.filter(pl.col("meta_aircraft_type") == acft)
-
-        if len(data_df) == 0:
-            log.warning("train_empty_dataset", typecode=acft)
-            continue
-
-        train_ds, val_ds = get_train_val_data(
-            data_df=data_df,
-            x_cols=info.x_cols,
-            u_cols=info.u_cols,
-            e_cols=info.e0_cols,
-            e1_cols=info.e1_cols,
-            dx_cols=dx_col_names,
-            seq_len=training_config.seq_len,
-            shift=training_config.shift,
-            train_limit=5000,
-            val_limit=5000,
-        )
-
-        if epochs is None:
-            n_step_per_epoch = max(len(train_ds) // training_config.batch_size, 1)
-            coeff = min(50 / n_step_per_epoch, 10.0)
-            adjusted_epochs = int(training_config.epochs * coeff)
-            log.info(
-                "train_epoch_adjust",
-                typecode=acft,
-                original_epochs=training_config.epochs,
-                adjusted_epochs=adjusted_epochs,
-                n_step_per_epoch=n_step_per_epoch,
-                coeff=round(coeff, 3),
-            )
-            training_config = training_config.model_copy(
-                update={"epochs": adjusted_epochs},
-            )
-
-        trainer = ODETrainer(
-            config=training_config,
-            train_dataset=train_ds,
-            val_dataset=val_ds,
-            model_dir=models_dir,
-            device=device,
-        )
-
-        trainer.train()
-        log.info("train_typecode_done", typecode=acft)
-
+        _train_one_typecode(ctx, acft)
     log.info("train_done", typecodes=typecodes)
