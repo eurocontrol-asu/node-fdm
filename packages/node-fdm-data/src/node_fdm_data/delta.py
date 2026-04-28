@@ -14,6 +14,51 @@ __all__ = [
 ]
 
 
+_BATCH_KEY = "meta_batch_date"
+
+
+def _merge_preserved_columns(
+    df: pl.DataFrame, existing: pl.DataFrame, preserve_cols: list[str]
+) -> pl.DataFrame:
+    key = _BATCH_KEY
+    if key in existing.columns and key in df.columns:
+        idx = "__row_nr"
+        existing_idx = existing.with_columns(pl.cum_count(key).over(key).alias(idx))
+        df_idx = df.with_columns(pl.cum_count(key).over(key).alias(idx))
+        return df_idx.join(
+            existing_idx.select([key, idx, *preserve_cols]),
+            on=[key, idx],
+            how="left",
+        ).drop(idx)
+    if len(existing) == len(df):
+        return df.hstack(existing.select(preserve_cols))
+    return df
+
+
+def _maybe_merge_existing(df: pl.DataFrame, table_path: Path) -> pl.DataFrame:
+    if not table_path.exists():
+        return df
+    existing = pl.read_delta(str(table_path))
+    preserve_cols = [c for c in existing.columns if c not in df.columns]
+    if not preserve_cols:
+        return df
+    return _merge_preserved_columns(df, existing, preserve_cols)
+
+
+def _build_write_options(
+    df: pl.DataFrame, table_path: Path, partition_by: list[str] | None
+) -> dict[str, object]:
+    options: dict[str, object] = {"schema_mode": "merge"}
+    if partition_by is None:
+        return options
+    options["partition_by"] = partition_by
+    if table_path.exists():
+        dates = df[_BATCH_KEY].unique().sort().to_list()
+        quoted = ", ".join(f"'{d}'" for d in dates)
+        options["predicate"] = f"{_BATCH_KEY} IN ({quoted})"
+    return options
+
+
 def write_columns(df: pl.DataFrame, table_path: Path) -> None:
     """Write columns to a Delta table, preserving columns from previous steps.
 
@@ -29,38 +74,9 @@ def write_columns(df: pl.DataFrame, table_path: Path) -> None:
         df: DataFrame to write (may contain a subset of the table columns).
         table_path: Path to the Delta table directory.
     """
-    partition_by: list[str] | None = None
-    if "meta_batch_date" in df.columns:
-        partition_by = ["meta_batch_date"]
-
-    # Merge with existing data so other steps' columns are not lost.
-    if table_path.exists():
-        existing = pl.read_delta(str(table_path))
-        preserve_cols = [c for c in existing.columns if c not in df.columns]
-        if preserve_cols:
-            key = "meta_batch_date"
-            if key in existing.columns and key in df.columns:
-                # Add a positional row number within each partition so the
-                # join is 1-to-1 even when meta_batch_date is not unique.
-                idx = "__row_nr"
-                existing_idx = existing.with_columns(
-                    pl.cum_count(key).over(key).alias(idx),
-                )
-                df_idx = df.with_columns(
-                    pl.cum_count(key).over(key).alias(idx),
-                )
-                df = df_idx.join(
-                    existing_idx.select([key, idx, *preserve_cols]),
-                    on=[key, idx],
-                    how="left",
-                ).drop(idx)
-            elif len(existing) == len(df):
-                df = df.hstack(existing.select(preserve_cols))
-
-    delta_write_options: dict[str, object] = {"schema_mode": "merge"}
-    if partition_by is not None:
-        delta_write_options["partition_by"] = partition_by
-
+    partition_by = [_BATCH_KEY] if _BATCH_KEY in df.columns else None
+    df = _maybe_merge_existing(df, table_path)
+    delta_write_options = _build_write_options(df, table_path, partition_by)
     df.write_delta(
         str(table_path),
         mode="overwrite",
