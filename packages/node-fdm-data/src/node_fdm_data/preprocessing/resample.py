@@ -292,6 +292,50 @@ def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
     )
 
 
+def _build_grid_ts(df: pl.DataFrame, rate_s: int) -> pl.Series:
+    ts_min = df["raw_timestamp"].min()
+    ts_max = df["raw_timestamp"].max()
+    assert ts_min is not None and ts_max is not None
+    return pl.datetime_range(
+        ts_min,  # type: ignore[arg-type]
+        ts_max,  # type: ignore[arg-type]
+        interval=timedelta(seconds=rate_s),
+        eager=True,
+    ).rename("raw_timestamp")  # type: ignore[union-attr]
+
+
+def _carry_over_columns(result: pl.DataFrame, df: pl.DataFrame) -> pl.DataFrame:
+    carry_cols = [c for c in df.columns if c.startswith("meta_") or c in _CARRY_OVER]
+    if not carry_cols:
+        return result
+    return result.with_columns(pl.lit(df[c][0]).alias(c) for c in carry_cols)
+
+
+def _apply_column_group(
+    result: pl.DataFrame,
+    df: pl.DataFrame,
+    grid_ts: pl.Series,
+    group: tuple[str, list[str], list[str]],
+    max_gap_s: float,
+) -> pl.DataFrame:
+    group_name, interp_cols, ref_cols = group
+    present_cols = [c for c in interp_cols if c in df.columns]
+    if not present_cols:
+        return result.with_columns(pl.lit(True).alias(f"pre_gap_{group_name}"))
+
+    seg_ids = detect_subsegments(df, ref_cols, max_gap_s)
+    col_values, gap_flag = interpolate_group_by_subsegments(
+        df,
+        grid_ts,
+        present_cols,
+        seg_ids,
+    )
+    return result.with_columns(
+        *[pl.Series(c, col_values[c]) for c in present_cols],
+        gap_flag.alias(f"pre_gap_{group_name}"),
+    )
+
+
 def resample_flight(
     df: pl.DataFrame,
     rate_s: int = 4,
@@ -315,45 +359,18 @@ def resample_flight(
     Returns:
         Resampled DataFrame on a regular *rate_s* grid.
     """
-    ts_min = df["raw_timestamp"].min()
-    ts_max = df["raw_timestamp"].max()
-    assert ts_min is not None and ts_max is not None
+    grid_ts = _build_grid_ts(df, rate_s)
+    result = _carry_over_columns(pl.DataFrame({"raw_timestamp": grid_ts}), df)
 
-    grid_ts: pl.Series = pl.datetime_range(
-        ts_min,  # type: ignore[arg-type]
-        ts_max,  # type: ignore[arg-type]
-        interval=timedelta(seconds=rate_s),
-        eager=True,
-    ).rename("raw_timestamp")  # type: ignore[union-attr]
-
-    result = pl.DataFrame({"raw_timestamp": grid_ts})
-
-    # Carry over constant meta columns and per-flight string identifiers
-    carry_cols = [c for c in df.columns if c.startswith("meta_") or c in _CARRY_OVER]
-    if carry_cols:
-        result = result.with_columns(pl.lit(df[c][0]).alias(c) for c in carry_cols)
-
-    # Process each column group
     for group_name, (interp_cols, ref_cols) in COLUMN_GROUPS.items():
-        present_cols = [c for c in interp_cols if c in df.columns]
-        if not present_cols:
-            result = result.with_columns(pl.lit(True).alias(f"pre_gap_{group_name}"))
-            continue
-
-        seg_ids = detect_subsegments(df, ref_cols, max_gap_s)
-        col_values, gap_flag = interpolate_group_by_subsegments(
+        result = _apply_column_group(
+            result,
             df,
             grid_ts,
-            present_cols,
-            seg_ids,
+            (group_name, interp_cols, ref_cols),
+            max_gap_s,
         )
 
-        result = result.with_columns(
-            *[pl.Series(c, col_values[c]) for c in present_cols],
-            gap_flag.alias(f"pre_gap_{group_name}"),
-        )
-
-    # Smooth position sub-segments
     if smooth:
         result = smooth_position_subsegments(result)
 
