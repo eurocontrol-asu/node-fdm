@@ -545,14 +545,25 @@ class TestGammaTargetOnlyAltSel:
         target_arr = result["fdm_gamma_target_rad"].to_numpy()
         known = result["fdm_gamma_target_known"].to_numpy()
 
-        # Where alt_sel is detected → gamma_target = 0, known = 1
+        # Where alt_sel is detected → gamma_target = 0 (after relaxation), known = 1
         alt_sel = result["fdm_alt_sel_ft"].to_numpy()
         alt_mask = ~np.isnan(alt_sel)
         assert alt_mask.sum() > 0, "Expected altitude plateau detection"
-        np.testing.assert_allclose(target_arr[alt_mask], 0.0, atol=1e-10)
-        assert np.all(known[alt_mask] == 1.0)
 
-        # Elsewhere → gamma_target = 0.0 (filled), known = 0
+        # After relaxation zone (15 steps), stabilised rows have target=0, known=1
+        stabilised = alt_mask.copy()
+        # Mark relaxation zone as not-stabilised (gamma_from_alt is NaN there)
+        gamma_from_alt = result["fdm_gamma_from_alt_rad"].to_numpy()
+        relaxed = alt_mask & np.isnan(gamma_from_alt)
+        stabilised[relaxed] = False
+        assert stabilised.sum() > 0, "Expected stabilised rows after relaxation"
+        np.testing.assert_allclose(target_arr[stabilised], 0.0, atol=1e-10)
+        assert np.all(known[stabilised] == 1.0)
+
+        # Relaxation zone: known = 0 (no gamma_from_alt source)
+        assert np.all(known[relaxed] == 0.0)
+
+        # Outside alt segments → known = 0
         non_alt_mask = np.isnan(alt_sel)
         assert np.all(known[non_alt_mask] == 0.0)
 
@@ -607,11 +618,13 @@ class TestGammaTargetAltHoldSource:
         alt_hold_mask = ~np.isnan(alt_sel)
         assert alt_hold_mask.sum() > 0, "Expected altitude plateau detection"
 
-        # Only check rows where alt_sel detected but vz_sel is NOT detected
+        # Only check stabilised rows (after relaxation) where only alt_sel detected
+        gamma_from_alt = result["fdm_gamma_from_alt_rad"].to_numpy()
+        stabilised_alt = alt_hold_mask & ~np.isnan(gamma_from_alt)
         if "fdm_vz_sel_ftmin" in result.columns:
             vz_sel = result["fdm_vz_sel_ftmin"].to_numpy()
-            only_alt = alt_hold_mask & np.isnan(vz_sel)
+            only_alt = stabilised_alt & np.isnan(vz_sel)
         else:
-            only_alt = alt_hold_mask
+            only_alt = stabilised_alt
         if only_alt.sum() > 0:
             np.testing.assert_allclose(target[only_alt], 0.0, atol=1e-10)

@@ -98,6 +98,26 @@ QAR-specific signal processing: noise filter, mode stabilization, engine reducti
       show_root_full_path: false
       show_source: true
 
+### Preprocessing — BDS Speed Cleaning
+
+Multi-pass Hampel filter, ERA-deviation cap, and short-gap interpolation for BDS (Mode-S) airspeed signals.
+
+::: node_fdm_data.preprocessing.clean_speeds
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      show_source: true
+
+### Preprocessing — BDS / ERA5 Merge
+
+Coalesce cleaned BDS, raw BDS, and ERA5 airspeed columns into the EKF input signal.
+
+::: node_fdm_data.preprocessing.merge
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      show_source: true
+
 ### Dataset Splitting
 
 Stratified splitting by ICAO aircraft type.

@@ -316,8 +316,20 @@ def smooth_flight(
     p0 = np.eye(_N_STATES) * 1e4
 
     # --- Noise matrices ---
-    r_noise = _estimate_noise_matrix(measurements, window=rolling_window)
-    q_noise = np.diag([0.1, 0.3, 0.01, 1.0, 0.5]) * np.mean(np.diag(r_noise))
+    # R: fixed measurement noise based on sensor accuracy (not rolling-window).
+    # Rolling-window estimation inflates R(h) by treating climb/descent as noise.
+    #   TAS: BDS accuracy ~3 kt → ~1.5 m/s → sigma^2 ≈ 2.3
+    #   gamma: derived from diff(), noisy → sigma^2 ≈ 1e-3
+    #   h: ADS-B barometric alt ~50 ft → ~15 m → sigma^2 ≈ 225
+    r_noise = np.diag([2.3, 1e-3, 225.0])
+
+    # Q: process noise from physical dynamics reasoning.
+    #   TAS: ~1 kt change per 4s step → ~0.5 m/s → sigma^2 ≈ 0.25
+    #   gamma: ~0.5 deg per 4s → ~0.01 rad → sigma^2 ≈ 1e-4
+    #   h: ~100 ft per 4s in climb → ~30 m → sigma^2 ≈ 900
+    #   dTAS/dt: acceleration varies → sigma^2 ≈ 0.1
+    #   dgamma/dt: rate varies → sigma^2 ≈ 0.01
+    q_noise = np.diag([0.25, 1e-4, 900.0, 0.1, 0.01])
 
     # --- Run EKF + RTS ---
     states, covariances = extended_kalman_filter(

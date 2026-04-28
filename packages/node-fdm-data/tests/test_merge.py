@@ -119,6 +119,50 @@ class TestMergeMissingColumns:
         assert result["ekf_input_tas_kt"][0] is None
 
 
+class TestMergeCleanPreferred:
+    """`*_clean` columns are preferred over raw `bds_*`."""
+
+    def test_merge_prefers_clean_over_raw(self) -> None:
+        """When ``bds_mach_clean`` exists, it overrides raw ``bds_mach``."""
+        df = pl.DataFrame(
+            {
+                "bds_mach": [1.0],
+                "bds_mach_clean": [2.0],
+                "era_mach": [3.0],
+            }
+        )
+        result = merge_bds_era5(df)
+        assert result["ekf_input_mach"][0] == pytest.approx(2.0)
+
+    def test_merge_falls_back_to_raw_when_clean_absent(self) -> None:
+        """Without ``bds_mach_clean``, raw ``bds_mach`` is used."""
+        df = pl.DataFrame(
+            {
+                "bds_mach": [1.0],
+                "era_mach": [3.0],
+            }
+        )
+        result = merge_bds_era5(df)
+        assert result["ekf_input_mach"][0] == pytest.approx(1.0)
+
+    def test_merge_falls_back_to_era_when_both_bds_null(self) -> None:
+        """Both raw and clean null -> ERA used."""
+        df = pl.DataFrame(
+            {
+                "bds_mach": [None],
+                "bds_mach_clean": [None],
+                "era_mach": [3.0],
+            },
+            schema={
+                "bds_mach": pl.Float64,
+                "bds_mach_clean": pl.Float64,
+                "era_mach": pl.Float64,
+            },
+        )
+        result = merge_bds_era5(df)
+        assert result["ekf_input_mach"][0] == pytest.approx(3.0)
+
+
 class TestMergeIdempotent:
     """Running merge twice gives same result."""
 

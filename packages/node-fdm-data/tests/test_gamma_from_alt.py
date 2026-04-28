@@ -70,20 +70,21 @@ class TestGammaFromAltColumn:
         assert "fdm_gamma_from_alt_rad" in result.columns
 
     def test_zero_inside_altitude_plateau(self) -> None:
-        """Rows where fdm_alt_sel_ft is not NaN have gamma_from_alt = 0.0."""
+        """After relaxation zone, level-flight rows have gamma_from_alt = 0.0."""
         n = 100
         alt = np.full(n, 35000.0)  # entire flight at constant altitude
         df = pl.DataFrame({"raw_alt_ft": alt})
         result = build_selected_params(df, _alt_config())
 
         alt_sel = result["fdm_alt_sel_ft"]
-        gamma = result["fdm_gamma_from_alt_rad"]
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
 
-        # Where alt_sel is detected (not NaN), gamma must be 0.0
+        # Where alt_sel is detected (not NaN), gamma is 0.0 after relaxation zone
         level_mask = ~alt_sel.is_nan()
         assert level_mask.sum() > 0, "expected altitude plateau detection"
-        gamma_in_level = gamma.filter(level_mask)
-        assert (gamma_in_level == 0.0).all(), "gamma must be 0.0 in level-flight regions"
+        # Skip first 15 relaxation timesteps — those are NaN
+        stabilised = gamma[15:]
+        assert np.nansum(stabilised == 0.0) > 0, "gamma must be 0.0 after relaxation zone"
 
     def test_nan_outside_altitude_plateau(self) -> None:
         """Rows where fdm_alt_sel_ft is NaN have gamma_from_alt = NaN."""
@@ -105,7 +106,7 @@ class TestGammaFromAltColumn:
         assert gamma_outside.is_nan().all(), "gamma must be NaN outside level-flight regions"
 
     def test_exact_alignment_with_alt_sel(self) -> None:
-        """fdm_gamma_from_alt_rad is 0.0 exactly where fdm_alt_sel_ft is not NaN."""
+        """fdm_gamma_from_alt_rad is 0.0 where fdm_alt_sel_ft is not NaN, after relaxation."""
         alt = np.concatenate(
             [
                 np.full(60, 10000.0),  # level at 10k
@@ -116,14 +117,19 @@ class TestGammaFromAltColumn:
         df = pl.DataFrame({"raw_alt_ft": alt})
         result = build_selected_params(df, _alt_config())
 
-        alt_sel = result["fdm_alt_sel_ft"]
-        gamma = result["fdm_gamma_from_alt_rad"]
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
 
-        level_mask = ~alt_sel.is_nan()
-        # Every level row → 0.0
-        assert (gamma.filter(level_mask) == 0.0).all()
-        # Every non-level row → NaN
-        assert gamma.filter(~level_mask).is_nan().all()
+        level_mask = ~np.isnan(alt_sel)
+        # Non-level rows → NaN
+        assert np.all(np.isnan(gamma[~level_mask]))
+        # Level rows: first 15 per segment are NaN (relaxation), rest are 0.0
+        level_vals = gamma[level_mask]
+        n_nan = np.isnan(level_vals).sum()
+        n_zero = (level_vals == 0.0).sum()
+        assert n_nan > 0, "expected relaxation NaN at start of segments"
+        assert n_zero > 0, "expected 0.0 after relaxation zone"
+        assert n_nan + n_zero == len(level_vals), "level rows must be NaN or 0.0"
 
 
 # ---------------------------------------------------------------------------
@@ -161,9 +167,11 @@ class TestGammaFromAltIntegration:
         result = build_selected_params(df, _full_config())
 
         assert "fdm_gamma_from_alt_rad" in result.columns
-        # Cruise plateau should be detected → some zeros
+        # Cruise plateau (100 rows) should produce zeros after 15-step relaxation
         gamma = result["fdm_gamma_from_alt_rad"]
-        assert (gamma == 0.0).sum() > 0, "cruise level-flight should produce gamma=0"
+        assert (gamma == 0.0).sum() > 0, (
+            "cruise level-flight should produce gamma=0 after relaxation"
+        )
 
     def test_coexists_with_gamma_sel(self) -> None:
         """fdm_gamma_from_alt_rad and fdm_gamma_sel_rad both exist."""
@@ -272,19 +280,22 @@ class TestGammaFromAltEdgeCases:
         assert result["fdm_gamma_from_alt_rad"].is_nan().all()
 
     def test_entire_flight_level(self) -> None:
-        """Constant altitude for entire flight → gamma_from_alt = 0.0 everywhere detected."""
+        """Constant altitude → gamma_from_alt = 0.0 after relaxation zone."""
         n = 100
         df = pl.DataFrame({"raw_alt_ft": np.full(n, 35000.0)})
         result = build_selected_params(df, _alt_config())
 
-        gamma = result["fdm_gamma_from_alt_rad"]
-        alt_sel = result["fdm_alt_sel_ft"]
-        level_count = (~alt_sel.is_nan()).sum()
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        level_count = (~np.isnan(alt_sel)).sum()
         zero_count = (gamma == 0.0).sum()
-        assert zero_count == level_count
+        nan_count = np.isnan(gamma[~np.isnan(alt_sel)]).sum()
+        # Relaxation zone (15 timesteps) + stabilised zone = total level rows
+        assert zero_count + nan_count == level_count
+        assert nan_count <= 15, f"at most 15 relaxation NaN, got {nan_count}"
 
     def test_multiple_level_segments(self) -> None:
-        """Two separate level segments both produce gamma=0."""
+        """Multiple level segments: relaxation NaN at start, then gamma=0."""
         alt = np.concatenate(
             [
                 np.full(40, 10000.0),  # level at 10k
@@ -297,13 +308,18 @@ class TestGammaFromAltEdgeCases:
         df = pl.DataFrame({"raw_alt_ft": alt})
         result = build_selected_params(df, _alt_config())
 
-        gamma = result["fdm_gamma_from_alt_rad"]
-        alt_sel = result["fdm_alt_sel_ft"]
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
 
-        # All level rows → gamma = 0.0
-        level_mask = ~alt_sel.is_nan()
+        level_mask = ~np.isnan(alt_sel)
         assert level_mask.sum() > 0
-        assert (gamma.filter(level_mask) == 0.0).all()
+        level_vals = gamma[level_mask]
+        # Each segment of 40 rows: 15 NaN + 25 zeros
+        n_zero = (level_vals == 0.0).sum()
+        n_nan = np.isnan(level_vals).sum()
+        assert n_zero > 0, "expected gamma=0 after relaxation"
+        assert n_nan > 0, "expected relaxation NaN at segment starts"
+        assert n_nan + n_zero == len(level_vals)
 
     def test_short_flight_below_min_len(self) -> None:
         """Flight shorter than min_len → no alt segments → all NaN gamma."""
@@ -322,3 +338,35 @@ class TestGammaFromAltEdgeCases:
         result = build_selected_params(df, _alt_config())
 
         assert result["fdm_gamma_from_alt_rad"].dtype == pl.Float64
+
+    def test_segment_shorter_than_relax(self) -> None:
+        """Segment shorter than relaxation window → entire segment is NaN."""
+        alt = np.concatenate(
+            [
+                np.linspace(5000, 35000, 50),  # climb
+                np.full(10, 35000.0),  # level — only 10 rows (< 15 relax)
+                np.linspace(35000, 5000, 50),  # descent
+            ]
+        )
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _alt_config())
+
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        level_mask = ~np.isnan(alt_sel)
+        if level_mask.sum() > 0:
+            # Segment ≤ 15 → all level rows should be NaN (fully relaxed)
+            assert np.all(np.isnan(gamma[level_mask]))
+
+    def test_relax_zero_disables_relaxation(self) -> None:
+        """alt_hold_relax=0 → old behaviour, no NaN in level rows."""
+        n = 100
+        alt = np.full(n, 35000.0)
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        config = {**_alt_config(), "alt_hold_relax": 0}
+        result = build_selected_params(df, config)
+
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        level_mask = ~np.isnan(alt_sel)
+        assert (gamma[level_mask] == 0.0).all(), "relax=0 should give all zeros"

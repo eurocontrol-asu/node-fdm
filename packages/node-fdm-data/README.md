@@ -15,7 +15,7 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 - **Column schemas** — OpenSky 2025, QAR, and ADS-B architectures with typed column lists and conversion registries
 - **Flight processor** — Configurable `FlightProcessor` pipeline with method-chaining API
 - **Segment detection** — `build_selected_params` detects constant-speed/altitude plateaus and produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`, `fdm_gamma_target_rad`); `fdm_gamma_target_rad` fuses three sources with priority vz→gamma (highest) > gamma_sel > gamma_from_alt=0 / ALT HLD (lowest), NaN-preserving (gaps between segments stay NaN); `GammaFilterConfig` provides sensible defaults including `min_abs_value` to filter near-zero cruise plateaus; altitude plateaus also emit `fdm_gamma_from_alt_rad` (0.0 in level flight, NaN elsewhere)
-- **Preprocessing** — SI conversion with precomputed delta columns (`fdm_alt_diff_m`, `fdm_tas_diff_ms`, `fdm_gamma_diff_rad`; diff=0 where target is NaN), temporal derivatives, OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction)
+- **Preprocessing** — SI conversion with precomputed delta columns (`fdm_alt_diff_m`, `fdm_tas_diff_ms`, `fdm_gamma_diff_rad`; diff=0 where target is NaN), temporal derivatives, OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction); BDS speed cleaning (`clean_speeds`, `clean_bds_speeds`: multi-pass Hampel + ERA-deviation cap + short-gap interpolation) and BDS/ERA5 merge (`merge_bds_era5`: coalesce cleaned BDS → raw BDS → ERA5 into `ekf_input_*` columns)
 - **Dataset splitting** — `split_by_icao` for deterministic train/val/test split (prevents data leakage)
 
 ## Installation
@@ -112,7 +112,7 @@ split_df = split_by_icao(df, ratios=(0.7, 0.15, 0.15), seed=42)
 
 ## Development
 
-<!-- 256 tests -->
+<!-- 394 tests -->
 ```bash
 uv run pytest packages/node-fdm-data/ -q
 uv run ruff check packages/node-fdm-data/

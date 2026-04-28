@@ -124,6 +124,43 @@ class TestWriteColumnsPartition:
         assert unique_dates.len() == 2
 
 
+class TestWriteColumnsPartitionScoped:
+    """Writing one partition must not wipe other partitions."""
+
+    def test_write_columns_preserves_other_partitions(self, tmp_path: Path) -> None:
+        from node_fdm_data.delta import write_columns
+
+        table_path = tmp_path / "flights.delta"
+
+        # Write two partitions
+        df_initial = pl.DataFrame(
+            {
+                "meta_batch_date": ["2025-01-01", "2025-01-01", "2025-01-02", "2025-01-02"],
+                "col_a": [1.0, 2.0, 3.0, 4.0],
+            }
+        )
+        write_columns(df_initial, table_path)
+
+        # Overwrite only 2025-01-02 with new data
+        df_update = pl.DataFrame(
+            {
+                "meta_batch_date": ["2025-01-02", "2025-01-02"],
+                "col_a": [30.0, 40.0],
+            }
+        )
+        write_columns(df_update, table_path)
+
+        result = pl.read_delta(str(table_path)).sort("meta_batch_date", "col_a")
+
+        # 2025-01-01 must still have original data
+        day1 = result.filter(pl.col("meta_batch_date") == "2025-01-01")
+        assert day1.get_column("col_a").to_list() == [1.0, 2.0]
+
+        # 2025-01-02 must have updated data
+        day2 = result.filter(pl.col("meta_batch_date") == "2025-01-02")
+        assert day2.get_column("col_a").to_list() == [30.0, 40.0]
+
+
 class TestWriteColumnsHstackFallback:
     """Writing without meta_batch_date uses hstack fallback to preserve columns."""
 
