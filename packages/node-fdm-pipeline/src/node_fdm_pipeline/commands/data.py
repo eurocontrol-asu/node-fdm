@@ -19,6 +19,8 @@ if TYPE_CHECKING:
     import polars as pl
     from traffic.core import Flight
 
+    from node_fdm_pipeline.config import PipelineConfig
+
 __all__ = [
     "aircraft_list",
     "convert",
@@ -169,7 +171,85 @@ def _rename_to_v3(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
     return df.with_columns(pl.lit(batch_date).alias("meta_batch_date"))
 
 
-def download(  # noqa: PLR0912, PLR0915
+def _load_aircraft_db(cfg: PipelineConfig) -> tuple[pl.DataFrame, list[str]]:
+    import polars as pl
+
+    aircraft_csv = cfg.paths.data_dir / "aircraft_db.csv"
+    if not aircraft_csv.exists():
+        log.error("download_missing_aircraft_db", path=str(aircraft_csv))
+        raise SystemExit(
+            f"aircraft_db.csv not found at {aircraft_csv}. Run 'fdm aircraft-list' first."
+        )
+    aircraft_db = pl.read_csv(aircraft_csv)
+    return aircraft_db, aircraft_db["icao24"].to_list()
+
+
+def _build_window_df(
+    history: object,
+    extended: object,
+) -> pl.DataFrame:
+    import polars as pl
+    from traffic.core import Traffic
+
+    history_df = pl.from_pandas(history.data)  # type: ignore[attr-defined]
+    if extended is None:
+        return history_df
+
+    ext_pd = extended.data if hasattr(extended, "data") else extended
+    decoder = _RawEHSDecoder(ext_pd)
+    decoded_flights: list[Flight] = []
+    for flight in history:  # type: ignore[attr-defined]
+        decoded = decoder(flight)
+        if decoded is not None:
+            decoded_flights.append(decoded)
+
+    if not decoded_flights:
+        return history_df
+    merged = Traffic.from_flights(decoded_flights)
+    if merged is None:
+        return history_df
+    return pl.from_pandas(merged.data)
+
+
+def _attach_typecode(df: pl.DataFrame, aircraft_db: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    db_typecode = aircraft_db.select("icao24", "typecode").rename({"typecode": "_db_typecode"})
+    df = df.join(db_typecode, left_on="raw_icao24", right_on="icao24", how="left")
+    return df.with_columns(
+        pl.coalesce("_db_typecode", "meta_aircraft_type").alias("meta_aircraft_type"),
+    ).drop("_db_typecode")
+
+
+def _process_window(
+    current: datetime,
+    next_day: datetime,
+    icao24_list: list[str],
+    aircraft_db: pl.DataFrame,
+) -> pl.DataFrame | None:
+    from traffic.data import opensky
+
+    date_str = current.strftime("%Y%m%d")
+    log.info("download_fetch", date=date_str)
+
+    history = opensky.history(current, next_day, icao24=icao24_list)
+    if history is None:
+        log.warning("download_empty", kind="history", date=date_str)
+        return None
+
+    extended = opensky.extended(current, next_day, icao24=icao24_list)
+    df = _build_window_df(history, extended)
+    df = _rename_to_v3(df, batch_date=date_str)
+
+    flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
+    df = _join_flightlist_inline(df, flightlist)
+    df = _attach_typecode(df, aircraft_db)
+
+    log.info("download_processed", date=date_str, rows=len(df))
+    return df
+
+
+def download(
     *,
     config: Path,
     start_date: str,
@@ -194,20 +274,9 @@ def download(  # noqa: PLR0912, PLR0915
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
+    aircraft_db, icao24_list = _load_aircraft_db(cfg)
 
-    # Load aircraft list for ICAO24 filtering
-    aircraft_csv = cfg.paths.data_dir / "aircraft_db.csv"
-    if not aircraft_csv.exists():
-        log.error("download_missing_aircraft_db", path=str(aircraft_csv))
-        raise SystemExit(
-            f"aircraft_db.csv not found at {aircraft_csv}. Run 'fdm aircraft-list' first."
-        )
-
-    log.info(
-        "download_start",
-        start_date=start_date,
-        end_date=end_date,
-    )
+    log.info("download_start", start_date=start_date, end_date=end_date)
 
     if dry_run:
         log.info("download_dry_run", msg="Config valid, would download to Delta table")
@@ -217,73 +286,19 @@ def download(  # noqa: PLR0912, PLR0915
     from node_fdm_data.delta import write_columns
 
     _require_traffic()
-    from traffic.core import Traffic
-    from traffic.data import opensky
 
     delta_table = cfg.paths.resolve("delta_table")
-
-    aircraft_db = pl.read_csv(aircraft_csv)
-    icao24_list = aircraft_db["icao24"].to_list()
-
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
     step = timedelta(hours=step_hours)
 
     all_frames: list[pl.DataFrame] = []
-
     current = start
     while current < end:
-        date_str = current.strftime("%Y%m%d")
         next_day = current + timedelta(hours=24)
-
-        log.info("download_fetch", date=date_str)
-
-        # Fetch ADS-B history
-        history = opensky.history(current, next_day, icao24=icao24_list)
-        if history is None:
-            log.warning("download_empty", kind="history", date=date_str)
-            current += step
-            continue
-
-        # Fetch raw EHS messages and decode BDS
-        extended = opensky.extended(current, next_day, icao24=icao24_list)
-        if extended is not None:
-            ext_pd = extended.data if hasattr(extended, "data") else extended
-            decoder = _RawEHSDecoder(ext_pd)
-            decoded_flights: list[Flight] = []
-            for flight in history:
-                decoded = decoder(flight)
-                if decoded is not None:
-                    decoded_flights.append(decoded)
-
-            if decoded_flights:
-                merged = Traffic.from_flights(decoded_flights)
-                if merged is not None:
-                    df = pl.from_pandas(merged.data)
-                else:
-                    df = pl.from_pandas(history.data)
-            else:
-                df = pl.from_pandas(history.data)
-        else:
-            df = pl.from_pandas(history.data)
-
-        # Rename to v3 schema and collect
-        df = _rename_to_v3(df, batch_date=date_str)
-
-        # Join flightlist metadata directly into the batch
-        flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
-        df = _join_flightlist_inline(df, flightlist)
-
-        # Fill meta_aircraft_type from aircraft_db (more reliable than flightlist)
-        db_typecode = aircraft_db.select("icao24", "typecode").rename({"typecode": "_db_typecode"})
-        df = df.join(db_typecode, left_on="raw_icao24", right_on="icao24", how="left")
-        df = df.with_columns(
-            pl.coalesce("_db_typecode", "meta_aircraft_type").alias("meta_aircraft_type"),
-        ).drop("_db_typecode")
-
-        all_frames.append(df)
-        log.info("download_processed", date=date_str, rows=len(df))
-
+        df = _process_window(current, next_day, icao24_list, aircraft_db)
+        if df is not None:
+            all_frames.append(df)
         current += step
 
     if all_frames:
