@@ -903,6 +903,23 @@ def segments(
     )
 
 
+def _drop_existing_convert_columns(df: pl.DataFrame) -> pl.DataFrame:
+    from node_fdm_data.preprocessing.convert import SI_CONVERSIONS, SI_DERIVATIVES
+
+    targets = {t for _, _, t in SI_CONVERSIONS} | {t for _, t in SI_DERIVATIVES}
+    existing = [c for c in df.columns if c in targets]
+    if not existing:
+        return df
+    log.info("convert_drop_existing", columns=existing)
+    return df.drop(existing)
+
+
+def _collect_convert_output_columns(df: pl.DataFrame) -> tuple[list[str], list[str]]:
+    si_cols = [c for c in df.columns if c.endswith(("_m", "_ms"))]
+    deriv_cols = [c for c in df.columns if c.startswith("fdm_d_")]
+    return si_cols, deriv_cols
+
+
 def convert(
     *,
     config: Path,
@@ -937,24 +954,13 @@ def convert(
         return
 
     df = read_delta_table(delta_table)
-
-    # Drop existing SI and derivative columns to allow re-conversion
-    from node_fdm_data.preprocessing.convert import SI_CONVERSIONS, SI_DERIVATIVES
-
-    si_targets = {target for _, _, target in SI_CONVERSIONS}
-    deriv_targets = {target for _, target in SI_DERIVATIVES}
-    convert_existing = [c for c in df.columns if c in si_targets or c in deriv_targets]
-    if convert_existing:
-        log.info("convert_drop_existing", columns=convert_existing)
-        df = df.drop(convert_existing)
-
+    df = _drop_existing_convert_columns(df)
     df = convert_si(df)
     df = compute_derivatives(df)
 
     write_columns(df, delta_table)
 
-    si_cols = [c for c in df.columns if c.endswith(("_m", "_ms"))]
-    deriv_cols = [c for c in df.columns if c.startswith("fdm_d_")]
+    si_cols, deriv_cols = _collect_convert_output_columns(df)
     log.info(
         "convert_done",
         rows=len(df),
