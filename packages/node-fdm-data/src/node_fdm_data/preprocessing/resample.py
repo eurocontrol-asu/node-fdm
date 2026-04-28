@@ -47,6 +47,26 @@ COLUMN_GROUPS: dict[str, tuple[list[str], list[str]]] = {
 _CARRY_OVER: set[str] = {"raw_icao24", "raw_callsign"}
 
 
+def _assign_seg_ids(
+    indices: list[int],
+    diffs: list[float | None],
+    max_gap_s: float,
+    n: int,
+) -> list[int]:
+    seg_ids: list[int] = [-1] * n
+    current_seg = 0
+    for pos, (idx, diff) in enumerate(zip(indices, diffs, strict=False)):
+        if pos > 0 and diff is not None and diff > max_gap_s:
+            current_seg += 1
+        seg_ids[idx] = current_seg
+    return seg_ids
+
+
+def _drop_singletons(seg_ids: list[int]) -> list[int]:
+    counts = Counter(s for s in seg_ids if s >= 0)
+    return [s if s < 0 or counts[s] >= 2 else -1 for s in seg_ids]  # noqa: PLR2004
+
+
 def detect_subsegments(
     df: pl.DataFrame,
     ref_cols: list[str],
@@ -68,37 +88,22 @@ def detect_subsegments(
         a sub-segment ID starting at 0; rows without data (or in
         single-point segments) get -1.
     """
-    present = [c for c in ref_cols if c in df.columns]
     n = len(df)
+    present = [c for c in ref_cols if c in df.columns]
     if not present:
         return pl.Series("seg_id", [-1] * n, dtype=pl.Int32)
 
     has_data = df.select(
         pl.all_horizontal(pl.col(c).is_not_null() for c in present),
     ).to_series()
-
-    seg_ids: list[int] = [-1] * n
     if not has_data.any():
-        return pl.Series("seg_id", seg_ids, dtype=pl.Int32)
+        return pl.Series("seg_id", [-1] * n, dtype=pl.Int32)
 
     indices = has_data.arg_true()
-    timestamps = df["raw_timestamp"].gather(indices)
-    diffs_s = timestamps.diff().dt.total_seconds()
+    diffs_s = df["raw_timestamp"].gather(indices).diff().dt.total_seconds()
 
-    current_seg = 0
-    indices_list = indices.to_list()
-    diffs_list = diffs_s.to_list()
-
-    for pos, (idx, diff) in enumerate(zip(indices_list, diffs_list, strict=False)):
-        if pos > 0 and diff is not None and diff > max_gap_s:
-            current_seg += 1
-        seg_ids[idx] = current_seg
-
-    # Filter out single-point segments
-    seg_counts = Counter(s for s in seg_ids if s >= 0)
-    seg_ids = [s if s < 0 or seg_counts[s] >= 2 else -1 for s in seg_ids]  # noqa: PLR2004
-
-    return pl.Series("seg_id", seg_ids, dtype=pl.Int32)
+    seg_ids = _assign_seg_ids(indices.to_list(), diffs_s.to_list(), max_gap_s, n)
+    return pl.Series("seg_id", _drop_singletons(seg_ids), dtype=pl.Int32)
 
 
 @dataclass
