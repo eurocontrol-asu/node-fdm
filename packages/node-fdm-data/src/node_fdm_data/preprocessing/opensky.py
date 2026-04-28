@@ -18,6 +18,58 @@ __all__ = [
 ]
 
 
+_TRAFFIC_RENAME: dict[str, str] = {
+    "altitude": "raw_alt_ft",
+    "selected_mcp": "bds_mcp_sel_alt_ft",
+    "vertical_rate": "raw_vz_ftmin",
+    "Mach": "era_mach",
+    "IAS": "bds_ias_kt",
+    "TAS": "era_tas_kt",
+    "groundspeed": "raw_gs_kt",
+}
+
+_FILL_NULL_COLS: dict[str, float] = {
+    "raw_vz_ftmin": 0.0,
+    "era_mach": 0.0,
+    "bds_ias_kt": 0.0,
+}
+
+
+def _apply_traffic_rename(df: pl.LazyFrame) -> pl.LazyFrame:
+    schema = df.collect_schema()
+    rename = {k: v for k, v in _TRAFFIC_RENAME.items() if k in schema and v not in schema}
+    return df.rename(rename) if rename else df
+
+
+def _gamma_expr(tas_col: str, vz_col: str) -> pl.Expr:
+    vz_ms = pl.col(vz_col) * FTMIN
+    tas_ms = pl.col(tas_col) * KT
+    ratio = (vz_ms / tas_ms.clip(lower_bound=1e-6)).clip(-1.0, 1.0)
+    return ratio.arcsin().alias("fdm_gamma_rad")
+
+
+def _derived_exprs(schema: pl.Schema) -> list[pl.Expr]:
+    exprs: list[pl.Expr] = []
+    if "bds_mcp_sel_alt_ft" in schema and "raw_alt_ft" in schema:
+        exprs.append(
+            (pl.col("bds_mcp_sel_alt_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
+        )
+
+    tas_col = "era_tas_kt" if "era_tas_kt" in schema else "TAS"
+    vz_col = "raw_vz_ftmin" if "raw_vz_ftmin" in schema else "vertical_rate"
+    gs_col = "raw_gs_kt" if "raw_gs_kt" in schema else "groundspeed"
+
+    if tas_col in schema and vz_col in schema:
+        exprs.append(_gamma_expr(tas_col, vz_col))
+    if tas_col in schema and gs_col in schema:
+        exprs.append((pl.col(tas_col) - pl.col(gs_col)).alias("fdm_long_wind_kt"))
+
+    exprs.extend(
+        pl.col(col).fill_null(val) for col, val in _FILL_NULL_COLS.items() if col in schema
+    )
+    return exprs
+
+
 def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
     """Prepare OpenSky flight data for model training.
 
@@ -35,68 +87,12 @@ def flight_processing(df: pl.LazyFrame) -> pl.LazyFrame:
     Returns:
         LazyFrame with normalised names and derived columns.
     """
-    # --- Sort by timestamp (OpenSky data may arrive unsorted) ---
-    schema = df.collect_schema()
-    if "timestamp" in schema:
+    if "timestamp" in df.collect_schema():
         df = df.sort("timestamp")
 
-    # --- Rename traffic → schema (skip if already renamed) ---
-    col_rename: dict[str, str] = {
-        "altitude": "raw_alt_ft",
-        "selected_mcp": "bds_mcp_sel_alt_ft",
-        "vertical_rate": "raw_vz_ftmin",
-        "Mach": "era_mach",
-        "IAS": "bds_ias_kt",
-        "TAS": "era_tas_kt",
-        "groundspeed": "raw_gs_kt",
-    }
-    schema = df.collect_schema()
-    rename = {k: v for k, v in col_rename.items() if k in schema and v not in schema}
-    if rename:
-        df = df.rename(rename)
-
-    # Refresh schema after rename
-    schema = df.collect_schema()
-
-    # --- Derived columns ---
-    exprs: list[pl.Expr] = []
-
-    # fdm_alt_diff_ft
-    if "bds_mcp_sel_alt_ft" in schema and "raw_alt_ft" in schema:
-        exprs.append(
-            (pl.col("bds_mcp_sel_alt_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
-        )
-
-    # fdm_gamma_rad = arcsin(vz[ft/min] * FTMIN / (TAS[kt] * KT))
-    tas_col = "era_tas_kt" if "era_tas_kt" in schema else "TAS"
-    vz_col = "raw_vz_ftmin" if "raw_vz_ftmin" in schema else "vertical_rate"
-    if tas_col in schema and vz_col in schema:
-        vz_ms = pl.col(vz_col) * FTMIN  # ft/min → m/s
-        tas_ms = pl.col(tas_col) * KT  # kt → m/s
-        ratio = (vz_ms / tas_ms.clip(lower_bound=1e-6)).clip(-1.0, 1.0)
-        exprs.append(ratio.arcsin().alias("fdm_gamma_rad"))
-
-    # fdm_long_wind_kt = TAS - GS (knots)
-    gs_col = "raw_gs_kt" if "raw_gs_kt" in schema else "groundspeed"
-    if tas_col in schema and gs_col in schema:
-        exprs.append(
-            (pl.col(tas_col) - pl.col(gs_col)).alias("fdm_long_wind_kt"),
-        )
-
-    # Fill nulls in control inputs
-    fill_cols = {
-        "raw_vz_ftmin": 0.0,
-        "era_mach": 0.0,
-        "bds_ias_kt": 0.0,
-    }
-    for col, val in fill_cols.items():
-        if col in schema:
-            exprs.append(pl.col(col).fill_null(val))
-
-    if exprs:
-        df = df.with_columns(exprs)
-
-    return df
+    df = _apply_traffic_rename(df)
+    exprs = _derived_exprs(df.collect_schema())
+    return df.with_columns(exprs) if exprs else df
 
 
 def cumulative_distance(df: pl.DataFrame) -> pl.DataFrame:
