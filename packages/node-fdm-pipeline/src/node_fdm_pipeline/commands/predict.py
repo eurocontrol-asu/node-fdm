@@ -71,6 +71,110 @@ def _filter_nan_segments(
     return x_arr[finite_mask][0], u_seq[finite_mask], e_seq[finite_mask]
 
 
+def _resolve_model_path(*, info: object, acft: str, local_model: bool, models_dir: Path) -> Path:
+    if local_model:
+        return models_dir / f"{info.name}_{acft}"  # type: ignore[attr-defined]
+    return Path(
+        str(
+            files(f"node_fdm.models.pretrained_models.{info.name}").joinpath(  # type: ignore[attr-defined]
+                f"{info.name}_{acft}"  # type: ignore[attr-defined]
+            )
+        )
+    )
+
+
+def _load_test_df(delta_table: Path) -> object:
+    import polars as pl
+    from node_fdm_data.delta import read_delta_table
+
+    df = read_delta_table(delta_table)
+    df = df.filter(pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"))
+    sel_cols = [c for c in df.columns if c.startswith("fdm_") and "_sel_" in c]
+    if sel_cols:
+        df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])
+    return df
+
+
+def _predict_flight(
+    *,
+    flight_df: object,
+    info: object,
+    predictor: object,
+    output_dir: Path,
+    nan_threshold: float,
+) -> None:
+    import numpy as np
+    import polars as pl
+
+    flight_id = flight_df["meta_flight_id"][0]  # type: ignore[index]
+    x_arr = flight_df.select(info.x_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
+    u_arr = flight_df.select(info.u_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
+    e_arr = flight_df.select(info.e0_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
+
+    result = _filter_nan_segments(
+        x_arr,
+        u_arr,
+        e_arr,
+        nan_threshold=nan_threshold,
+        flight_id=flight_id,
+        col_names=(info.x_cols, info.u_cols, info.e0_cols),  # type: ignore[attr-defined]
+    )
+    if result is None:
+        return
+
+    try:
+        predictions = predictor.predict_flight(*result)  # type: ignore[attr-defined]
+    except ValueError:
+        log.warning("predict_skip_bad_x_init", flight_id=flight_id)
+        return
+
+    pred_df = pl.DataFrame({f"pred_{k}": v for k, v in predictions.items()})
+    pred_df.write_parquet(output_dir / f"{flight_id}.parquet")
+
+
+def _predict_typecode(
+    *,
+    acft: str,
+    df: object,
+    info: object,
+    models_dir: Path,
+    predict_dir: Path,
+    device: str,
+    local_model: bool,
+    nan_threshold: float,
+) -> None:
+    import polars as pl
+    from node_fdm.predictor import NodeFDMPredictor
+
+    log.info("predict_typecode", typecode=acft)
+    model_path = _resolve_model_path(
+        info=info, acft=acft, local_model=local_model, models_dir=models_dir
+    )
+    if not model_path.exists():
+        log.warning("predict_model_not_found", typecode=acft, path=str(model_path))
+        return
+
+    predictor = NodeFDMPredictor(model_path=model_path, device=device)
+    acft_df = df.filter(pl.col("meta_aircraft_type") == acft)  # type: ignore[attr-defined]
+    if len(acft_df) == 0:
+        log.warning("predict_empty_test_set", typecode=acft)
+        return
+
+    output_dir = predict_dir / acft
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    for flight_df in acft_df.partition_by("meta_flight_id", maintain_order=True):
+        _predict_flight(
+            flight_df=flight_df,
+            info=info,
+            predictor=predictor,
+            output_dir=output_dir,
+            nan_threshold=nan_threshold,
+        )
+
+    log.info("predict_typecode_done", typecode=acft)
+
+
 def run_predict(
     *,
     arch: str,
@@ -95,11 +199,6 @@ def run_predict(
             Flights where NaN fraction exceeds this value are skipped entirely.
             Default ``0.8`` (skip if >80% of timesteps contain NaN).
     """
-    import numpy as np
-    import polars as pl
-    from node_fdm.predictor import NodeFDMPredictor
-    from node_fdm_data.delta import read_delta_table
-
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
 
@@ -112,16 +211,7 @@ def run_predict(
     predict_dir.mkdir(parents=True, exist_ok=True)
     delta_table = cfg.paths.resolve("delta_table")
 
-    # Read Delta Table — filter on valid + test split
-    df = read_delta_table(delta_table)
-    df = df.filter(
-        pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"),
-    )
-
-    # Fill NaN→0.0 on selected-parameter columns (match training loader behavior)
-    sel_cols = [c for c in df.columns if c.startswith("fdm_") and "_sel_" in c]
-    if sel_cols:
-        df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])
+    df = _load_test_df(delta_table)
 
     log.info(
         "predict_start",
@@ -129,70 +219,20 @@ def run_predict(
         typecodes=typecodes,
         device=device,
         local_model=local_model,
-        rows=len(df),
+        rows=len(df),  # type: ignore[arg-type]
     )
 
     for acft in typecodes:
-        log.info("predict_typecode", typecode=acft)
-
-        if local_model:
-            model_path = models_dir / f"{info.name}_{acft}"
-        else:
-            model_path = Path(
-                str(
-                    files(f"node_fdm.models.pretrained_models.{info.name}").joinpath(
-                        f"{info.name}_{acft}"
-                    )
-                )
-            )
-
-        if not model_path.exists():
-            log.warning("predict_model_not_found", typecode=acft, path=str(model_path))
-            continue
-
-        predictor = NodeFDMPredictor(model_path=model_path, device=device)
-
-        acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
-        if len(acft_df) == 0:
-            log.warning("predict_empty_test_set", typecode=acft)
-            continue
-
-        output_dir = predict_dir / acft
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
-        for flight_df in flights:
-            flight_id = flight_df["meta_flight_id"][0]
-
-            # Extract arrays for predictor (float32 numpy) — data already in SI
-            arrays = {
-                "x": flight_df.select(info.x_cols).to_numpy().astype(np.float32),
-                "u": flight_df.select(info.u_cols).to_numpy().astype(np.float32),
-                "e": flight_df.select(info.e0_cols).to_numpy().astype(np.float32),
-            }
-
-            # --- NaN segment filter (match training behavior) ---
-            result = _filter_nan_segments(
-                arrays["x"],
-                arrays["u"],
-                arrays["e"],
-                nan_threshold=nan_threshold,
-                flight_id=flight_id,
-                col_names=(info.x_cols, info.u_cols, info.e0_cols),
-            )
-            if result is None:
-                continue
-
-            try:
-                predictions = predictor.predict_flight(*result)
-            except ValueError:
-                log.warning("predict_skip_bad_x_init", flight_id=flight_id)
-                continue
-
-            pred_df = pl.DataFrame({f"pred_{k}": v for k, v in predictions.items()})
-            pred_df.write_parquet(output_dir / f"{flight_id}.parquet")
-
-        log.info("predict_typecode_done", typecode=acft)
+        _predict_typecode(
+            acft=acft,
+            df=df,
+            info=info,
+            models_dir=models_dir,
+            predict_dir=predict_dir,
+            device=device,
+            local_model=local_model,
+            nan_threshold=nan_threshold,
+        )
 
     log.info("predict_done", typecodes=typecodes)
 
