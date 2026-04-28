@@ -357,6 +357,58 @@ def _assign_flight_ids(df: pl.DataFrame, gap_threshold_s: int) -> pl.DataFrame:
     )
 
 
+_FL_META_RENAME = {"departure": "departure", "arrival": "arrival", "typecode": "aircraft_type"}
+_FL_META_COLS = ("meta_departure", "meta_arrival", "meta_aircraft_type")
+
+
+def _coerce_flightlist(flightlist: object) -> pl.DataFrame | None:
+    import polars as pl
+
+    if flightlist is None:
+        return None
+    fl_pd = flightlist.data if hasattr(flightlist, "data") else flightlist
+    fl = fl_pd if isinstance(fl_pd, pl.DataFrame) else pl.from_pandas(fl_pd)
+    if len(fl) == 0 or "icao24" not in fl.columns:
+        return None
+    if "callsign" in fl.columns:
+        fl = fl.with_columns(
+            pl.col("callsign").fill_null("NOCALL").str.strip_chars().alias("callsign"),
+        )
+    return fl
+
+
+def _join_flight_meta(df: pl.DataFrame, fl: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    fl_cols = [c for c in ("departure", "arrival", "typecode") if c in fl.columns]
+    df = df.with_columns(
+        pl.col("raw_callsign").fill_null("NOCALL").str.strip_chars().alias("_fl_callsign"),
+    )
+    if fl_cols:
+        fl_select = fl.select(["icao24", "callsign", *fl_cols]).unique(
+            subset=["icao24", "callsign"],
+            keep="first",
+        )
+        df = df.join(
+            fl_select,
+            left_on=["raw_icao24", "_fl_callsign"],
+            right_on=["icao24", "callsign"],
+            how="left",
+        )
+        rename = {c: f"meta_{a}" for c, a in _FL_META_RENAME.items() if c in df.columns}
+        df = df.rename(rename)
+    return df.drop("_fl_callsign")
+
+
+def _ensure_meta_columns(df: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    missing = [c for c in _FL_META_COLS if c not in df.columns]
+    if not missing:
+        return df
+    return df.with_columns([pl.lit(None).cast(pl.Utf8).alias(c) for c in missing])
+
+
 def _join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFrame:
     """Join flightlist metadata directly onto a download batch.
 
@@ -372,49 +424,10 @@ def _join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFram
         DataFrame with ``meta_departure``, ``meta_arrival``,
         ``meta_aircraft_type`` columns added.
     """
-    import polars as pl
-
-    if flightlist is not None:
-        fl_pd = flightlist.data if hasattr(flightlist, "data") else flightlist
-        fl = pl.from_pandas(fl_pd) if not isinstance(fl_pd, pl.DataFrame) else fl_pd
-
-        if len(fl) > 0 and "icao24" in fl.columns:
-            if "callsign" in fl.columns:
-                fl = fl.with_columns(
-                    pl.col("callsign").fill_null("NOCALL").str.strip_chars().alias("callsign"),
-                )
-            # Normalize raw_callsign for join
-            df = df.with_columns(
-                pl.col("raw_callsign").fill_null("NOCALL").str.strip_chars().alias("_fl_callsign"),
-            )
-            fl_cols = [c for c in ("departure", "arrival", "typecode") if c in fl.columns]
-            if fl_cols:
-                fl_select = fl.select(["icao24", "callsign", *fl_cols]).unique(
-                    subset=["icao24", "callsign"],
-                    keep="first",
-                )
-                df = df.join(
-                    fl_select,
-                    left_on=["raw_icao24", "_fl_callsign"],
-                    right_on=["icao24", "callsign"],
-                    how="left",
-                )
-                rename = {
-                    c: f"meta_{alias}"
-                    for c, alias in [
-                        ("departure", "departure"),
-                        ("arrival", "arrival"),
-                        ("typecode", "aircraft_type"),
-                    ]
-                    if c in df.columns
-                }
-                df = df.rename(rename)
-            df = df.drop("_fl_callsign")
-
-    for col in ("meta_departure", "meta_arrival", "meta_aircraft_type"):
-        if col not in df.columns:
-            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
-    return df
+    fl = _coerce_flightlist(flightlist)
+    if fl is not None:
+        df = _join_flight_meta(df, fl)
+    return _ensure_meta_columns(df)
 
 
 def identify(
