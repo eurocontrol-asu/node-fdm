@@ -9,6 +9,7 @@ flags ``pre_gap_position``, ``pre_gap_altitude``, ``pre_gap_bds``.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import timedelta
 
 import polars as pl
@@ -100,6 +101,67 @@ def detect_subsegments(
     return pl.Series("seg_id", seg_ids, dtype=pl.Int32)
 
 
+@dataclass
+class _GridAccumulator:
+    columns: list[str]
+    ts_to_idx: dict[object, int]
+    result: dict[str, list[object]]
+    covered: list[bool]
+
+    def write(self, row: dict[str, object]) -> None:
+        idx = self.ts_to_idx.get(row["raw_timestamp"])
+        if idx is None:
+            return
+        self.covered[idx] = True
+        for c in self.columns:
+            self.result[c][idx] = row[c]
+
+
+def _interpolate_segment(
+    seg_data: pl.DataFrame,
+    grid_ts: pl.Series,
+    columns: list[str],
+) -> pl.DataFrame | None:
+    seg_start = seg_data["raw_timestamp"].min()
+    seg_end = seg_data["raw_timestamp"].max()
+    seg_grid_ts = grid_ts.filter((grid_ts >= seg_start) & (grid_ts <= seg_end))
+    if len(seg_grid_ts) == 0:
+        return None
+
+    grid_only = pl.DataFrame({"raw_timestamp": seg_grid_ts})
+    seg_tagged = seg_data.with_columns(pl.lit(0).alias("_ord"))
+    grid_tagged = grid_only.with_columns(pl.lit(1).alias("_ord"))
+    combined = (
+        pl.concat([seg_tagged, grid_tagged], how="diagonal_relaxed")
+        .sort("raw_timestamp", "_ord")
+        .unique("raw_timestamp", keep="first")
+        .drop("_ord")
+        .with_columns(pl.col(c).interpolate() for c in columns)
+    )
+    return combined.join(grid_only, on="raw_timestamp", how="inner")
+
+
+def _process_segment(
+    seg_data: pl.DataFrame,
+    grid_ts: pl.Series,
+    acc: _GridAccumulator,
+) -> None:
+    if len(seg_data) == 0:
+        return
+    if len(seg_data) == 1:
+        row: dict[str, object] = {"raw_timestamp": seg_data["raw_timestamp"][0]}
+        for c in acc.columns:
+            row[c] = seg_data[c][0]
+        acc.write(row)
+        return
+
+    interpolated = _interpolate_segment(seg_data, grid_ts, acc.columns)
+    if interpolated is None:
+        return
+    for row in interpolated.iter_rows(named=True):
+        acc.write(row)
+
+
 def interpolate_group_by_subsegments(
     original: pl.DataFrame,
     grid_ts: pl.Series,
@@ -130,61 +192,16 @@ def interpolate_group_by_subsegments(
     if not unique_segs:
         return result, pl.Series("gap", [True] * n_grid, dtype=pl.Boolean)
 
-    grid_ts_list = grid_ts.to_list()
-    ts_to_idx: dict[object, int] = {ts: i for i, ts in enumerate(grid_ts_list)}
+    acc = _GridAccumulator(
+        columns=columns,
+        ts_to_idx={ts: i for i, ts in enumerate(grid_ts.to_list())},
+        result=result,
+        covered=covered,
+    )
 
     for seg_id in unique_segs:
-        seg_mask = seg_ids == seg_id
-        seg_data = original.filter(seg_mask).select("raw_timestamp", *columns)
-
-        if len(seg_data) == 0:
-            continue
-
-        seg_start = seg_data["raw_timestamp"].min()
-        seg_end = seg_data["raw_timestamp"].max()
-
-        if len(seg_data) == 1:
-            ts = seg_data["raw_timestamp"][0]
-            if ts in ts_to_idx:
-                idx = ts_to_idx[ts]
-                covered[idx] = True
-                for c in columns:
-                    result[c][idx] = seg_data[c][0]
-            continue
-
-        # Grid points within segment bounds
-        seg_grid_ts = grid_ts.filter(
-            (grid_ts >= seg_start) & (grid_ts <= seg_end),
-        )
-        if len(seg_grid_ts) == 0:
-            continue
-
-        # Combine original segment data + grid timestamps, interpolate
-        grid_only = pl.DataFrame({"raw_timestamp": seg_grid_ts})
-        seg_tagged = seg_data.with_columns(pl.lit(0).alias("_ord"))
-        grid_tagged = grid_only.with_columns(pl.lit(1).alias("_ord"))
-        combined = (
-            pl.concat([seg_tagged, grid_tagged], how="diagonal_relaxed")
-            .sort("raw_timestamp", "_ord")
-            .unique("raw_timestamp", keep="first")
-            .drop("_ord")
-        )
-        combined = combined.with_columns(pl.col(c).interpolate() for c in columns)
-
-        # Filter to grid timestamps
-        interpolated = combined.join(
-            pl.DataFrame({"raw_timestamp": seg_grid_ts}),
-            on="raw_timestamp",
-            how="inner",
-        )
-
-        for row in interpolated.iter_rows(named=True):
-            ts = row["raw_timestamp"]
-            if ts in ts_to_idx:
-                idx = ts_to_idx[ts]
-                covered[idx] = True
-                for c in columns:
-                    result[c][idx] = row[c]
+        seg_data = original.filter(seg_ids == seg_id).select("raw_timestamp", *columns)
+        _process_segment(seg_data, grid_ts, acc)
 
     gap_flag = pl.Series("gap", [not c for c in covered], dtype=pl.Boolean)
     return result, gap_flag
