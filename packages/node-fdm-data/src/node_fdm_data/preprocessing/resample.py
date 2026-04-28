@@ -212,6 +212,40 @@ def interpolate_group_by_subsegments(
     return result, gap_flag
 
 
+_MIN_RUN_LEN = 10
+
+
+def _smooth_run(
+    df: pl.DataFrame,
+    mask: pl.Series,
+    flight_cls: type,
+) -> tuple[list[int], list[tuple[float, float]]] | None:
+    """Smooth one contiguous run of valid positions; return (indices, lat/lon) or None."""
+    indices = mask.arg_true().to_list()
+    if len(indices) < _MIN_RUN_LEN:
+        return None
+
+    select_cols = [
+        pl.col("raw_timestamp").alias("timestamp"),
+        pl.col("raw_lat_deg").alias("latitude"),
+        pl.col("raw_lon_deg").alias("longitude"),
+    ]
+    if "raw_alt_ft" in df.columns:
+        select_cols.append(pl.col("raw_alt_ft").alias("altitude"))
+
+    segment = df.filter(mask).select(select_cols)
+    smoothed = flight_cls(segment.to_pandas()).filter("aggressive")
+    if smoothed is None or len(smoothed) != len(indices):
+        return None
+
+    smooth_pd = smoothed.data[["latitude", "longitude"]]
+    pairs = [
+        (float(smooth_pd.iloc[i]["latitude"]), float(smooth_pd.iloc[i]["longitude"]))
+        for i in range(len(indices))
+    ]
+    return indices, pairs
+
+
 def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
     """Apply Savitzky-Golay smoothing on contiguous position sub-segments.
 
@@ -239,39 +273,18 @@ def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
     except ImportError:
         return df
 
-    # Detect runs of non-null position
-    changes = has_pos != has_pos.shift()
-    run_ids = changes.cum_sum()
-
+    run_ids = (has_pos != has_pos.shift()).cum_sum()
     lats = df["raw_lat_deg"].to_list()
     lons = df["raw_lon_deg"].to_list()
 
     for run_id in run_ids.filter(has_pos).unique().drop_nulls().sort().to_list():
-        mask = (run_ids == run_id) & has_pos
-        indices = mask.arg_true().to_list()
-
-        if len(indices) < 10:  # noqa: PLR2004
+        result = _smooth_run(df, (run_ids == run_id) & has_pos, Flight)
+        if result is None:
             continue
-
-        select_cols = [
-            pl.col("raw_timestamp").alias("timestamp"),
-            pl.col("raw_lat_deg").alias("latitude"),
-            pl.col("raw_lon_deg").alias("longitude"),
-        ]
-        if "raw_alt_ft" in df.columns:
-            select_cols.append(pl.col("raw_alt_ft").alias("altitude"))
-
-        segment = df.filter(mask).select(select_cols)
-        flight = Flight(segment.to_pandas())
-        smoothed = flight.filter("aggressive")
-
-        if smoothed is None or len(smoothed) != len(indices):
-            continue
-
-        smooth_pd = smoothed.data[["latitude", "longitude"]]
-        for i, idx in enumerate(indices):
-            lats[idx] = float(smooth_pd.iloc[i]["latitude"])
-            lons[idx] = float(smooth_pd.iloc[i]["longitude"])
+        indices, pairs = result
+        for idx, (lat, lon) in zip(indices, pairs, strict=True):
+            lats[idx] = lat
+            lons[idx] = lon
 
     return df.with_columns(
         pl.Series("raw_lat_deg", lats, dtype=pl.Float64),
