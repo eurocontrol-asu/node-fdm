@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import numpy as np
 import polars as pl
-import pytest
 
 from node_fdm_data.conversions import kt_to_ms
 from node_fdm_data.segments import build_selected_params
@@ -123,17 +122,35 @@ def _config(
 
 
 class TestTasTargetNoNan:
-    """fdm_tas_target_kt has zero NaN on a full flight."""
+    """``fdm_tas_target_kt`` is non-NaN inside Mach/CAS coverage.
 
-    def test_tas_target_no_nan(self) -> None:
+    Updated for AXM-1625 (AC5/AC6): the global backward-fill anchor was
+    removed, so target NaN is now expected outside detected segments.
+    The new contract guarantees: where ``fdm_mach_sel`` or
+    ``fdm_cas_sel_kt`` is non-NaN, the target is also non-NaN.
+    """
+
+    def test_tas_target_non_nan_inside_coverage(self) -> None:
         df = _make_flight()
         result = build_selected_params(df, _config())
 
         assert "fdm_tas_target_kt" in result.columns
-        nan_count = (
-            result["fdm_tas_target_kt"].null_count() + result["fdm_tas_target_kt"].is_nan().sum()
+        target = result["fdm_tas_target_kt"].to_numpy()
+        mach_sel = result["fdm_mach_sel"].to_numpy()
+        cas_sel = result["fdm_cas_sel_kt"].to_numpy()
+        coverage = ~np.isnan(mach_sel) | ~np.isnan(cas_sel)
+        assert np.all(~np.isnan(target[coverage])), (
+            "fdm_tas_target_kt must be non-NaN wherever a Mach or CAS segment exists"
         )
-        assert nan_count == 0, f"Expected zero NaN, got {nan_count}"
+
+    def test_tas_target_known_mask_matches_target(self) -> None:
+        df = _make_flight()
+        result = build_selected_params(df, _config())
+
+        assert "fdm_tas_target_known" in result.columns
+        target = result["fdm_tas_target_kt"].to_numpy()
+        known = result["fdm_tas_target_known"].to_numpy().astype(bool)
+        np.testing.assert_array_equal(known, ~np.isnan(target))
 
 
 class TestTasTargetMachPriority:
@@ -161,18 +178,6 @@ class TestTasTargetMachPriority:
                 # TAS target should be populated (Mach takes priority)
                 target_val = tas_target[i]
                 assert target_val is not None and not np.isnan(target_val)
-
-
-class TestTasTargetLastRowActual:
-    """Last row of fdm_tas_target_kt equals actual era_tas_kt."""
-
-    def test_tas_target_last_row_actual(self) -> None:
-        df = _make_flight()
-        result = build_selected_params(df, _config())
-
-        last_target = result["fdm_tas_target_kt"][-1]
-        last_actual = result["era_tas_kt"][-1]
-        assert last_target == pytest.approx(last_actual, rel=1e-6)
 
 
 class TestSiConversion:
@@ -206,62 +211,62 @@ class TestSiConversion:
 
 
 class TestNoMachSegments:
-    """No Mach segments — only CAS and TAS segments fill the target."""
+    """No Mach segments — only CAS/TAS segments contribute; gaps stay NaN."""
 
-    def test_no_mach_segments(self) -> None:
+    def test_no_mach_segments_yields_nan_gaps(self) -> None:
         df = _make_flight(include_mach=False)
         cfg = _config(include_mach=False)
         result = build_selected_params(df, cfg)
 
         assert "fdm_tas_target_kt" in result.columns
-        nan_count = (
-            result["fdm_tas_target_kt"].null_count() + result["fdm_tas_target_kt"].is_nan().sum()
+        target = result["fdm_tas_target_kt"].to_numpy()
+        cas_sel = result["fdm_cas_sel_kt"].to_numpy()
+        tas_sel_present = "fdm_tas_sel_kt" in result.columns
+        tas_sel = (
+            result["fdm_tas_sel_kt"].to_numpy()
+            if tas_sel_present
+            else np.full(len(target), np.nan)
         )
-        assert nan_count == 0, f"Expected zero NaN without Mach, got {nan_count}"
+        coverage = ~np.isnan(cas_sel) | ~np.isnan(tas_sel)
+        # Inside coverage: target is non-NaN (CAS or TAS-derived).
+        assert np.all(~np.isnan(target[coverage]))
+        # Outside coverage: target may stay NaN, and known mask reflects that.
+        known = result["fdm_tas_target_known"].to_numpy().astype(bool)
+        np.testing.assert_array_equal(known, ~np.isnan(target))
 
 
 class TestNoSegmentsAtAll:
-    """No segments detected — target should backfill from last actual TAS."""
+    """No segments detected — target stays NaN end-to-end and known is False."""
 
-    def test_no_segments(self) -> None:
-        # Short noisy flight with no stable segments
+    def test_no_segments_target_all_nan(self) -> None:
         rng = np.random.default_rng(99)
         n = 50
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.linspace(0, 10_000, n),
-                "era_tas_kt": rng.uniform(200, 400, n),  # random, no plateaus
+                "era_tas_kt": rng.uniform(200, 400, n),
             }
         )
-        # Config with very strict thresholds so nothing is detected
         cfg: dict[str, dict[str, object]] = {}
         result = build_selected_params(df, cfg)
 
         assert "fdm_tas_target_kt" in result.columns
-        # Should backfill from last actual TAS
-        last_actual = df["era_tas_kt"][-1]
-        last_target = result["fdm_tas_target_kt"][-1]
-        assert last_target == pytest.approx(last_actual, rel=1e-6)
-
-        # All values should be the last actual TAS (backfill from anchor)
-        nan_count = (
-            result["fdm_tas_target_kt"].null_count() + result["fdm_tas_target_kt"].is_nan().sum()
-        )
-        assert nan_count == 0
+        target = result["fdm_tas_target_kt"].to_numpy()
+        assert np.all(np.isnan(target))
+        known = result["fdm_tas_target_known"].to_numpy().astype(bool)
+        assert not known.any()
 
 
 class TestNanInAltitude:
-    """NaN in altitude — conversion handles gracefully, backfill covers gaps."""
+    """NaN in altitude — target stays NaN where altitude is NaN (no backfill)."""
 
-    def test_nan_altitude(self) -> None:
-        # Inject NaN at specific altitude indices
+    def test_nan_altitude_yields_nan_target(self) -> None:
         nan_indices = [50, 51, 52, 150, 151]
         df = _make_flight(alt_nan_indices=nan_indices)
         result = build_selected_params(df, _config())
 
         assert "fdm_tas_target_kt" in result.columns
-        # Despite NaN altitudes, target should have no NaN (backfill covers)
-        nan_count = (
-            result["fdm_tas_target_kt"].null_count() + result["fdm_tas_target_kt"].is_nan().sum()
-        )
-        assert nan_count == 0, f"Expected zero NaN with NaN altitudes, got {nan_count}"
+        target = result["fdm_tas_target_kt"].to_numpy()
+        known = result["fdm_tas_target_known"].to_numpy().astype(bool)
+        # Known mask is the inverse-NaN mask of the target (AC6).
+        np.testing.assert_array_equal(known, ~np.isnan(target))

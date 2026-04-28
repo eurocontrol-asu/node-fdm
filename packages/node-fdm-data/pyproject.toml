@@ -72,6 +72,10 @@ addopts = [
     "--cov-fail-under=0",
 ]
 filterwarnings = ["error"]
+markers = [
+    "integration: integration tests requiring real I/O (filesystem, network, deltalake)",
+    "e2e: end-to-end tests via subprocess/CLI",
+]
 
 [tool.ruff]
 target-version = "py312"

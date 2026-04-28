@@ -24,7 +24,12 @@ import polars as pl
 from pydantic import BaseModel
 from scipy.signal import savgol_filter
 
-from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas, vz_to_gamma
+from node_fdm_data.physics.isa import isa_temperature
+from node_fdm_data.physics.speed import (
+    cas_to_tas_real,
+    mach_to_tas_real,
+    vz_to_gamma,
+)
 
 __all__ = [
     "GammaFilterConfig",
@@ -241,6 +246,17 @@ def _resolve_col(df: pl.DataFrame, primary: str, fallback: str) -> str:
     return primary if primary in df.columns else fallback
 
 
+_CFG_ALIASES = {"min_length": "min_len", "tolerance": "tol"}
+
+
+def _normalize_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
+    """Map ticket-spec aliases (``min_length``/``tolerance``) to the canonical kwargs."""
+    out: dict[str, Any] = {}
+    for key, value in cfg.items():
+        out[_CFG_ALIASES.get(key, key)] = value
+    return out
+
+
 def _detect_with_alt(
     df: pl.DataFrame,
     src_col: str,
@@ -250,7 +266,34 @@ def _detect_with_alt(
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     if src_col not in df.columns:
         return df, []
-    segs = detect_constant_segments(df[src_col].to_numpy(), alt_values=alt_arr, **cfg)
+    segs = detect_constant_segments(
+        df[src_col].to_numpy(), alt_values=alt_arr, **_normalize_cfg(cfg)
+    )
+    return add_segment_column(df, segs, out_col), segs
+
+
+def _detect_mach_in_plateau(
+    df: pl.DataFrame,
+    src_col: str,
+    out_col: str,
+    cfg: dict[str, Any],
+    alt_arr: np.ndarray,
+    plateau_mask: np.ndarray,
+    min_mach_value: float,
+) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    """Detect Mach plateaus restricted to altitude-plateau rows only.
+
+    Mach values outside the altitude-plateau mask are set to NaN before
+    detection so detected segments cannot extend beyond cruise.  Detected
+    segments whose mean Mach is below ``min_mach_value`` are dropped
+    (aberrant/ghost-data guard).
+    """
+    if src_col not in df.columns:
+        return df, []
+    arr = df[src_col].to_numpy().astype(np.float64, copy=True)
+    arr[~plateau_mask] = np.nan
+    segs = detect_constant_segments(arr, alt_values=alt_arr, **_normalize_cfg(cfg))
+    segs = [s for s in segs if s["var_mean"] >= min_mach_value]
     return add_segment_column(df, segs, out_col), segs
 
 
@@ -266,7 +309,9 @@ def _detect_masked(
     arr = df[src_col].to_numpy().copy()
     for mask_segs in masks:
         _mask_segments(arr, mask_segs)
-    segs = detect_constant_segments(arr, **cfg)
+    norm = _normalize_cfg(cfg)
+    norm.setdefault("use_alt", False)
+    segs = detect_constant_segments(arr, **norm)
     return add_segment_column(df, segs, out_col), segs
 
 
@@ -292,7 +337,7 @@ def _anchored_target(
     src_col: str,
     out_col: str,
 ) -> pl.DataFrame:
-    if sel_col not in df.columns or src_col not in df.columns:
+    if sel_col not in df.columns or src_col not in df.columns or len(df) == 0:
         return df
     last = _last_valid(df, src_col)
     target = df[sel_col].fill_nan(None).to_list()
@@ -319,38 +364,73 @@ def _gamma_from_alt(
     return df.with_columns(pl.Series("fdm_gamma_from_alt_rad", gamma_from_alt))
 
 
+def _resolve_temp_k(df: pl.DataFrame, alt_arr: np.ndarray) -> np.ndarray:
+    """Return the static-temperature array (K) used for speed conversions.
+
+    Uses ``era_temp_K`` when present (real reanalysis temperature); falls
+    back to ISA ``isa_temperature(alt_m)`` otherwise.
+    """
+    if "era_temp_K" in df.columns:
+        return df["era_temp_K"].to_numpy().astype(np.float64)
+    alt_m = np.asarray(alt_arr, dtype=np.float64) * _FT_TO_M
+    return np.asarray(isa_temperature(alt_m), dtype=np.float64)
+
+
 def _build_tas_target(df: pl.DataFrame, alt_arr: np.ndarray, tas_src: str) -> pl.DataFrame:
-    if tas_src not in df.columns:
-        return df
+    """Build ``fdm_tas_target_kt`` from FMS envelope and emit ``fdm_tas_target_known``.
+
+    On rows covered by both Mach and CAS segments, target is
+    ``min(mach_to_tas_real, cas_to_tas_real)``; on single-source rows it
+    is that single segment's TAS; rows covered by neither stay NaN
+    (no global backward-fill).  ``fdm_tas_target_known`` is a boolean
+    column that is True iff the target is non-NaN.
+    """
     n = len(df)
-    tas_target = np.full(n, np.nan)
-    alt_m = alt_arr * _FT_TO_M
+    target = np.full(n, np.nan, dtype=np.float64)
 
-    if "fdm_tas_sel_kt" in df.columns:
-        sel = df["fdm_tas_sel_kt"].to_numpy()
-        mask = ~np.isnan(sel)
-        tas_target[mask] = sel[mask]
+    if n == 0:
+        return df.with_columns(
+            pl.Series("fdm_tas_target_kt", target),
+            pl.Series("fdm_tas_target_known", np.zeros(0, dtype=bool)),
+        )
 
-    if "fdm_cas_sel_kt" in df.columns:
-        cas_sel = df["fdm_cas_sel_kt"].to_numpy()
-        mask = ~np.isnan(cas_sel)
-        if mask.any():
-            tas_ms = cas_to_tas(cas_sel[mask] * _KT_TO_MS, alt_m[mask])
-            tas_target[mask] = np.asarray(tas_ms) * _MS_TO_KT
+    alt_m = np.asarray(alt_arr, dtype=np.float64) * _FT_TO_M
+    temp_k = _resolve_temp_k(df, alt_arr)
 
+    tas_mach = np.full(n, np.nan)
     if "fdm_mach_sel" in df.columns:
         mach_sel = df["fdm_mach_sel"].to_numpy()
         mask = ~np.isnan(mach_sel)
         if mask.any():
-            tas_ms = mach_to_tas(mach_sel[mask], alt_m[mask])
-            tas_target[mask] = np.asarray(tas_ms) * _MS_TO_KT
+            tas_ms = mach_to_tas_real(mach_sel[mask], temp_k[mask])
+            tas_mach[mask] = np.asarray(tas_ms) * _MS_TO_KT
 
-    tas_target[n - 1] = _last_valid(df, tas_src)
+    tas_cas = np.full(n, np.nan)
+    if "fdm_cas_sel_kt" in df.columns:
+        cas_sel = df["fdm_cas_sel_kt"].to_numpy()
+        mask = ~np.isnan(cas_sel)
+        if mask.any():
+            tas_ms = cas_to_tas_real(cas_sel[mask] * _KT_TO_MS, alt_m[mask], temp_k[mask])
+            tas_cas[mask] = np.asarray(tas_ms) * _MS_TO_KT
+
+    have_mach = ~np.isnan(tas_mach)
+    have_cas = ~np.isnan(tas_cas)
+    overlap = have_mach & have_cas
+    only_mach = have_mach & ~have_cas
+    only_cas = ~have_mach & have_cas
+    target[overlap] = np.minimum(tas_mach[overlap], tas_cas[overlap])
+    target[only_mach] = tas_mach[only_mach]
+    target[only_cas] = tas_cas[only_cas]
+
+    if "fdm_tas_sel_kt" in df.columns:
+        sel = df["fdm_tas_sel_kt"].to_numpy()
+        gap = np.isnan(target) & ~np.isnan(sel)
+        target[gap] = sel[gap]
+
+    known = ~np.isnan(target)
     return df.with_columns(
-        pl.Series("fdm_tas_target_kt", tas_target)
-        .fill_nan(None)
-        .backward_fill()
-        .alias("fdm_tas_target_kt"),
+        pl.Series("fdm_tas_target_kt", target),
+        pl.Series("fdm_tas_target_known", known),
     )
 
 
@@ -400,7 +480,7 @@ def _build_gamma_target(df: pl.DataFrame, tas_col: str) -> pl.DataFrame:
 def _detect_gamma_sel(df: pl.DataFrame, gamma_cfg: dict[str, Any] | None) -> pl.DataFrame:
     if gamma_cfg is None or "fdm_gamma_rad" not in df.columns:
         return df
-    gcfg = GammaFilterConfig(**gamma_cfg)
+    gcfg = GammaFilterConfig(**_normalize_cfg(gamma_cfg))
     gamma_segs = detect_constant_segments(
         df["fdm_gamma_rad"].to_numpy().copy(), **gcfg.model_dump()
     )
@@ -415,8 +495,185 @@ def _detect_alt_sel(
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     if alt_cfg is None or alt_col not in df.columns:
         return df, []
-    segs = detect_constant_segments(alt_arr, **alt_cfg)
+    cfg = _normalize_cfg(alt_cfg)
+    cfg.setdefault("use_alt", False)
+    segs = detect_constant_segments(alt_arr, **cfg)
     return add_segment_column(df, segs, "fdm_alt_sel_ft"), segs
+
+
+def _optimize_transition_cas(
+    tas_real_kt: np.ndarray,
+    mach_const: float,
+    alt_m: np.ndarray,
+    temp_k: np.ndarray,
+    *,
+    search_window: int = 60,
+) -> float:
+    """Find the constant CAS (kt) minimising envelope-vs-real TAS error.
+
+    Cost ``= Sum (min(mach_to_tas_real(M, T), cas_to_tas_real(CAS, h, T)) - TAS_real)^2``
+    is evaluated over a brute search 200..350 kt @ 1 kt then refined +/-2 kt @ 0.1 kt.
+    Returns ``nan`` if no valid samples are present.
+    """
+    valid = ~np.isnan(tas_real_kt) & ~np.isnan(alt_m) & ~np.isnan(temp_k)
+    if int(valid.sum()) < 2:  # noqa: PLR2004
+        return float("nan")
+    tas_real_ms = tas_real_kt[valid] * _KT_TO_MS
+    h = alt_m[valid]
+    t = temp_k[valid]
+
+    tas_mach_ms = np.asarray(mach_to_tas_real(mach_const, t), dtype=np.float64)
+
+    def cost(cas_kt: float) -> float:
+        tas_cas_ms = np.asarray(cas_to_tas_real(cas_kt * _KT_TO_MS, h, t), dtype=np.float64)
+        env = np.minimum(tas_mach_ms, tas_cas_ms)
+        diff = env - tas_real_ms
+        return float(np.nansum(diff * diff))
+
+    coarse = np.arange(200.0, 351.0, 1.0)
+    coarse_costs = np.array([cost(c) for c in coarse])
+    if not np.any(np.isfinite(coarse_costs)):
+        return float("nan")
+    best = float(coarse[int(np.argmin(coarse_costs))])
+    fine = np.arange(best - 2.0, best + 2.0 + 0.05, 0.1)
+    fine_costs = np.array([cost(c) for c in fine])
+    return float(fine[int(np.argmin(fine_costs))])
+
+
+def _mach_value_in_alt_seg(
+    mach_segs: list[dict[str, Any]],
+    alt_seg: dict[str, Any],
+) -> float | None:
+    """Return the mean Mach of any Mach segment overlapping *alt_seg*, else None."""
+    a0, a1 = alt_seg["start_idx"], alt_seg["end_idx"]
+    for ms in mach_segs:
+        m0, m1 = ms["start_idx"], ms["end_idx"]
+        if m0 <= a1 and m1 >= a0:
+            return float(ms["var_mean"])
+    return None
+
+
+def _walk_apply_cas(
+    cas_sel: np.ndarray,
+    cas_real: np.ndarray,
+    cas_opt: float,
+    *,
+    boundary_idx: int,
+    direction: int,
+    deviation_kt: float,
+    win_start: int,
+    win_end: int,
+) -> None:
+    """Walk from *boundary_idx* outward, marking ``cas_sel`` with *cas_opt*.
+
+    Walking stops on the first row where ``|cas_real - cas_opt| > deviation_kt``;
+    rows beyond the stop point keep their previous value (NaN after reset).
+    NaN ``cas_real`` rows are skipped without terminating the walk.
+    """
+    if direction < 0:
+        rng = range(boundary_idx - 1, win_start - 1, -1)
+    else:
+        rng = range(boundary_idx, win_end)
+    for i in rng:
+        r = cas_real[i]
+        if np.isnan(r):
+            continue
+        if abs(r - cas_opt) > deviation_kt:
+            break
+        cas_sel[i] = cas_opt
+
+
+def _apply_transition_optimisation(
+    df: pl.DataFrame,
+    alt_segs: list[dict[str, Any]],
+    mach_segs: list[dict[str, Any]],
+    alt_arr: np.ndarray,
+    cas_src_col: str,
+    config: dict[str, Any],
+) -> pl.DataFrame:
+    """Replace climb/descent CAS in ``fdm_cas_sel_kt`` by the optimised crossover CAS.
+
+    Inside each transition window the previous CAS-detection values are
+    cleared, then re-emitted only on rows that match the optimised CAS
+    within the deviation cutoff (walking outward from the cruise boundary).
+    Skipped if no Mach plateau, no altitude plateau, no real TAS, or the
+    plateau is within ``transition_margin`` of a flight edge.
+    """
+    if "fdm_cas_sel_kt" not in df.columns or not alt_segs or not mach_segs:
+        return df
+    n = len(df)
+    if n == 0 or "era_tas_kt" not in df.columns:
+        return df
+    tas_real = df["era_tas_kt"].to_numpy().astype(np.float64)
+    if not np.any(~np.isnan(tas_real)):
+        return df
+    if cas_src_col not in df.columns:
+        return df
+
+    deviation_kt = float(config.get("cas_deviation_kt", 5.0))
+    margin = int(config.get("transition_margin", 30))
+    search_window = int(config.get("cas_search_window", 60))
+
+    alt_m = np.asarray(alt_arr, dtype=np.float64) * _FT_TO_M
+    temp_k = _resolve_temp_k(df, alt_arr)
+    cas_real = df[cas_src_col].to_numpy().astype(np.float64)
+    cas_sel = df["fdm_cas_sel_kt"].to_numpy().astype(np.float64).copy()
+
+    first_alt, last_alt = alt_segs[0], alt_segs[-1]
+
+    # Climb window
+    if first_alt["start_idx"] >= margin:
+        mach_const = _mach_value_in_alt_seg(mach_segs, first_alt)
+        if mach_const is not None:
+            boundary = first_alt["start_idx"]
+            win_start = max(0, boundary - search_window)
+            cas_sel[:boundary] = np.nan
+            cas_opt = _optimize_transition_cas(
+                tas_real[win_start:boundary],
+                mach_const,
+                alt_m[win_start:boundary],
+                temp_k[win_start:boundary],
+                search_window=search_window,
+            )
+            if np.isfinite(cas_opt):
+                _walk_apply_cas(
+                    cas_sel,
+                    cas_real,
+                    cas_opt,
+                    boundary_idx=boundary,
+                    direction=-1,
+                    deviation_kt=deviation_kt,
+                    win_start=win_start,
+                    win_end=boundary,
+                )
+
+    # Descent window
+    if (n - 1 - last_alt["end_idx"]) >= margin:
+        mach_const = _mach_value_in_alt_seg(mach_segs, last_alt)
+        if mach_const is not None:
+            boundary = last_alt["end_idx"] + 1
+            win_end = min(n, boundary + search_window)
+            cas_sel[boundary:] = np.nan
+            cas_opt = _optimize_transition_cas(
+                tas_real[boundary:win_end],
+                mach_const,
+                alt_m[boundary:win_end],
+                temp_k[boundary:win_end],
+                search_window=search_window,
+            )
+            if np.isfinite(cas_opt):
+                _walk_apply_cas(
+                    cas_sel,
+                    cas_real,
+                    cas_opt,
+                    boundary_idx=boundary,
+                    direction=+1,
+                    deviation_kt=deviation_kt,
+                    win_start=boundary,
+                    win_end=win_end,
+                )
+
+    return df.with_columns(pl.Series("fdm_cas_sel_kt", cas_sel))
 
 
 def build_selected_params(
@@ -461,17 +718,34 @@ def build_selected_params(
     alt_col = _resolve_col(df, "raw_alt_ft", "altitude")
     alt_arr = df[alt_col].to_numpy()
     tas_col = "era_tas_kt"
+    cas_src_col = _resolve_col(df, "bds_ias_kt", "CAS")
 
-    df, mach_segs = _detect_with_alt(
+    # 1. Altitude plateaus FIRST — Mach detection is restricted to these rows.
+    alt_cfg = config.get("alt")
+    df, alt_segs = _detect_alt_sel(df, alt_cfg, alt_col, alt_arr)
+    if alt_cfg is None:
+        # Backwards compatible: without an alt config we cannot derive the
+        # plateau mask, so Mach detection falls back to its altitude-gated
+        # behaviour without plateau restriction.
+        plateau_mask = np.ones(len(df), dtype=bool)
+    else:
+        plateau_mask = np.zeros(len(df), dtype=bool)
+        for seg in alt_segs:
+            plateau_mask[seg["start_idx"] : seg["end_idx"] + 1] = True
+
+    min_mach_value = float(config.get("mach_min_value", 0.5))
+    df, mach_segs = _detect_mach_in_plateau(
         df,
         _resolve_col(df, "era_mach", "Mach"),
         "fdm_mach_sel",
         config.get("mach", {}),
         alt_arr,
+        plateau_mask,
+        min_mach_value,
     )
     df, cas_segs = _detect_masked(
         df,
-        _resolve_col(df, "bds_ias_kt", "CAS"),
+        cas_src_col,
         "fdm_cas_sel_kt",
         config.get("cas", {}),
         [mach_segs],
@@ -493,8 +767,15 @@ def build_selected_params(
         alt_arr,
     )
     df = _detect_gamma_sel(df, config.get("gamma"))
-    alt_cfg = config.get("alt")
-    df, alt_segs = _detect_alt_sel(df, alt_cfg, alt_col, alt_arr)
+
+    df = _apply_transition_optimisation(
+        df,
+        alt_segs,
+        mach_segs,
+        alt_arr,
+        cas_src_col,
+        config,
+    )
 
     df = _gamma_from_alt(df, alt_segs, alt_cfg, int(config.get("alt_hold_relax", 15)))
 
