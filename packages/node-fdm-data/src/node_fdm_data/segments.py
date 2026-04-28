@@ -226,7 +226,200 @@ def add_segment_column(
     return df.with_columns(pl.Series(col_name, arr))
 
 
-def build_selected_params(  # noqa: PLR0915
+_KT_TO_MS = 0.514444
+_MS_TO_KT = 1.0 / 0.514444
+_FT_MIN_TO_MS = 0.3048 / 60
+_FT_TO_M = 0.3048
+
+
+def _mask_segments(arr: np.ndarray, segments: list[dict[str, Any]]) -> None:
+    for seg in segments:
+        arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
+
+
+def _resolve_col(df: pl.DataFrame, primary: str, fallback: str) -> str:
+    return primary if primary in df.columns else fallback
+
+
+def _detect_with_alt(
+    df: pl.DataFrame,
+    src_col: str,
+    out_col: str,
+    cfg: dict[str, Any],
+    alt_arr: np.ndarray,
+) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    if src_col not in df.columns:
+        return df, []
+    segs = detect_constant_segments(df[src_col].to_numpy(), alt_values=alt_arr, **cfg)
+    return add_segment_column(df, segs, out_col), segs
+
+
+def _detect_masked(
+    df: pl.DataFrame,
+    src_col: str,
+    out_col: str,
+    cfg: dict[str, Any],
+    masks: list[list[dict[str, Any]]],
+) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    if src_col not in df.columns:
+        return df, []
+    arr = df[src_col].to_numpy().copy()
+    for mask_segs in masks:
+        _mask_segments(arr, mask_segs)
+    segs = detect_constant_segments(arr, **cfg)
+    return add_segment_column(df, segs, out_col), segs
+
+
+def _backfill_alias(df: pl.DataFrame, src: str, alias: str) -> pl.DataFrame:
+    return df.with_columns(
+        pl.col(src)
+        .fill_nan(None)
+        .forward_fill()
+        .backward_fill()
+        .fill_null(pl.lit(float("nan")))
+        .alias(alias)
+    )
+
+
+def _last_valid(df: pl.DataFrame, col: str, default: float = 0.0) -> float:
+    series = df[col].drop_nulls().drop_nans()
+    return float(series[-1]) if len(series) > 0 else default
+
+
+def _anchored_target(
+    df: pl.DataFrame,
+    sel_col: str,
+    src_col: str,
+    out_col: str,
+) -> pl.DataFrame:
+    if sel_col not in df.columns or src_col not in df.columns:
+        return df
+    last = _last_valid(df, src_col)
+    target = df[sel_col].fill_nan(None).to_list()
+    target[len(df) - 1] = last
+    return df.with_columns(
+        pl.Series(out_col, target).cast(pl.Float64).backward_fill().alias(out_col),
+    )
+
+
+def _gamma_from_alt(
+    df: pl.DataFrame,
+    alt_segs: list[dict[str, Any]],
+    alt_cfg: dict[str, Any] | None,
+    relax: int,
+) -> pl.DataFrame:
+    if "fdm_alt_sel_ft" not in df.columns:
+        return df
+    alt_sel = df["fdm_alt_sel_ft"].to_numpy()
+    gamma_from_alt = np.where(np.isnan(alt_sel), np.nan, 0.0)
+    if relax > 0 and alt_cfg is not None:
+        for seg in alt_segs:
+            end = min(seg["start_idx"] + relax, seg["end_idx"] + 1)
+            gamma_from_alt[seg["start_idx"] : end] = np.nan
+    return df.with_columns(pl.Series("fdm_gamma_from_alt_rad", gamma_from_alt))
+
+
+def _build_tas_target(df: pl.DataFrame, alt_arr: np.ndarray, tas_src: str) -> pl.DataFrame:
+    if tas_src not in df.columns:
+        return df
+    n = len(df)
+    tas_target = np.full(n, np.nan)
+    alt_m = alt_arr * _FT_TO_M
+
+    if "fdm_tas_sel_kt" in df.columns:
+        sel = df["fdm_tas_sel_kt"].to_numpy()
+        mask = ~np.isnan(sel)
+        tas_target[mask] = sel[mask]
+
+    if "fdm_cas_sel_kt" in df.columns:
+        cas_sel = df["fdm_cas_sel_kt"].to_numpy()
+        mask = ~np.isnan(cas_sel)
+        if mask.any():
+            tas_ms = cas_to_tas(cas_sel[mask] * _KT_TO_MS, alt_m[mask])
+            tas_target[mask] = np.asarray(tas_ms) * _MS_TO_KT
+
+    if "fdm_mach_sel" in df.columns:
+        mach_sel = df["fdm_mach_sel"].to_numpy()
+        mask = ~np.isnan(mach_sel)
+        if mask.any():
+            tas_ms = mach_to_tas(mach_sel[mask], alt_m[mask])
+            tas_target[mask] = np.asarray(tas_ms) * _MS_TO_KT
+
+    tas_target[n - 1] = _last_valid(df, tas_src)
+    return df.with_columns(
+        pl.Series("fdm_tas_target_kt", tas_target)
+        .fill_nan(None)
+        .backward_fill()
+        .alias("fdm_tas_target_kt"),
+    )
+
+
+def _gamma_layer_from_alt(df: pl.DataFrame, target: np.ndarray) -> None:
+    if "fdm_gamma_from_alt_rad" not in df.columns:
+        return
+    gfa = df["fdm_gamma_from_alt_rad"].to_numpy()
+    mask = ~np.isnan(gfa)
+    if mask.any():
+        target[mask] = 0.0
+
+
+def _gamma_layer_sel(df: pl.DataFrame, target: np.ndarray) -> None:
+    if "fdm_gamma_sel_rad" not in df.columns:
+        return
+    gamma_sel = df["fdm_gamma_sel_rad"].to_numpy()
+    mask = ~np.isnan(gamma_sel)
+    if mask.any():
+        target[mask] = gamma_sel[mask]
+
+
+def _gamma_layer_vz(df: pl.DataFrame, target: np.ndarray, tas_col: str) -> None:
+    if "fdm_vz_sel_ftmin" not in df.columns or tas_col not in df.columns:
+        return
+    vz_sel = df["fdm_vz_sel_ftmin"].to_numpy()
+    tas_arr_ms = df[tas_col].to_numpy() * _KT_TO_MS
+    mask = ~np.isnan(vz_sel)
+    if mask.any():
+        target[mask] = vz_to_gamma(vz_sel[mask] * _FT_MIN_TO_MS, tas_arr_ms[mask])
+
+
+def _build_gamma_target(df: pl.DataFrame, tas_col: str) -> pl.DataFrame:
+    if "fdm_gamma_rad" not in df.columns:
+        return df
+    gamma_target = np.full(len(df), np.nan)
+    _gamma_layer_from_alt(df, gamma_target)
+    _gamma_layer_sel(df, gamma_target)
+    _gamma_layer_vz(df, gamma_target, tas_col)
+    gamma_known = (~np.isnan(gamma_target)).astype(np.float64)
+    gamma_filled = np.where(np.isnan(gamma_target), 0.0, gamma_target)
+    return df.with_columns(
+        pl.Series("fdm_gamma_target_rad", gamma_filled),
+        pl.Series("fdm_gamma_target_known", gamma_known),
+    )
+
+
+def _detect_gamma_sel(df: pl.DataFrame, gamma_cfg: dict[str, Any] | None) -> pl.DataFrame:
+    if gamma_cfg is None or "fdm_gamma_rad" not in df.columns:
+        return df
+    gcfg = GammaFilterConfig(**gamma_cfg)
+    gamma_segs = detect_constant_segments(
+        df["fdm_gamma_rad"].to_numpy().copy(), **gcfg.model_dump()
+    )
+    return add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
+
+
+def _detect_alt_sel(
+    df: pl.DataFrame,
+    alt_cfg: dict[str, Any] | None,
+    alt_col: str,
+    alt_arr: np.ndarray,
+) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    if alt_cfg is None or alt_col not in df.columns:
+        return df, []
+    segs = detect_constant_segments(alt_arr, **alt_cfg)
+    return add_segment_column(df, segs, "fdm_alt_sel_ft"), segs
+
+
+def build_selected_params(
     df: pl.DataFrame,
     config: dict[str, Any],
 ) -> pl.DataFrame:
@@ -265,226 +458,57 @@ def build_selected_params(  # noqa: PLR0915
     Returns:
         DataFrame with selected-parameter columns added.
     """
-    # --- Altitude array (shared across detectors) ---
-    alt_col = "raw_alt_ft" if "raw_alt_ft" in df.columns else "altitude"
+    alt_col = _resolve_col(df, "raw_alt_ft", "altitude")
     alt_arr = df[alt_col].to_numpy()
-
-    # --- Mach selected ---
-    mach_col = "era_mach" if "era_mach" in df.columns else "Mach"
-    if mach_col in df.columns:
-        mach_cfg = config.get("mach", {})
-        mach_segs = detect_constant_segments(
-            df[mach_col].to_numpy(),
-            alt_values=alt_arr,
-            **mach_cfg,
-        )
-        df = add_segment_column(df, mach_segs, "fdm_mach_sel")
-    else:
-        mach_segs = []
-
-    # --- CAS selected (mask Mach-constant regions first) ---
-    cas_col = "bds_ias_kt" if "bds_ias_kt" in df.columns else "CAS"
-    if cas_col in df.columns:
-        cas_arr = df[cas_col].to_numpy().copy()
-        # Null out CAS in Mach-constant regions
-        for seg in mach_segs:
-            cas_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
-        cas_cfg = config.get("cas", {})
-        cas_segs = detect_constant_segments(cas_arr, **cas_cfg)
-        df = add_segment_column(df, cas_segs, "fdm_cas_sel_kt")
-    else:
-        cas_segs = []
-
-    # --- TAS selected (optional, mask Mach- and CAS-constant regions) ---
-    tas_cfg = config.get("tas")
     tas_col = "era_tas_kt"
-    if tas_cfg is not None and tas_col in df.columns:
-        tas_arr = df[tas_col].to_numpy().copy()
-        for seg in mach_segs:
-            tas_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
-        for seg in cas_segs:
-            tas_arr[seg["start_idx"] : seg["end_idx"] + 1] = np.nan
-        tas_segs = detect_constant_segments(tas_arr, **tas_cfg)
-        df = add_segment_column(df, tas_segs, "fdm_tas_sel_kt")
 
-    # --- Vz selected ---
-    vz_col = "raw_vz_ftmin" if "raw_vz_ftmin" in df.columns else "vertical_rate"
-    if vz_col in df.columns:
-        vz_cfg = config.get("vz", {})
-        vz_segs = detect_constant_segments(
-            df[vz_col].to_numpy(),
-            alt_values=alt_arr,
-            **vz_cfg,
+    df, mach_segs = _detect_with_alt(
+        df,
+        _resolve_col(df, "era_mach", "Mach"),
+        "fdm_mach_sel",
+        config.get("mach", {}),
+        alt_arr,
+    )
+    df, cas_segs = _detect_masked(
+        df,
+        _resolve_col(df, "bds_ias_kt", "CAS"),
+        "fdm_cas_sel_kt",
+        config.get("cas", {}),
+        [mach_segs],
+    )
+    tas_cfg = config.get("tas")
+    if tas_cfg is not None:
+        df, _ = _detect_masked(
+            df,
+            tas_col,
+            "fdm_tas_sel_kt",
+            tas_cfg,
+            [mach_segs, cas_segs],
         )
-        df = add_segment_column(df, vz_segs, "fdm_vz_sel_ftmin")
-    else:
-        vz_segs = []
-
-    # --- Gamma selected (optional, no vz-masking — priority handles overlap) ---
-    gamma_cfg = config.get("gamma")
-    if gamma_cfg is not None and "fdm_gamma_rad" in df.columns:
-        gcfg = GammaFilterConfig(**gamma_cfg)
-        gamma_arr = df["fdm_gamma_rad"].to_numpy().copy()
-        gamma_segs = detect_constant_segments(gamma_arr, **gcfg.model_dump())
-        df = add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
-
-    # --- Altitude selected (detect level segments on raw_alt_ft) ---
+    df, _ = _detect_with_alt(
+        df,
+        _resolve_col(df, "raw_vz_ftmin", "vertical_rate"),
+        "fdm_vz_sel_ftmin",
+        config.get("vz", {}),
+        alt_arr,
+    )
+    df = _detect_gamma_sel(df, config.get("gamma"))
     alt_cfg = config.get("alt")
-    if alt_cfg is not None and alt_col in df.columns:
-        alt_segs = detect_constant_segments(alt_arr, **alt_cfg)
-        df = add_segment_column(df, alt_segs, "fdm_alt_sel_ft")
+    df, alt_segs = _detect_alt_sel(df, alt_cfg, alt_col, alt_arr)
 
-    # --- Gamma from altitude hold (gamma=0 where alt plateau detected) ---
-    # First N timesteps of each segment are relaxed (NaN) so the model can
-    # freely correct altitude errors during the capture phase.
-    alt_hold_relax = int(config.get("alt_hold_relax", 15))
-    if "fdm_alt_sel_ft" in df.columns:
-        alt_sel = df["fdm_alt_sel_ft"].to_numpy()
-        gamma_from_alt = np.where(np.isnan(alt_sel), np.nan, 0.0)
-        if alt_hold_relax > 0 and alt_cfg is not None:
-            for seg in alt_segs:
-                end = min(seg["start_idx"] + alt_hold_relax, seg["end_idx"] + 1)
-                gamma_from_alt[seg["start_idx"] : end] = np.nan
-        df = df.with_columns(pl.Series("fdm_gamma_from_alt_rad", gamma_from_alt))
+    df = _gamma_from_alt(df, alt_segs, alt_cfg, int(config.get("alt_hold_relax", 15)))
 
-    # --- MCP altitude backfill (independent of alt segments) ---
-    mcp_col = "bds_mcp_sel_alt_ft"
-    if mcp_col in df.columns:
-        df = df.with_columns(
-            pl.col(mcp_col)
-            .fill_nan(None)
-            .forward_fill()
-            .backward_fill()
-            .fill_null(pl.lit(float("nan")))
-            .alias("fdm_mcp_alt_sel_ft")
-        )
+    if "bds_mcp_sel_alt_ft" in df.columns:
+        df = _backfill_alias(df, "bds_mcp_sel_alt_ft", "fdm_mcp_alt_sel_ft")
+    if "bds_fms_sel_alt_ft" in df.columns:
+        df = _backfill_alias(df, "bds_fms_sel_alt_ft", "fdm_fms_alt_sel_ft")
 
-    # --- FMS altitude backfill ---
-    fms_col = "bds_fms_sel_alt_ft"
-    if fms_col in df.columns:
-        df = df.with_columns(
-            pl.col(fms_col)
-            .fill_nan(None)
-            .forward_fill()
-            .backward_fill()
-            .fill_null(pl.lit(float("nan")))
-            .alias("fdm_fms_alt_sel_ft")
-        )
-
-    # --- Target columns (bfill with last-point anchor) ---
-    # fdm_alt_target_ft: "which altitude is the aircraft heading towards?"
-    # Anchor last row to actual altitude, then backward-fill from segments.
-    if "fdm_alt_sel_ft" in df.columns and alt_col in df.columns:
-        _valid_alt = df[alt_col].drop_nulls().drop_nans()
-        last_alt = _valid_alt[-1] if len(_valid_alt) > 0 else 0.0
-        df = df.with_columns(
-            pl.col("fdm_alt_sel_ft").fill_nan(None).alias("_alt_target_tmp"),
-        )
-        # Set last row to actual altitude, then bfill
-        n = len(df)
-        target = df["_alt_target_tmp"].to_list()
-        target[n - 1] = last_alt
-        df = df.with_columns(
-            pl.Series("_alt_target_tmp", target).backward_fill().alias("fdm_alt_target_ft"),
-        ).drop("_alt_target_tmp")
-
-    # fdm_cas_target_kt: "which CAS is the aircraft heading towards?"
-    cas_src = "era_cas_kt" if "era_cas_kt" in df.columns else "bds_ias_kt"
-    if "fdm_cas_sel_kt" in df.columns and cas_src in df.columns:
-        _valid_cas = df[cas_src].drop_nulls().drop_nans()
-        last_cas = _valid_cas[-1] if len(_valid_cas) > 0 else 0.0
-        df = df.with_columns(
-            pl.col("fdm_cas_sel_kt").fill_nan(None).alias("_cas_target_tmp"),
-        )
-        n = len(df)
-        target = df["_cas_target_tmp"].to_list()
-        target[n - 1] = last_cas
-        df = df.with_columns(
-            pl.Series("_cas_target_tmp", target).backward_fill().alias("fdm_cas_target_kt"),
-        ).drop("_cas_target_tmp")
-
-    # fdm_tas_target_kt: "which TAS is the aircraft heading towards?"
-    # Combines Mach→TAS (priority), CAS→TAS, TAS_sel, then bfill.
-    tas_src = "era_tas_kt"
-    if tas_src in df.columns:
-        n = len(df)
-        tas_target = np.full(n, np.nan)
-        alt_m = alt_arr * 0.3048  # ft → m
-        _ms_to_kt = 1.0 / 0.514444
-
-        # Layer 1 (lowest priority): TAS_sel segments
-        if "fdm_tas_sel_kt" in df.columns:
-            sel = df["fdm_tas_sel_kt"].to_numpy()
-            mask = ~np.isnan(sel)
-            tas_target[mask] = sel[mask]
-
-        # Layer 2: CAS→TAS (overrides TAS_sel)
-        if "fdm_cas_sel_kt" in df.columns:
-            cas_sel = df["fdm_cas_sel_kt"].to_numpy()
-            mask = ~np.isnan(cas_sel)
-            if mask.any():
-                cas_ms = cas_sel[mask] * 0.514444
-                tas_ms = cas_to_tas(cas_ms, alt_m[mask])
-                tas_target[mask] = np.asarray(tas_ms) * _ms_to_kt
-
-        # Layer 3 (highest priority): Mach→TAS
-        if "fdm_mach_sel" in df.columns:
-            mach_sel = df["fdm_mach_sel"].to_numpy()
-            mask = ~np.isnan(mach_sel)
-            if mask.any():
-                tas_ms = mach_to_tas(mach_sel[mask], alt_m[mask])
-                tas_target[mask] = np.asarray(tas_ms) * _ms_to_kt
-
-        # Anchor last row to actual TAS, then backward-fill
-        _last_tas = df[tas_src].drop_nulls().drop_nans()
-        tas_target[n - 1] = _last_tas[-1] if len(_last_tas) > 0 else 0.0
-        df = df.with_columns(
-            pl.Series("fdm_tas_target_kt", tas_target)
-            .fill_nan(None)
-            .backward_fill()
-            .alias("fdm_tas_target_kt"),
-        )
-
-    # fdm_gamma_target_rad: "which flight-path angle is the aircraft targeting?"
-    # Priority (highest → lowest): vz→gamma > gamma_sel > gamma_from_alt=0.
-    # NaN-preserving: gaps between segments stay NaN (no backward-fill).
-    if "fdm_gamma_rad" in df.columns:
-        n = len(df)
-        gamma_target = np.full(n, np.nan)
-        _ft_min_to_ms = 0.3048 / 60
-
-        # Layer 1 (lowest priority): gamma_from_alt (ALT HLD → gamma=0)
-        if "fdm_gamma_from_alt_rad" in df.columns:
-            gfa = df["fdm_gamma_from_alt_rad"].to_numpy()
-            mask = ~np.isnan(gfa)
-            if mask.any():
-                gamma_target[mask] = 0.0
-
-        # Layer 2: gamma_sel (overrides gamma_from_alt)
-        if "fdm_gamma_sel_rad" in df.columns:
-            gamma_sel = df["fdm_gamma_sel_rad"].to_numpy()
-            mask = ~np.isnan(gamma_sel)
-            if mask.any():
-                gamma_target[mask] = gamma_sel[mask]
-
-        # Layer 3 (highest priority): vz_sel → gamma via vz_to_gamma
-        if "fdm_vz_sel_ftmin" in df.columns and tas_col in df.columns:
-            vz_sel = df["fdm_vz_sel_ftmin"].to_numpy()
-            tas_arr_ms = df[tas_col].to_numpy() * 0.514444
-            mask = ~np.isnan(vz_sel)
-            if mask.any():
-                vz_ms = vz_sel[mask] * _ft_min_to_ms
-                gamma_target[mask] = vz_to_gamma(vz_ms, tas_arr_ms[mask])
-
-        # Known mask: 1 where a segment was detected, 0 where NaN (no info)
-        gamma_known = (~np.isnan(gamma_target)).astype(np.float64)
-
-        # Fill NaN → 0.0 so tensors are safe for PyTorch (no NaN in autograd)
-        gamma_target_filled = np.where(np.isnan(gamma_target), 0.0, gamma_target)
-
-        df = df.with_columns(
-            pl.Series("fdm_gamma_target_rad", gamma_target_filled),
-            pl.Series("fdm_gamma_target_known", gamma_known),
-        )
-
-    return df
+    df = _anchored_target(df, "fdm_alt_sel_ft", alt_col, "fdm_alt_target_ft")
+    df = _anchored_target(
+        df,
+        "fdm_cas_sel_kt",
+        _resolve_col(df, "era_cas_kt", "bds_ias_kt"),
+        "fdm_cas_target_kt",
+    )
+    df = _build_tas_target(df, alt_arr, tas_col)
+    return _build_gamma_target(df, tas_col)
