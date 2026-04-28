@@ -491,6 +491,48 @@ def identify(
 # ---------------------------------------------------------------------------
 
 
+def _ensure_identify_ran(df: pl.DataFrame) -> None:
+    if "meta_flight_id" in df.columns and not df["meta_flight_id"].is_null().all():
+        return
+    log.error("preprocess_missing_identify", msg="meta_flight_id is missing or all null")
+    print(  # noqa: T201
+        "Error: 'identify' must be run before 'preprocess'. "
+        "Run 'fdm identify --config ...' first.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
+def _drop_pre_existing(df: pl.DataFrame) -> pl.DataFrame:
+    pre_existing = [c for c in df.columns if c.startswith("pre_gap_")]
+    if pre_existing:
+        log.info("preprocess_drop_existing", columns=pre_existing)
+        df = df.drop(pre_existing)
+    return df
+
+
+def _cast_null_columns(result: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    null_cols = [c for c in result.columns if result[c].dtype == pl.Null]
+    if not null_cols:
+        return result
+    log.info("preprocess_cast_null_cols", columns=null_cols)
+    return result.with_columns([pl.col(c).cast(pl.Float64) for c in null_cols])
+
+
+def _build_preprocess_write_options(result: pl.DataFrame, delta_table: Path) -> dict[str, object]:
+    options: dict[str, object] = {"schema_mode": "merge"}
+    if "meta_batch_date" not in result.columns:
+        return options
+    options["partition_by"] = ["meta_batch_date"]
+    if delta_table.exists():
+        dates = result["meta_batch_date"].unique().sort().to_list()
+        quoted = ", ".join(f"'{d}'" for d in dates)
+        options["predicate"] = f"meta_batch_date IN ({quoted})"
+    return options
+
+
 def preprocess(
     *,
     config: Path,
@@ -517,30 +559,16 @@ def preprocess(
         log.info("preprocess_dry_run", msg="Config valid, would preprocess")
         return
 
-    import polars as pl
     from node_fdm_data.delta import read_delta_table
     from node_fdm_data.preprocessing.resample import preprocess_flights
 
     df = read_delta_table(delta_table)
-
-    # Guard: identify must have run before preprocess (Bug 2 fix)
-    if "meta_flight_id" not in df.columns or df["meta_flight_id"].is_null().all():
-        log.error("preprocess_missing_identify", msg="meta_flight_id is missing or all null")
-        print(  # noqa: T201
-            "Error: 'identify' must be run before 'preprocess'. "
-            "Run 'fdm identify --config ...' first.",
-            file=sys.stderr,
-        )
-        raise SystemExit(1)
+    _ensure_identify_ran(df)
 
     rows_before = len(df)
     flights_before = df["meta_flight_id"].n_unique()
 
-    # Drop existing preprocess columns to allow re-run
-    pre_existing = [c for c in df.columns if c.startswith("pre_gap_")]
-    if pre_existing:
-        log.info("preprocess_drop_existing", columns=pre_existing)
-        df = df.drop(pre_existing)
+    df = _drop_pre_existing(df)
 
     result = preprocess_flights(
         df,
@@ -550,27 +578,12 @@ def preprocess(
         smooth=cfg.preprocess.smooth,
     )
 
-    # Cast Null-typed columns (all-null after resample) to Float64 for Delta Lake
-    null_cols = [c for c in result.columns if result[c].dtype == pl.Null]
-    if null_cols:
-        log.info("preprocess_cast_null_cols", columns=null_cols)
-        result = result.with_columns(
-            [pl.col(c).cast(pl.Float64) for c in null_cols],
-        )
-
-    # Partition-scoped overwrite (row count changes with resampling)
-    delta_write_options: dict[str, object] = {"schema_mode": "merge"}
-    if "meta_batch_date" in result.columns:
-        delta_write_options["partition_by"] = ["meta_batch_date"]
-        if delta_table.exists():
-            dates = result["meta_batch_date"].unique().sort().to_list()
-            quoted = ", ".join(f"'{d}'" for d in dates)
-            delta_write_options["predicate"] = f"meta_batch_date IN ({quoted})"
+    result = _cast_null_columns(result)
 
     result.write_delta(
         str(delta_table),
         mode="overwrite",
-        delta_write_options=delta_write_options,
+        delta_write_options=_build_preprocess_write_options(result, delta_table),
     )
 
     log.info(
