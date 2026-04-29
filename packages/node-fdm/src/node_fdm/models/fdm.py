@@ -115,16 +115,23 @@ class FlightDynamicsModel(nn.Module):
         }
 
         denormalize_modes: dict[str, str | None] = layer_spec.config.get("denormalize_modes", {})
+        scale_overrides: dict[str, float] = layer_spec.config.get("scale_overrides", {})
+        cap_overrides: dict[str, float] = layer_spec.config.get("cap_overrides", {})
         scale_dict: dict[str, float] = {}
         cap_dict: dict[str, float] = {}
         for col, mode in denormalize_modes.items():
             if mode == "scaled":
-                col_stats = self.stats_dict.get(col, {})
-                if "p999" not in col_stats:
-                    msg = f"Scaled mode for '{col}' requires 'p999' in stats_dict"
-                    raise ValueError(msg)
-                scale_dict[col] = col_stats["p999"]
-                if col in self.spec.dx_bounds:
+                if col in scale_overrides:
+                    scale_dict[col] = scale_overrides[col]
+                else:
+                    col_stats = self.stats_dict.get(col, {})
+                    if "p999" not in col_stats:
+                        msg = f"Scaled mode for '{col}' requires 'p999' in stats_dict"
+                        raise ValueError(msg)
+                    scale_dict[col] = col_stats["p999"]
+                if col in cap_overrides:
+                    cap_dict[col] = cap_overrides[col]
+                elif col in self.spec.dx_bounds:
                     cap_dict[col] = self.spec.dx_bounds[col][1]
 
         output_init_biases: dict[str, float] = layer_spec.config.get("output_init_biases", {})

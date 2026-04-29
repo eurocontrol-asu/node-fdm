@@ -66,18 +66,28 @@ NODE_ADSB_V1 = ArchitectureSpec(
             + E0_COLS
             + E1_COLS
             + ["fdm_gamma_target_known", "fdm_tas_target_known"],
-            output_cols=["fdm_a_spec_ms2", "fdm_n_z"],
+            output_cols=["fdm_a_spec_ms2", "fdm_n_z_residual"],
             trainable=True,
             config={
-                "output_init_biases": {"fdm_n_z": 1.0},
-                "denormalize_modes": {"fdm_a_spec_ms2": None, "fdm_n_z": None},
+                "denormalize_modes": {
+                    "fdm_a_spec_ms2": "scaled",
+                    "fdm_n_z_residual": "scaled",
+                },
+                "scale_overrides": {
+                    "fdm_a_spec_ms2": 3.0,
+                    "fdm_n_z_residual": 0.5,
+                },
+                "cap_overrides": {
+                    "fdm_a_spec_ms2": 3.0,
+                    "fdm_n_z_residual": 0.5,
+                },
             },
         ),
         LayerSpec(
             name="physics",
             layer_class="node_fdm.layers.physics.PhysicsLayer",
-            input_cols=["fdm_a_spec_ms2", "fdm_n_z", "era_tas_ms", "fdm_gamma_rad"],
-            output_cols=["fdm_d_tas_ms2", "fdm_d_gamma_rads"],
+            input_cols=["fdm_a_spec_ms2", "fdm_n_z_residual", "era_tas_ms", "fdm_gamma_rad"],
+            output_cols=["fdm_d_tas_ms2", "fdm_d_gamma_rads", "fdm_n_z"],
             trainable=False,
             config={},
         ),

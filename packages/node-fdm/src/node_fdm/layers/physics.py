@@ -59,15 +59,20 @@ class PhysicsLayer(nn.Module):
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Convert aerodynamic outputs into ODE derivatives.
 
+        The NN emits ``fdm_n_z_residual = n_z - 1`` (a quantity centered on
+        zero) rather than ``n_z`` itself, so symmetric denormalize modes
+        (``"scaled"``, ``"normal_clamp"``) behave correctly.  This layer
+        adds ``1`` back before applying the dynamics equation.
+
         Args:
-            x: Mapping containing ``fdm_a_spec_ms2``, ``fdm_n_z``,
+            x: Mapping containing ``fdm_a_spec_ms2``, ``fdm_n_z_residual``,
                 ``era_tas_ms``, and ``fdm_gamma_rad``.
 
         Returns:
             Dictionary with ``fdm_d_tas_ms2`` and ``fdm_d_gamma_rads``.
         """
         a_spec = x["fdm_a_spec_ms2"]
-        n_z = x["fdm_n_z"]
+        n_z = x["fdm_n_z_residual"] + 1.0
         tas = x["era_tas_ms"]
         gamma = x["fdm_gamma_rad"]
 
@@ -78,4 +83,5 @@ class PhysicsLayer(nn.Module):
         return {
             "fdm_d_tas_ms2": d_tas,
             "fdm_d_gamma_rads": d_gamma,
+            "fdm_n_z": n_z,
         }
