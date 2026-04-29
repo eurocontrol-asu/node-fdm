@@ -11,6 +11,7 @@ __all__ = [
     "AltFilterConfig",
     "BadaConfig",
     "CasFilterConfig",
+    "CleanSpeedsConfig",
     "ComputingConfig",
     "EKFSmoothConfig",
     "FlagConfig",
@@ -147,6 +148,25 @@ class PreprocessConfig(BaseModel, frozen=True):
     smooth: bool = True
 
 
+class CleanSpeedsConfig(BaseModel, frozen=True):
+    """Multi-pass Hampel + ERA-deviation cleaning of BDS speeds.
+
+    Applied per flight by the ``clean-speeds`` stage between ``enrich``
+    and ``derive``.  Produces ``bds_*_clean`` columns that the merge
+    step prefers over the raw ``bds_*`` signals.
+    """
+
+    window: int = 7
+    k: float = 3.0
+    era_dev_max_mach: float = 0.05
+    era_dev_max_ias: float = 20.0
+    n_passes: int = 3
+    interp_max_gap: int = 10
+    frozen_min_run_len_mach: int = 20
+    frozen_min_run_len_ias: int = 20
+    frozen_min_run_len_tas: int = 6
+
+
 class EKFSmoothConfig(BaseModel, frozen=True):
     """EKF smoothing configuration for flight dynamics parameters.
 
@@ -185,6 +205,12 @@ class SelectedParamConfig(BaseModel, frozen=True):
     alt: AltFilterConfig = AltFilterConfig()
     gamma: GammaFilterConfig = GammaFilterConfig()
 
+    # Crossover-aware Mach/CAS detection knobs (see node_fdm_data.segments)
+    cas_deviation_kt: float = 5.0
+    mach_min_value: float = 0.5
+    transition_margin: int = 30
+    cas_search_window: int = 60
+
 
 class PipelineConfig(BaseModel, frozen=True):
     """Root configuration model — replaces raw YAML dict access.
@@ -204,6 +230,7 @@ class PipelineConfig(BaseModel, frozen=True):
     preprocess: PreprocessConfig = PreprocessConfig()
     flag: FlagConfig = FlagConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()
+    clean_speeds: CleanSpeedsConfig = CleanSpeedsConfig()
     ekf_smooth: EKFSmoothConfig = EKFSmoothConfig()
 
     @field_validator("typecodes", mode="before")

@@ -276,3 +276,143 @@ class TestCleanBdsSpeeds:
         result = clean_bds_speeds(df)
         if "bds_mach_clean" in result.columns:
             assert result["bds_mach_clean"].null_count() == result.height
+
+
+class TestFrozenRunFilter:
+    """Frozen-signal filter behaviour."""
+
+    def test_frozen_run_at_threshold_is_nan(self) -> None:
+        """A run of exactly min_run_len identical values is flagged as NaN."""
+        n = 50
+        values = np.full(n, 100.0)
+        values[10:30] = 200.0  # run of length 20
+        era = np.full(n, np.nan)
+
+        result = clean_speeds(
+            values,
+            era,
+            window=7,
+            k=3.0,
+            era_dev_max=None,
+            n_passes=1,
+            interp_max_gap=0,
+            frozen_min_run_len=20,
+        )
+
+        assert all(math.isnan(v) for v in result[10:30])
+
+    def test_frozen_run_below_threshold_is_kept(self) -> None:
+        """A run of length below min_run_len is preserved."""
+        n = 50
+        values = np.full(n, 100.0)
+        values[10:29] = 200.0  # run of length 19
+        era = np.full(n, np.nan)
+
+        result = clean_speeds(
+            values,
+            era,
+            window=7,
+            k=3.0,
+            era_dev_max=None,
+            n_passes=0,
+            interp_max_gap=0,
+            frozen_min_run_len=20,
+        )
+
+        for v in result[10:29]:
+            assert v == pytest.approx(200.0)
+
+    def test_short_cruise_plateau_is_kept(self) -> None:
+        """A 5-point identical cruise plateau is preserved with high threshold."""
+        n = 50
+        values = np.arange(n, dtype=np.float64) * 0.5
+        values[20:25] = 250.0  # legitimate 5-point plateau
+        era = np.full(n, np.nan)
+
+        result = clean_speeds(
+            values.copy(),
+            era,
+            window=7,
+            k=3.0,
+            era_dev_max=None,
+            n_passes=0,
+            interp_max_gap=0,
+            frozen_min_run_len=20,
+        )
+
+        for v in result[20:25]:
+            assert v == pytest.approx(250.0)
+
+    def test_disabled_when_none(self) -> None:
+        """frozen_min_run_len=None is the no-op (backward compatibility)."""
+        n = 50
+        values = np.full(n, 100.0)  # whole array identical, length 50
+        era = np.full(n, np.nan)
+
+        result = clean_speeds(
+            values.copy(),
+            era,
+            window=7,
+            k=3.0,
+            era_dev_max=None,
+            n_passes=0,
+            interp_max_gap=0,
+            frozen_min_run_len=None,
+        )
+
+        np.testing.assert_array_equal(result, values)
+
+    def test_nan_breaks_run(self) -> None:
+        """NaN in the middle splits a run into two sub-runs, neither flagged."""
+        n = 50
+        values = np.full(n, 100.0)
+        values[10:30] = 200.0
+        values[20] = np.nan  # splits run-of-20 into 10 + 9
+        era = np.full(n, np.nan)
+
+        result = clean_speeds(
+            values,
+            era,
+            window=7,
+            k=3.0,
+            era_dev_max=None,
+            n_passes=0,
+            interp_max_gap=0,
+            frozen_min_run_len=20,
+        )
+
+        # Both sub-runs preserved
+        for v in result[10:20]:
+            assert v == pytest.approx(200.0)
+        for v in result[21:30]:
+            assert v == pytest.approx(200.0)
+        assert math.isnan(result[20])
+
+    def test_clean_bds_speeds_applies_per_channel_thresholds(self) -> None:
+        """clean_bds_speeds wires per-channel frozen thresholds correctly.
+
+        Same input on both channels: 6-point identical leading run + smooth
+        ramp.  With ``frozen_min_run_len_tas=6`` the run is flagged as NaN
+        on tas; with ``frozen_min_run_len_ias=20`` the same run is kept on
+        ias (below threshold).  ``n_passes=0`` and ``interp_max_gap=0``
+        isolate the frozen-run filter from Hampel and short-gap interp.
+        """
+        n = 60
+        ramp = list(np.arange(n) * 0.1 + 100.0)
+        ramp[:6] = [100.0] * 6
+        df = pl.DataFrame({"bds_tas_kt": ramp, "bds_ias_kt": ramp})
+        result = clean_bds_speeds(
+            df,
+            frozen_min_run_len_tas=6,
+            frozen_min_run_len_ias=20,
+            n_passes=0,
+            interp_max_gap=0,
+        )
+
+        tas_clean = result["bds_tas_kt_clean"].to_numpy()
+        ias_clean = result["bds_ias_kt_clean"].to_numpy()
+        # tas: first 6 NaN (run length 6 >= threshold 6)
+        assert all(math.isnan(v) for v in tas_clean[:6])
+        # ias: first 6 kept (run length 6 < threshold 20)
+        for v in ias_clean[:6]:
+            assert v == pytest.approx(100.0)

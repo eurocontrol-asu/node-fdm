@@ -20,14 +20,50 @@ import polars as pl
 __all__ = ["clean_bds_speeds", "clean_speeds"]
 
 _HAMPEL_SCALE: float = 1.4826  # Gaussian consistency factor
+_HAMPEL_MIN_WINDOW: int = 3  # min non-NaN points in window to compute MAD
 
-# (bds_col, era_col, era_dev_max, use_era_fill)
+# (bds_col, era_col, era_dev_max, use_era_fill, frozen_min_run_len)
 # tas: era_tas_kt is in kt while bds_tas_kt is m/s — disable ERA cap & fill.
-_BDS_SPEC: list[tuple[str, str, float | None, bool]] = [
-    ("bds_mach", "era_mach", 0.05, True),
-    ("bds_ias_kt", "era_cas_kt", 20.0, True),
-    ("bds_tas_kt", "era_tas_kt", None, False),
+# frozen_min_run_len: NaN-out runs of strictly identical consecutive values
+# of length >= threshold. Calibrated against altitude-variation cross-check
+# on the full dataset; see scripts/check_tas_clean.py.
+_BDS_SPEC: list[tuple[str, str, float | None, bool, int]] = [
+    ("bds_mach", "era_mach", 0.05, True, 20),
+    ("bds_ias_kt", "era_cas_kt", 20.0, True, 20),
+    ("bds_tas_kt", "era_tas_kt", None, False, 6),
 ]
+
+
+def _flag_frozen_runs(x: np.ndarray, *, min_run_len: int) -> np.ndarray:
+    """Replace runs of strictly identical consecutive non-NaN values with NaN.
+
+    A run is a maximal sequence of indices where ``x[i] == x[i-1]``
+    (non-NaN). Runs of length ``>= min_run_len`` are flagged as
+    frozen-signal artifacts (sensor stuck on a value while the aircraft
+    state evolves). Shorter runs (legitimate quantization plateaus on
+    ``IAS HOLD`` / ``MACH HOLD``) are preserved.
+
+    Args:
+        x: 1-D NaN-aware array.
+        min_run_len: minimum run length to flag as frozen.  Must be ``>= 2``.
+
+    Returns:
+        Copy of *x* with frozen runs replaced by NaN.
+    """
+    out = x.copy()
+    n = len(out)
+    i = 0
+    while i < n:
+        if np.isnan(out[i]):
+            i += 1
+            continue
+        j = i + 1
+        while j < n and not np.isnan(out[j]) and out[j] == out[i]:
+            j += 1
+        if j - i >= min_run_len:
+            out[i:j] = np.nan
+        i = j
+    return out
 
 
 def _hampel_filter(x: np.ndarray, *, window: int, k: float) -> np.ndarray:
@@ -35,7 +71,7 @@ def _hampel_filter(x: np.ndarray, *, window: int, k: float) -> np.ndarray:
 
     For each point, compute median and MAD over a centered window of
     half-size *window*.  Flag the point if
-    ``|x − median| > k * 1.4826 * MAD``.  When MAD is zero (constant
+    ``|x - median| > k * 1.4826 * MAD``.  When MAD is zero (constant
     window) any value differing from the median is treated as an
     outlier.
 
@@ -56,7 +92,7 @@ def _hampel_filter(x: np.ndarray, *, window: int, k: float) -> np.ndarray:
         hi = min(n, i + window + 1)
         w = x[lo:hi]
         w = w[~np.isnan(w)]
-        if len(w) < 3:
+        if len(w) < _HAMPEL_MIN_WINDOW:
             continue
         med = float(np.median(w))
         mad = float(np.median(np.abs(w - med)))
@@ -95,7 +131,7 @@ def _interpolate_short_gaps(x: np.ndarray, *, max_gap: int) -> np.ndarray:
     return out
 
 
-def clean_speeds(
+def clean_speeds(  # noqa: PLR0913 — config-style function
     values: np.ndarray,
     era: np.ndarray,
     *,
@@ -104,11 +140,14 @@ def clean_speeds(
     era_dev_max: float | None,
     n_passes: int,
     interp_max_gap: int,
+    frozen_min_run_len: int | None = None,
 ) -> np.ndarray:
-    """Clean a BDS speed signal: multi-pass Hampel + ERA cap + short-gap fill.
+    """Clean a BDS speed signal: frozen-run filter + multi-pass Hampel + ERA cap + short-gap fill.
 
     Strategy:
 
+    0. Frozen-run filter (when ``frozen_min_run_len`` is set) — flags
+       runs of strictly identical consecutive values as NaN.
     1. ``n_passes`` of Hampel — handles isolated spikes and clusters
        where a single-pass median is biased by neighbouring outliers.
     2. ERA-deviation cap (when ``era_dev_max`` is set) — catches
@@ -123,14 +162,18 @@ def clean_speeds(
         era: 1-D NaN-aware ERA signal aligned with *values*.
         window: Hampel half-window size.
         k: Hampel threshold (number of MADs).
-        era_dev_max: max allowed ``|cleaned − era|``; ``None`` disables.
+        era_dev_max: max allowed ``|cleaned - era|``; ``None`` disables.
         n_passes: number of Hampel passes.
         interp_max_gap: max NaN run length to fill via interpolation.
+        frozen_min_run_len: min length of identical-consecutive-values run
+            to flag as frozen-signal artifact; ``None`` disables.
 
     Returns:
         Cleaned signal as a new array (input is not mutated).
     """
     cleaned = values.astype(np.float64, copy=True)
+    if frozen_min_run_len is not None:
+        cleaned = _flag_frozen_runs(cleaned, min_run_len=frozen_min_run_len)
     for _ in range(n_passes):
         cleaned = _hampel_filter(cleaned, window=window, k=k)
     if era_dev_max is not None:
@@ -150,7 +193,7 @@ def _fill_with_era(values: np.ndarray, era: np.ndarray) -> np.ndarray:
     return out
 
 
-def _clean_one_column(
+def _clean_one_column(  # noqa: PLR0913 — config-style helper
     df: pl.DataFrame,
     bds_col: str,
     era_col: str,
@@ -161,6 +204,7 @@ def _clean_one_column(
     k: float,
     n_passes: int,
     interp_max_gap: int,
+    frozen_min_run_len: int | None,
 ) -> np.ndarray | None:
     """Clean one BDS column — returns the cleaned array or ``None`` if absent."""
     if bds_col not in df.columns:
@@ -179,6 +223,7 @@ def _clean_one_column(
         era_dev_max=era_dev_max,
         n_passes=n_passes,
         interp_max_gap=interp_max_gap,
+        frozen_min_run_len=frozen_min_run_len,
     )
     if use_era_fill and era_col in df.columns:
         cleaned = _fill_with_era(cleaned, era)
@@ -187,7 +232,7 @@ def _clean_one_column(
     return cleaned
 
 
-def clean_bds_speeds(
+def clean_bds_speeds(  # noqa: PLR0913 — config-style entry point
     df: pl.DataFrame,
     *,
     window: int = 7,
@@ -196,16 +241,20 @@ def clean_bds_speeds(
     era_dev_max_ias: float = 20.0,
     n_passes: int = 3,
     interp_max_gap: int = 10,
+    frozen_min_run_len_mach: int | None = 20,
+    frozen_min_run_len_ias: int | None = 20,
+    frozen_min_run_len_tas: int | None = 6,
 ) -> pl.DataFrame:
     """Add ``bds_*_clean`` columns for mach, IAS and TAS to *df*.
 
     Per-column behaviour:
 
-    * ``bds_mach``  → cap at ``era_dev_max_mach`` against ``era_mach``,
-      ERA-fill long gaps.
-    * ``bds_ias_kt`` → cap at ``era_dev_max_ias`` against ``era_cas_kt``,
-      ERA-fill long gaps.
-    * ``bds_tas_kt`` → no ERA cap, no ERA fill (units differ upstream).
+    * ``bds_mach``  → frozen-run filter, cap at ``era_dev_max_mach``
+      against ``era_mach``, ERA-fill long gaps.
+    * ``bds_ias_kt`` → frozen-run filter, cap at ``era_dev_max_ias``
+      against ``era_cas_kt``, ERA-fill long gaps.
+    * ``bds_tas_kt`` → frozen-run filter, no ERA cap, no ERA fill (units
+      differ upstream).
 
     Existing ``bds_*_clean`` columns are dropped before recomputation,
     making the function idempotent.  Missing input columns are silently
@@ -219,6 +268,12 @@ def clean_bds_speeds(
         era_dev_max_ias: ERA-deviation cap for ``bds_ias_kt``.
         n_passes: number of Hampel passes.
         interp_max_gap: max NaN run length to fill via interpolation.
+        frozen_min_run_len_mach: frozen-run threshold for ``bds_mach``;
+            ``None`` disables.
+        frozen_min_run_len_ias: frozen-run threshold for ``bds_ias_kt``;
+            ``None`` disables.
+        frozen_min_run_len_tas: frozen-run threshold for ``bds_tas_kt``;
+            ``None`` disables.
 
     Returns:
         New DataFrame with ``bds_*_clean`` columns added.
@@ -227,13 +282,19 @@ def clean_bds_speeds(
     if existing:
         df = df.drop(existing)
 
-    overrides = {
+    era_dev_overrides = {
         "bds_mach": era_dev_max_mach,
         "bds_ias_kt": era_dev_max_ias,
     }
+    frozen_overrides: dict[str, int | None] = {
+        "bds_mach": frozen_min_run_len_mach,
+        "bds_ias_kt": frozen_min_run_len_ias,
+        "bds_tas_kt": frozen_min_run_len_tas,
+    }
     new_columns: list[pl.Series] = []
-    for bds_col, era_col, default_era_dev, use_era_fill in _BDS_SPEC:
-        era_dev_max = overrides.get(bds_col, default_era_dev)
+    for bds_col, era_col, default_era_dev, use_era_fill, default_frozen in _BDS_SPEC:
+        era_dev_max = era_dev_overrides.get(bds_col, default_era_dev)
+        frozen_min_run_len = frozen_overrides.get(bds_col, default_frozen)
         cleaned = _clean_one_column(
             df,
             bds_col,
@@ -244,6 +305,7 @@ def clean_bds_speeds(
             k=k,
             n_passes=n_passes,
             interp_max_gap=interp_max_gap,
+            frozen_min_run_len=frozen_min_run_len,
         )
         if cleaned is not None:
             new_columns.append(pl.Series(f"{bds_col}_clean", cleaned))

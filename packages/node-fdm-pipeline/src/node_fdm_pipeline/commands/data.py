@@ -23,6 +23,7 @@ if TYPE_CHECKING:
 
 __all__ = [
     "aircraft_list",
+    "clean_speeds",
     "convert",
     "derive",
     "download",
@@ -780,6 +781,77 @@ def derive(
     )
 
 
+def clean_speeds(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Clean BDS speed signals per flight (Hampel + ERA fill).
+
+    Reads the Delta Table, runs
+    :func:`~node_fdm_data.preprocessing.clean_speeds.clean_bds_speeds`
+    on each ``meta_flight_id`` group, and writes the new
+    ``bds_*_clean`` columns back.  Raw ``bds_*`` columns are never
+    modified; existing ``bds_*_clean`` columns are dropped before
+    recomputation, making the stage idempotent.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    import polars as pl
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+    cs_cfg = cfg.clean_speeds
+
+    log.info("clean_speeds_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("clean_speeds_dry_run", msg="Config valid, would clean BDS speeds")
+        return
+
+    df = read_delta_table(delta_table)
+
+    clean_existing = [c for c in df.columns if c.startswith("bds_") and c.endswith("_clean")]
+    if clean_existing:
+        log.info("clean_speeds_drop_existing", columns=clean_existing)
+        df = df.drop(clean_existing)
+
+    flights = df.partition_by("meta_flight_id", maintain_order=True)
+    processed: list[pl.DataFrame] = []
+    for flight_df in flights:
+        processed.append(
+            clean_bds_speeds(
+                flight_df,
+                window=cs_cfg.window,
+                k=cs_cfg.k,
+                era_dev_max_mach=cs_cfg.era_dev_max_mach,
+                era_dev_max_ias=cs_cfg.era_dev_max_ias,
+                n_passes=cs_cfg.n_passes,
+                interp_max_gap=cs_cfg.interp_max_gap,
+                frozen_min_run_len_mach=cs_cfg.frozen_min_run_len_mach,
+                frozen_min_run_len_ias=cs_cfg.frozen_min_run_len_ias,
+                frozen_min_run_len_tas=cs_cfg.frozen_min_run_len_tas,
+            )
+        )
+
+    df = pl.concat(processed, how="diagonal_relaxed")
+    write_columns(df, delta_table)
+
+    clean_cols = [c for c in df.columns if c.startswith("bds_") and c.endswith("_clean")]
+    log.info(
+        "clean_speeds_done",
+        rows=len(df),
+        flights=len(processed),
+        clean_cols=clean_cols,
+    )
+
+
 def smooth(
     *,
     config: Path,
@@ -901,6 +973,43 @@ def segments(
         flights=len(processed),
         sel_cols=sel_cols,
     )
+
+
+def _segments_run(*, input_path: str, output_path: str) -> None:
+    """Run segment detection on a stand-alone Delta table I/O boundary.
+
+    Reads the Delta table at *input_path*, partitions per ``flight_id`` (or
+    ``meta_flight_id`` when present), runs :func:`build_selected_params` per
+    flight with the default selected-parameter config, and writes the result
+    to *output_path*.  Used by integration tests that exercise the on-disk
+    contract (e.g. ``fdm_tas_target_known`` emission, no-global-backfill
+    invariant) without needing the full pipeline config plumbing.
+    """
+    import deltalake
+    import polars as pl
+    from node_fdm_data.segments import build_selected_params
+
+    from node_fdm_pipeline.config import SelectedParamConfig
+
+    df = pl.read_delta(input_path)
+    sel_config = SelectedParamConfig().model_dump()
+
+    partition_col: str | None = None
+    for candidate in ("meta_flight_id", "flight_id"):
+        if candidate in df.columns:
+            partition_col = candidate
+            break
+
+    flights = (
+        df.partition_by(partition_col, maintain_order=True) if partition_col is not None else [df]
+    )
+    processed = [build_selected_params(flight, sel_config) for flight in flights]
+    out = pl.concat(processed, how="diagonal_relaxed")
+
+    deltalake.write_deltalake(output_path, out.to_arrow(), mode="overwrite")
+
+
+segments.run = _segments_run  # type: ignore[attr-defined]
 
 
 def _drop_existing_convert_columns(df: pl.DataFrame) -> pl.DataFrame:
