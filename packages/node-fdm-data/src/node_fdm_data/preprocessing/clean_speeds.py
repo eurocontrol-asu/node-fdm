@@ -28,8 +28,8 @@ _HAMPEL_MIN_WINDOW: int = 3  # min non-NaN points in window to compute MAD
 # of length >= threshold. Calibrated against altitude-variation cross-check
 # on the full dataset; see scripts/check_tas_clean.py.
 _BDS_SPEC: list[tuple[str, str, float | None, bool, int]] = [
-    ("bds_mach", "era_mach", 0.05, True, 20),
-    ("bds_ias_kt", "era_cas_kt", 20.0, True, 20),
+    ("bds_mach", "era_mach", 0.025, True, 20),
+    ("bds_ias_kt", "era_cas_kt", 10.0, True, 20),
     ("bds_tas_kt", "era_tas_kt", None, False, 6),
 ]
 
@@ -237,8 +237,8 @@ def clean_bds_speeds(  # noqa: PLR0913 — config-style entry point
     *,
     window: int = 7,
     k: float = 3.0,
-    era_dev_max_mach: float = 0.05,
-    era_dev_max_ias: float = 20.0,
+    era_dev_max_mach: float = 0.025,
+    era_dev_max_ias: float = 10.0,
     n_passes: int = 3,
     interp_max_gap: int = 10,
     frozen_min_run_len_mach: int | None = 20,

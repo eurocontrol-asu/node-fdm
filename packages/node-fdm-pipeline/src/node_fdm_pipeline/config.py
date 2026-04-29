@@ -158,8 +158,8 @@ class CleanSpeedsConfig(BaseModel, frozen=True):
 
     window: int = 7
     k: float = 3.0
-    era_dev_max_mach: float = 0.05
-    era_dev_max_ias: float = 20.0
+    era_dev_max_mach: float = 0.025
+    era_dev_max_ias: float = 10.0
     n_passes: int = 3
     interp_max_gap: int = 10
     frozen_min_run_len_mach: int = 20
