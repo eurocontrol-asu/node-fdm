@@ -31,11 +31,15 @@ __all__ = [
 G: float = 9.80665
 """Standard gravity (m/s²)."""
 
-V_MIN_CLAMP: float = 10.0 / 3.6
-"""Lower bound on TAS for the ``1/V`` term (~2.78 m/s).
+V_MIN_CLAMP: float = 50.0
+"""Lower bound on TAS for the ``1/V`` term (m/s).
 
-Far below any realistic flight speed; only triggers on corrupted inputs and
-prevents a division-by-zero from poisoning the gradient.
+Sized to the typical aircraft stall speed: a transport aircraft never flies
+below ~55 m/s in any phase. The clamp protects ``d_gamma = (g/V)·(...)``
+from blowing up when an intermediate ODE substep produces a corrupted TAS
+(negative or near-zero) outside the physical envelope. Without this bound
+``g/V`` reaches ``g/V_MIN_CLAMP_OLD ≈ 3.5`` which immediately exits
+``dx_bounds`` and triggers a NaN cascade through the integrator.
 """
 
 
@@ -73,8 +77,10 @@ class PhysicsLayer(nn.Module):
         """
         a_spec = x["fdm_a_spec_ms2"]
         n_z = x["fdm_n_z_residual"] + 1.0
-        tas = x["era_tas_ms"]
-        gamma = x["fdm_gamma_rad"]
+        # State (tas, gamma) is detached: gravity is an exact known law and
+        # should not generate a backprop signal on the integrator state.
+        tas = x["era_tas_ms"].detach()
+        gamma = x["fdm_gamma_rad"].detach()
 
         tas_safe = torch.clamp(tas, min=V_MIN_CLAMP)
         d_tas = a_spec - G * torch.sin(gamma)

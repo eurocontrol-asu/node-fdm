@@ -159,9 +159,13 @@ class TrajectoryLayer(nn.Module):
         qc_p0 = torch.clamp(qc_p0, min=-0.999, max=1e6)
 
         cas_term = torch.clamp(qc_p0 + 1.0, min=1e-8, max=1e6)
-        cas = A0 * torch.sqrt(
-            (2.0 / (GAMMA_AIR - 1.0)) * (cas_term ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0)
-        )
+        # ``+ 1e-8`` inside sqrt() so the backward derivative
+        # ``1/(2 sqrt(.))`` stays finite when mach ≈ 0 (the analytical
+        # CAS expression goes to 0 there). Without this, an intermediate
+        # ODE substep with TAS ≈ 0 produces sqrt(0) whose gradient is
+        # +inf and poisons the entire backward pass with NaN.
+        cas_inner = (2.0 / (GAMMA_AIR - 1.0)) * (cas_term ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0)
+        cas = A0 * torch.sqrt(torch.clamp(cas_inner, min=0.0) + 1e-8)
         cas = torch.nan_to_num(cas, nan=0.0, posinf=1e4, neginf=0.0)
         output[c["cas"]] = cas
 

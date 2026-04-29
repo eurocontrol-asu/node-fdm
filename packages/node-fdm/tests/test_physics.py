@@ -124,18 +124,31 @@ class TestPhysicsLayerEdgeCases:
     """Numerical stability under degenerate inputs."""
 
     def test_low_tas_clamped(self) -> None:
-        """tas=0 must not produce NaN/Inf in d_gamma (clamp protects 1/V)."""
+        """tas below stall must not produce NaN/Inf in d_gamma (clamp protects 1/V).
+
+        Important: V_MIN_CLAMP must be set to a realistic stall speed (~50 m/s)
+        rather than a tiny value, otherwise an intermediate ODE substep that
+        produces a corrupted TAS (negative or near-zero) sees ``g/V`` blow up
+        far above the dx_bounds, triggering a NaN cascade.
+        """
         layer = PhysicsLayer()
         out = layer(_make_inputs(a_spec=0.0, n_z_residual=1.0, tas=0.0, gamma=0.0))
         assert torch.isfinite(out["fdm_d_gamma_rads"]).all()
         assert torch.isfinite(out["fdm_d_tas_ms2"]).all()
-        # With tas clamped to V_MIN_CLAMP, d_gamma = g / V_MIN_CLAMP * 1
         expected = G / V_MIN_CLAMP
         assert torch.allclose(
             out["fdm_d_gamma_rads"],
             torch.full((4,), expected),
             atol=1e-4,
         )
+
+    def test_negative_tas_clamped(self) -> None:
+        """Corrupted negative TAS (from RK4 intermediate state) is clamped to V_MIN."""
+        layer = PhysicsLayer()
+        out = layer(_make_inputs(a_spec=0.0, n_z_residual=1.0, tas=-13.5, gamma=0.0))
+        assert torch.isfinite(out["fdm_d_gamma_rads"]).all()
+        # With tas clamped to V_MIN_CLAMP=50, d_gamma stays in safe range
+        assert (out["fdm_d_gamma_rads"].abs() <= G / V_MIN_CLAMP + 1e-4).all()
 
     def test_negative_n_z(self) -> None:
         """Inverted flight (n_z = -0.5, so residual = -1.5) → finite negative d_gamma."""
