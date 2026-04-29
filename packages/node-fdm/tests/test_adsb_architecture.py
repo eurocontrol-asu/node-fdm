@@ -67,11 +67,17 @@ class TestAdsbStructuredInputCols:
     """Tests for data_ode layer input column composition."""
 
     def test_adsb_structured_input_cols(self) -> None:
-        """data_ode input_cols == X + U_ODE + E0 + E1 + gamma_known flag."""
+        """data_ode input_cols == X + U_ODE + E0 + E1 + gamma_known + tas_known flags."""
         from node_fdm_data.schemas.adsb import E0_COLS, E1_COLS, U_ODE_COLS, X_COLS
 
         spec = get("node_adsb_v1")
-        expected = X_COLS + U_ODE_COLS + E0_COLS + E1_COLS + ["fdm_gamma_target_known"]
+        expected = (
+            X_COLS
+            + U_ODE_COLS
+            + E0_COLS
+            + E1_COLS
+            + ["fdm_gamma_target_known", "fdm_tas_target_known"]
+        )
         assert spec.layers[1].input_cols == expected
 
 

@@ -83,9 +83,9 @@ class TestStructuredInputs:
         """U_ODE_COLS + E1_COLS must not contain absolute control columns."""
         raw_controls = {"fdm_vz_sel_ms", "fdm_alt_target_m", "fdm_tas_target_ms"}
         ode_inputs = set(adsb.U_ODE_COLS) | set(adsb.E1_COLS)
-        assert not ode_inputs & raw_controls, (
-            f"Raw controls leaked into ODE inputs: {ode_inputs & raw_controls}"
-        )
+        assert (
+            not ode_inputs & raw_controls
+        ), f"Raw controls leaked into ODE inputs: {ode_inputs & raw_controls}"
 
 
 class TestUColsV3:
@@ -101,8 +101,8 @@ class TestUColsV3:
             assert "_target_" in col, f"U_COLS entry {col!r} does not follow _target_ convention"
 
     def test_u_cols_length(self) -> None:
-        """U_COLS has 4 entries: 3 targets + gamma_known mask."""
-        assert len(adsb.U_COLS) == 4
+        """U_COLS has 5 entries: 3 targets + gamma_known + tas_known masks."""
+        assert len(adsb.U_COLS) == 5
 
 
 class TestBothSchemasCoexist:

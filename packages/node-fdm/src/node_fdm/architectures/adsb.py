@@ -49,6 +49,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "cas": "fdm_cas_ms",
                     "alt_diff": "fdm_alt_diff_m",
                     "tas_sel": "fdm_tas_target_ms",
+                    "tas_known": "fdm_tas_target_known",
                     "tas_diff": "fdm_tas_diff_ms",
                     "gamma_sel": "fdm_gamma_target_rad",
                     "gamma_known": "fdm_gamma_target_known",
@@ -59,7 +60,11 @@ NODE_ADSB_V1 = ArchitectureSpec(
         LayerSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
-            input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS + ["fdm_gamma_target_known"],
+            input_cols=X_COLS
+            + U_ODE_COLS
+            + E0_COLS
+            + E1_COLS
+            + ["fdm_gamma_target_known", "fdm_tas_target_known"],
             output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms2"],
             trainable=True,
             config={

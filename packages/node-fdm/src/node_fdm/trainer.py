@@ -450,7 +450,8 @@ class ODETrainer:
 
         # --- Tracking loss on autopilot targets ---
         # Compares predicted states with target consignes from U_COLS.
-        # U_COLS order: [alt_target, tas_target, gamma_target, gamma_known]
+        # U_COLS order: [alt_target, tas_target, gamma_target, gamma_known, tas_known]
+        # Positional indexing on indices 0..2 only — known flags ignored here.
         # X_COLS order: [alt, gamma, tas]
         if self.config.lambda_tracking > 0 and u_seq.shape[2] >= 4:
             u_skip = u_seq[:, 1:, :]  # skip initial condition

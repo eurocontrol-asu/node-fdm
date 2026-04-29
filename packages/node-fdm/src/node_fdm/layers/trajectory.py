@@ -164,10 +164,25 @@ class TrajectoryLayer(nn.Module):
             output[c["alt_diff"]] = torch.nan_to_num(alt_diff, nan=0.0)
 
         # TAS difference from selected TAS target
+        # When known=1: tas_diff = target - tas (FMS consigne, Mach/CAS envelope)
+        # When known=0: tas_diff = 0 (no target, avoid the false -tas signal
+        #   that nan_to_num(target, 0) would produce)
         tas_sel_col = c.get("tas_sel", "")
         if tas_sel_col and tas_sel_col in x:
-            tas_target = torch.nan_to_num(x[tas_sel_col], nan=0.0)
-            output[c["tas_diff"]] = tas_target - tas
+            tas_target_raw = x[tas_sel_col]
+            tas_known_col = c.get("tas_known", "")
+            if tas_known_col and tas_known_col in x:
+                known_tas = x[tas_known_col]
+                tas_target = torch.nan_to_num(tas_target_raw, nan=0.0)
+                output[c["tas_diff"]] = known_tas * (tas_target - tas)
+            else:
+                tas_target = torch.nan_to_num(tas_target_raw, nan=0.0)
+                output[c["tas_diff"]] = tas_target - tas
+
+        # Pass through tas_known flag for the StructuredLayer
+        tas_known_col = c.get("tas_known", "")
+        if tas_known_col and tas_known_col in x:
+            output[tas_known_col] = x[tas_known_col]
 
         # Gamma difference from selected gamma target
         # When known=1: gamma_diff = target - gamma (FMS consigne)

@@ -87,6 +87,7 @@ class TestResolveArchitecture:
             "fdm_tas_target_ms",
             "fdm_gamma_target_rad",
             "fdm_gamma_target_known",
+            "fdm_tas_target_known",
         ]
         assert info.e0_cols == ["fdm_long_wind_ms", "era_temp_K"]
         assert len(info.dx_cols) == 3
