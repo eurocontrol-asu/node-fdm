@@ -660,7 +660,7 @@ def _make_derive_delta_table(tmp_path: Path, *, n_flights: int = 1) -> Path:
         "raw_track_deg": [],
         "raw_vz_ftmin": [],
         "bds_mcp_sel_alt_ft": [],
-        "era_tas_kt": [],
+        "bds_tas_from_cas_kt": [],
         "meta_flight_id": [],
         "meta_departure": [],
         "meta_arrival": [],
@@ -684,7 +684,7 @@ def _make_derive_delta_table(tmp_path: Path, *, n_flights: int = 1) -> Path:
             all_rows["raw_track_deg"].append(90.0)
             all_rows["raw_vz_ftmin"].append(500.0)
             all_rows["bds_mcp_sel_alt_ft"].append(36000.0)
-            all_rows["era_tas_kt"].append(450.0)
+            all_rows["bds_tas_from_cas_kt"].append(450.0)
             all_rows["meta_flight_id"].append(f"abc{fi:03d}_TST{fi:02d}_s0")
             all_rows["meta_departure"].append("LFPG")
             all_rows["meta_arrival"].append("EGLL")
