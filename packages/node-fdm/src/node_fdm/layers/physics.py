@@ -77,10 +77,8 @@ class PhysicsLayer(nn.Module):
         """
         a_spec = x["fdm_a_spec_ms2"]
         n_z = x["fdm_n_z_residual"] + 1.0
-        # State (tas, gamma) is detached: gravity is an exact known law and
-        # should not generate a backprop signal on the integrator state.
-        tas = x["era_tas_ms"].detach()
-        gamma = x["fdm_gamma_rad"].detach()
+        tas = x["era_tas_ms"]
+        gamma = x["fdm_gamma_rad"]
 
         tas_safe = torch.clamp(tas, min=V_MIN_CLAMP)
         d_tas = a_spec - G * torch.sin(gamma)
