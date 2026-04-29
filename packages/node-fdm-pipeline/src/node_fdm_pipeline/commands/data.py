@@ -32,7 +32,6 @@ __all__ = [
     "identify",
     "preprocess",
     "segments",
-    "smooth",
     "split",
 ]
 
@@ -828,15 +827,23 @@ def clean_speeds(
         processed.append(
             clean_bds_speeds(
                 flight_df,
-                window=cs_cfg.window,
+                bds_window=cs_cfg.bds_window,
+                era_window=cs_cfg.era_window,
                 k=cs_cfg.k,
-                era_dev_max_mach=cs_cfg.era_dev_max_mach,
-                era_dev_max_ias=cs_cfg.era_dev_max_ias,
                 n_passes=cs_cfg.n_passes,
                 interp_max_gap=cs_cfg.interp_max_gap,
                 frozen_min_run_len_mach=cs_cfg.frozen_min_run_len_mach,
                 frozen_min_run_len_ias=cs_cfg.frozen_min_run_len_ias,
                 frozen_min_run_len_tas=cs_cfg.frozen_min_run_len_tas,
+                point_jump_max_mach=cs_cfg.point_jump_max_mach,
+                point_jump_max_kt=cs_cfg.point_jump_max_kt,
+                zigzag_jump_min_mach=cs_cfg.zigzag_jump_min_mach,
+                zigzag_jump_min_kt=cs_cfg.zigzag_jump_min_kt,
+                zigzag_half_window=cs_cfg.zigzag_half_window,
+                zigzag_density_min_bds=cs_cfg.zigzag_density_min_bds,
+                zigzag_density_min_era=cs_cfg.zigzag_density_min_era,
+                on_ground_vz_threshold=cs_cfg.on_ground_vz_threshold,
+                on_ground_alt_threshold=cs_cfg.on_ground_alt_threshold,
             )
         )
 
@@ -849,69 +856,6 @@ def clean_speeds(
         rows=len(df),
         flights=len(processed),
         clean_cols=clean_cols,
-    )
-
-
-def smooth(
-    *,
-    config: Path,
-    dry_run: bool = False,
-) -> None:
-    """Merge BDS+ERA5 and apply EKF smoothing (étape 4.5).
-
-    Reads the Delta Table produced by ``derive``, merges BDS and ERA5
-    airspeed columns, then applies an Extended Kalman Filter + RTS
-    smoother to produce cleaned ``ekf_*`` output columns.
-
-    Args:
-        config: Path to the YAML config file.
-        dry_run: Validate config without modifying the Delta Table.
-    """
-    from node_fdm_data.delta import read_delta_table, write_columns
-    from node_fdm_data.preprocessing.kalman import smooth_flights
-    from node_fdm_data.preprocessing.merge import merge_bds_era5
-
-    from node_fdm_pipeline.config import PipelineConfig
-
-    cfg = PipelineConfig.from_yaml(config)
-    delta_table = cfg.paths.resolve("delta_table")
-    ekf_cfg = cfg.ekf_smooth
-
-    log.info("smooth_start", table=str(delta_table), enabled=ekf_cfg.enabled)
-
-    if dry_run:
-        log.info("smooth_dry_run", msg="Config valid, would run EKF smoothing")
-        return
-
-    if not ekf_cfg.enabled:
-        log.info("smooth_disabled", msg="EKF smoothing disabled in config")
-        return
-
-    df = read_delta_table(delta_table)
-
-    # Drop existing EKF output columns for idempotency
-    ekf_existing = [c for c in df.columns if c.startswith("ekf_")]
-    if ekf_existing:
-        log.info("smooth_drop_existing", columns=ekf_existing)
-        df = df.drop(ekf_existing)
-
-    # Step 1: merge BDS + ERA5
-    df = merge_bds_era5(df)
-
-    # Step 2: EKF smooth
-    df = smooth_flights(
-        df,
-        reject_sigma=ekf_cfg.reject_sigma,
-        rolling_window=ekf_cfg.rolling_window,
-    )
-
-    write_columns(df, delta_table)
-
-    ekf_cols = [c for c in df.columns if c.startswith("ekf_")]
-    log.info(
-        "smooth_done",
-        rows=len(df),
-        ekf_cols=ekf_cols,
     )
 
 

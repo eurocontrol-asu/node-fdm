@@ -1290,6 +1290,43 @@ class TestPreprocessPipeline:
         config = self._make_config(tmp_path)
         preprocess(config=config, dry_run=True)
 
+    def test_preprocess_rejects_missing_identify(self, tmp_path: Path) -> None:
+        """Preprocess raises SystemExit when meta_flight_id is all null."""
+        config = self._make_config(tmp_path)
+
+        df_no_ids = pl.DataFrame(
+            {
+                "raw_timestamp": [None],
+                "raw_icao24": ["abc123"],
+                "meta_batch_date": ["20250101"],
+                "meta_flight_id": [None],
+            }
+        )
+
+        with (
+            patch("node_fdm_data.delta.read_delta_table", return_value=df_no_ids),
+            pytest.raises(SystemExit),
+        ):
+            preprocess(config=config, dry_run=False)
+
+    def test_preprocess_rejects_no_flight_id_column(self, tmp_path: Path) -> None:
+        """Preprocess raises SystemExit when meta_flight_id column is absent."""
+        config = self._make_config(tmp_path)
+
+        df_no_col = pl.DataFrame(
+            {
+                "raw_timestamp": [None],
+                "raw_icao24": ["abc123"],
+                "meta_batch_date": ["20250101"],
+            }
+        )
+
+        with (
+            patch("node_fdm_data.delta.read_delta_table", return_value=df_no_col),
+            pytest.raises(SystemExit),
+        ):
+            preprocess(config=config, dry_run=False)
+
 
 # ---------------------------------------------------------------------------
 # convert mock tests (AC3)
@@ -1381,3 +1418,146 @@ class TestConvertToSI:
         """Convert --dry-run validates config without modifying data."""
         config = self._make_config(tmp_path)
         convert(config=config, dry_run=True)
+
+
+# ---------------------------------------------------------------------------
+# clean-speeds tests
+# ---------------------------------------------------------------------------
+
+
+def _make_clean_speeds_delta_table(tmp_path: Path) -> Path:
+    """Create a Delta Table seeded with bds_* and era_* columns."""
+    import math
+    from datetime import UTC, timedelta
+    from datetime import datetime as dt
+
+    import numpy as np
+    from node_fdm_data.delta import write_columns
+
+    n = 30
+    bds_mach = np.full(n, 0.80)
+    bds_ias_kt = np.full(n, 250.0)
+    bds_tas_kt = np.full(n, 230.0)
+    bds_mach[15] = 1.5
+    bds_ias_kt[15] = 800.0
+    bds_tas_kt[15] = 800.0
+
+    base = dt(2025, 1, 1, 12, 0, 0, tzinfo=UTC)
+    # raw_alt_ft above on-ground threshold so the cleaning pipeline does
+    # not blank out the entire fixture; raw_vz_ftmin = 0 with high alt
+    # still counts as airborne (mask requires both alt<1500 AND |vz|<200).
+    df = pl.DataFrame(
+        {
+            "raw_timestamp": [base + timedelta(seconds=i) for i in range(n)],
+            "raw_icao24": ["abc123"] * n,
+            "meta_flight_id": ["abc123_TST_s0"] * n,
+            "bds_mach": bds_mach,
+            "bds_ias_kt": bds_ias_kt,
+            "bds_tas_kt": bds_tas_kt,
+            "era_mach": np.full(n, 0.80),
+            "era_tas_kt": np.full(n, 460.0),
+            "era_cas_kt": np.full(n, 250.0),
+            "era_temp_K": np.full(n, 220.0),
+            "raw_alt_ft": np.full(n, 35000.0),
+            "raw_vz_ftmin": np.full(n, 0.0),
+        }
+    )
+    table_path = tmp_path / "flights.delta"
+    write_columns(df, table_path)
+    _ = math  # silence unused-import lint when math not used elsewhere
+    return table_path
+
+
+class TestCleanSpeedsCommand:
+    """Integration tests for the ``clean-speeds`` pipeline stage."""
+
+    @staticmethod
+    def _make_config(tmp_path: Path, *, data_dir: Path) -> Path:
+        config = tmp_path / "config.yaml"
+        config.write_text(
+            f"""\
+paths:
+  data_dir: "{data_dir}"
+
+typecodes:
+  - A320
+"""
+        )
+        return config
+
+    def test_clean_speeds_stage_writes_clean_columns(self, tmp_path: Path) -> None:
+        """Stage writes bds_*_clean columns to the Delta Table."""
+        from node_fdm_pipeline.commands.data import clean_speeds
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_clean_speeds_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        clean_speeds(config=config, dry_run=False)
+
+        result = pl.read_delta(str(table_path))
+        for col in ("bds_mach_clean", "bds_ias_kt_clean", "bds_tas_kt_clean"):
+            assert col in result.columns, f"Missing column: {col}"
+
+    def test_clean_speeds_stage_idempotent_on_table(self, tmp_path: Path) -> None:
+        """Running the stage twice produces identical clean columns."""
+        import math
+
+        from node_fdm_pipeline.commands.data import clean_speeds
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_clean_speeds_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        clean_speeds(config=config, dry_run=False)
+        first = pl.read_delta(str(table_path)).sort("raw_timestamp")
+
+        clean_speeds(config=config, dry_run=False)
+        second = pl.read_delta(str(table_path)).sort("raw_timestamp")
+
+        for col in ("bds_mach_clean", "bds_ias_kt_clean", "bds_tas_kt_clean"):
+            a = first[col].to_list()
+            b = second[col].to_list()
+            assert len(a) == len(b)
+            for x, y in zip(a, b, strict=False):
+                if x is None or (isinstance(x, float) and math.isnan(x)):
+                    assert y is None or (isinstance(y, float) and math.isnan(y))
+                else:
+                    assert x == pytest.approx(y)
+
+    def test_clean_speeds_stage_preserves_raw_bds(self, tmp_path: Path) -> None:
+        """Raw bds_* columns are unchanged in the Delta Table after the stage."""
+        from node_fdm_pipeline.commands.data import clean_speeds
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_clean_speeds_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        before = pl.read_delta(str(table_path)).sort("raw_timestamp")
+        raw_mach = before["bds_mach"].to_list()
+        raw_ias = before["bds_ias_kt"].to_list()
+        raw_tas = before["bds_tas_kt"].to_list()
+
+        clean_speeds(config=config, dry_run=False)
+
+        after = pl.read_delta(str(table_path)).sort("raw_timestamp")
+        assert after["bds_mach"].to_list() == raw_mach
+        assert after["bds_ias_kt"].to_list() == raw_ias
+        assert after["bds_tas_kt"].to_list() == raw_tas
+
+    def test_clean_speeds_stage_dry_run_no_write(self, tmp_path: Path) -> None:
+        """`--dry-run` validates config and does not write clean columns."""
+        from node_fdm_pipeline.commands.data import clean_speeds
+
+        data_dir = tmp_path / "data"
+        data_dir.mkdir()
+        table_path = _make_clean_speeds_delta_table(data_dir)
+        config = self._make_config(tmp_path, data_dir=data_dir)
+
+        clean_speeds(config=config, dry_run=True)
+
+        result = pl.read_delta(str(table_path))
+        assert "bds_mach_clean" not in result.columns

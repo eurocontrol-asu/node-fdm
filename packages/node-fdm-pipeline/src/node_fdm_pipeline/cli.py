@@ -383,8 +383,8 @@ def derive(
     derive_fn(config=config, dry_run=dry_run)
 
 
-@app.command
-def smooth(
+@app.command(name="clean-speeds")
+def clean_speeds(
     *,
     config: Annotated[
         Path,
@@ -395,10 +395,10 @@ def smooth(
         cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
     ] = False,
 ) -> None:
-    """Merge BDS+ERA5 airspeeds and apply EKF smoothing — étape 4.5."""
-    from node_fdm_pipeline.commands.data import smooth as smooth_fn
+    """Clean BDS speed signals via Hampel + ERA fill — étape 4 (pre-derive)."""
+    from node_fdm_pipeline.commands.data import clean_speeds as clean_speeds_fn
 
-    smooth_fn(config=config, dry_run=dry_run)
+    clean_speeds_fn(config=config, dry_run=dry_run)
 
 
 @app.command

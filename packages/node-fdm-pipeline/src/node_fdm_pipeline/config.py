@@ -13,7 +13,6 @@ __all__ = [
     "CasFilterConfig",
     "CleanSpeedsConfig",
     "ComputingConfig",
-    "EKFSmoothConfig",
     "FlagConfig",
     "GammaFilterConfig",
     "MachFilterConfig",
@@ -149,34 +148,34 @@ class PreprocessConfig(BaseModel, frozen=True):
 
 
 class CleanSpeedsConfig(BaseModel, frozen=True):
-    """Multi-pass Hampel + ERA-deviation cleaning of BDS speeds.
+    """Cleaning of BDS (Mode-S) and ERA5 speed signals.
 
     Applied per flight by the ``clean-speeds`` stage between ``enrich``
-    and ``derive``.  Produces ``bds_*_clean`` columns that the merge
-    step prefers over the raw ``bds_*`` signals.
+    and ``derive``.  Produces ``bds_*_clean`` columns plus a derived
+    ``bds_tas_from_cas_kt`` (TAS recomputed from cleaned IAS via the
+    ERA5 static temperature).
+
+    Defaults are calibrated against the visual validation in
+    ``scripts/check_speed_sources_v3.py`` on the production dataset.
     """
 
-    window: int = 7
+    bds_window: int = 50
+    era_window: int = 15
     k: float = 3.0
-    era_dev_max_mach: float = 0.025
-    era_dev_max_ias: float = 10.0
     n_passes: int = 3
     interp_max_gap: int = 10
     frozen_min_run_len_mach: int = 20
     frozen_min_run_len_ias: int = 20
     frozen_min_run_len_tas: int = 6
-
-
-class EKFSmoothConfig(BaseModel, frozen=True):
-    """EKF smoothing configuration for flight dynamics parameters.
-
-    Controls the Extended Kalman Filter + RTS smoother that cleans
-    TAS, gamma, and altitude after BDS/ERA5 merging.
-    """
-
-    reject_sigma: float = 3.0
-    rolling_window: int = 17
-    enabled: bool = True
+    point_jump_max_mach: float = 0.05
+    point_jump_max_kt: float = 20.0
+    zigzag_jump_min_mach: float = 0.05
+    zigzag_jump_min_kt: float = 20.0
+    zigzag_half_window: int = 15
+    zigzag_density_min_bds: float = 0.25
+    zigzag_density_min_era: float = 0.15
+    on_ground_vz_threshold: float = 200.0
+    on_ground_alt_threshold: float = 1500.0
 
 
 class FlagConfig(BaseModel, frozen=True):
@@ -231,7 +230,6 @@ class PipelineConfig(BaseModel, frozen=True):
     flag: FlagConfig = FlagConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()
     clean_speeds: CleanSpeedsConfig = CleanSpeedsConfig()
-    ekf_smooth: EKFSmoothConfig = EKFSmoothConfig()
 
     @field_validator("typecodes", mode="before")
     @classmethod
