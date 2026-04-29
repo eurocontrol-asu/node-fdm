@@ -73,13 +73,17 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "fdm_a_spec_ms2": "scaled",
                     "fdm_n_z_residual": "scaled",
                 },
+                # Scales calibrated on real ADS-B distribution (p99.9):
+                #   a_spec      : std=0.6,  p99.9=2.6 m/s²
+                #   n_z_residual: std=0.022, p99.9=0.13
+                # cap = p99.9 (physical bound), scale = cap so denorm = cap*tanh(x).
                 "scale_overrides": {
-                    "fdm_a_spec_ms2": 3.0,
-                    "fdm_n_z_residual": 0.5,
+                    "fdm_a_spec_ms2": 2.5,
+                    "fdm_n_z_residual": 0.13,
                 },
                 "cap_overrides": {
-                    "fdm_a_spec_ms2": 3.0,
-                    "fdm_n_z_residual": 0.5,
+                    "fdm_a_spec_ms2": 2.5,
+                    "fdm_n_z_residual": 0.13,
                 },
             },
         ),
