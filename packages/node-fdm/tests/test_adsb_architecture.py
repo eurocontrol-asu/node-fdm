@@ -106,6 +106,16 @@ class TestAdsbStructuredInputCols:
         spec = get("node_adsb_v1")
         assert "fdm_cos_gamma" in spec.layers[1].input_cols
 
+    def test_data_ode_input_has_q_pa(self) -> None:
+        """data_ode input_cols contains fdm_q_pa (dynamic pressure, via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_q_pa" in spec.layers[1].input_cols
+
+    def test_data_ode_input_has_g_over_v(self) -> None:
+        """data_ode input_cols contains fdm_g_over_v (g/V ratio, via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_g_over_v" in spec.layers[1].input_cols
+
 
 class TestAdsbColMapV2:
     """Tests for AXM-808: gamma_sel col_map points to fdm_gamma_target_rad."""

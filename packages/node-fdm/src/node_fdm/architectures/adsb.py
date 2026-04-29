@@ -57,6 +57,8 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "gamma_diff": "fdm_gamma_diff_rad",
                     "g_sin_gamma": "fdm_g_sin_gamma_ms2",
                     "cos_gamma": "fdm_cos_gamma",
+                    "q": "fdm_q_pa",
+                    "g_over_v": "fdm_g_over_v",
                 },
             },
         ),

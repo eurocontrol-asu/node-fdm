@@ -41,6 +41,8 @@ DEFAULT_COL_MAP: dict[str, str] = {
     "alt_diff": "alt_diff_m",
     "g_sin_gamma": "fdm_g_sin_gamma_ms2",
     "cos_gamma": "fdm_cos_gamma",
+    "q": "q_pa",
+    "g_over_v": "g_over_v",
 }
 
 
@@ -155,8 +157,21 @@ class TrajectoryLayer(nn.Module):
         mach = tas / torch.clamp(a, min=1e-6, max=1e8)
         output[c["mach"]] = mach
 
-        # CAS from compressible flow
+        # Aerodynamic kinematic features (dynamic pressure and g/V ratio)
+        # rho from ideal-gas law: rho = p / (R * temp)
+        # Both p (ISA) and temp (ERA5 or ISA) are now available.
         p = _isa_pressure_torch(alt)
+        rho = p / (R * temp)
+        # q = 0.5 * rho * V^2  (dynamic pressure in Pa)
+        output[c["q"]] = 0.5 * rho * tas**2
+        # g/V feature for the d_gamma equation: (g/V)*(n_z - cos gamma).
+        # Clamp at 1.0 m/s (not the 50 m/s physics clamp) so the feature
+        # stays informative at low TAS in edge data without ever being
+        # infinite.  Training data never has TAS < ~30 m/s; 1 m/s only
+        # guards against a pathological ODE substep.
+        output[c["g_over_v"]] = G / torch.clamp(tas, min=1.0)
+
+        # CAS from compressible flow
         pt_over_p = torch.pow(
             torch.clamp(1 + (GAMMA_AIR - 1) / 2 * mach**2, min=1e-6, max=1e6),
             GAMMA_AIR / (GAMMA_AIR - 1),
