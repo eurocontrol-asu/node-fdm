@@ -306,27 +306,43 @@ class TestEdgeCaseP999Missing:
     """Old stats dict without p999 key → fallback or clear error."""
 
     def test_missing_p999_raises(self) -> None:
-        """FDM with scaled mode but no p999 in stats raises clear error."""
-        from node_fdm.architectures.adsb import NODE_ADSB_V1
+        """FDM with scaled mode but no p999 in stats raises clear error.
+
+        Built from a minimal local spec so the guard is exercised in isolation,
+        independent of any production architecture's denormalize config.
+        """
+        from node_fdm.architectures.registry import ArchitectureSpec, LayerSpec
         from node_fdm.models.fdm import FlightDynamicsModel
 
-        # Stats without p999
-        dx_col_names = [c for _, c in NODE_ADSB_V1.dx_cols]
-        all_cols = (
-            NODE_ADSB_V1.x_cols
-            + NODE_ADSB_V1.u_cols
-            + NODE_ADSB_V1.e0_cols
-            + NODE_ADSB_V1.e1_cols
-            + dx_col_names
+        spec = ArchitectureSpec(
+            name="scaled_p999_guard_test",
+            x_cols=["x1"],
+            u_cols=[],
+            e0_cols=[],
+            e1_cols=[],
+            dx_cols=[(1, "dx1")],
+            layers=[
+                LayerSpec(
+                    name="data_ode",
+                    layer_class="node_fdm.layers.structured.StructuredLayer",
+                    input_cols=["x1"],
+                    output_cols=["dx1"],
+                    trainable=True,
+                    config={"denormalize_modes": {"dx1": "scaled"}},
+                ),
+            ],
+            dx_bounds={"dx1": (-1.0, 1.0)},
         )
-        stats_dict: dict[str, dict[str, float]] = {}
-        for col in all_cols:
-            stats_dict[col] = {"mean": 0.0, "std": 1.0, "max": 3.0}
-            # No "p999" key
+
+        # Stats without p999
+        stats_dict: dict[str, dict[str, float]] = {
+            "x1": {"mean": 0.0, "std": 1.0, "max": 3.0},
+            "dx1": {"mean": 0.0, "std": 1.0, "max": 3.0},
+        }
 
         with pytest.raises((KeyError, ValueError)):
             FlightDynamicsModel(
-                spec=NODE_ADSB_V1,
+                spec=spec,
                 stats_dict=stats_dict,
                 model_params=(1, 1, 16),
             )

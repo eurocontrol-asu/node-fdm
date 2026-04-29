@@ -39,12 +39,24 @@ class TestNodeAdsbV1Architecture:
         assert "raw_gs_ms" not in dx_names
         assert len(spec.dx_cols) == 3
 
-    def test_two_layers(self) -> None:
-        """Architecture has trajectory + data_ode layers."""
+    def test_three_layers(self) -> None:
+        """Architecture has trajectory + data_ode + physics layers."""
         spec = get("node_adsb_v1")
-        assert len(spec.layers) == 2
+        assert len(spec.layers) == 3
         assert spec.layers[0].name == "trajectory"
         assert spec.layers[1].name == "data_ode"
+        assert spec.layers[2].name == "physics"
+
+    def test_data_ode_outputs_aero_quantities(self) -> None:
+        """data_ode (NN) outputs (a_spec, n_z), gravity is applied by PhysicsLayer."""
+        spec = get("node_adsb_v1")
+        assert spec.layers[1].output_cols == ["fdm_a_spec_ms2", "fdm_n_z"]
+
+    def test_physics_outputs_dx(self) -> None:
+        """PhysicsLayer outputs the ODE derivatives consumed by dx_cols."""
+        spec = get("node_adsb_v1")
+        assert spec.layers[2].output_cols == ["fdm_d_tas_ms2", "fdm_d_gamma_rads"]
+        assert spec.layers[2].trainable is False
 
     def test_col_map_alt_sel(self) -> None:
         """TrajectoryLayer col_map uses fdm_alt_target_m for alt_sel."""

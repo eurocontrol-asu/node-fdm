@@ -6,6 +6,7 @@ __all__ = [
     "blocks",
     "engine",
     "normalizers",
+    "physics",
     "structured",
     "trajectory",
 ]
