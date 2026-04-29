@@ -55,6 +55,8 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "gamma_sel": "fdm_gamma_target_rad",
                     "gamma_known": "fdm_gamma_target_known",
                     "gamma_diff": "fdm_gamma_diff_rad",
+                    "g_sin_gamma": "fdm_g_sin_gamma_ms2",
+                    "cos_gamma": "fdm_cos_gamma",
                 },
             },
         ),

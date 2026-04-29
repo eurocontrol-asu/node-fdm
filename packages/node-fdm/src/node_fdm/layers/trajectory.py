@@ -15,7 +15,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, T0, R
+from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, T0, G, R
 
 __all__ = [
     "TrajectoryLayer",
@@ -39,6 +39,8 @@ DEFAULT_COL_MAP: dict[str, str] = {
     "mach": "mach",
     "cas": "cas_ms",
     "alt_diff": "alt_diff_m",
+    "g_sin_gamma": "fdm_g_sin_gamma_ms2",
+    "cos_gamma": "fdm_cos_gamma",
 }
 
 
@@ -127,6 +129,10 @@ class TrajectoryLayer(nn.Module):
 
         # Vertical speed
         output[c["vz"]] = tas * torch.sin(gamma)
+
+        # Kinematic gravity-compensation features (inductive bias for the NN)
+        output[c["g_sin_gamma"]] = G * torch.sin(gamma)
+        output[c["cos_gamma"]] = torch.cos(gamma)
 
         # Ground speed (TAS minus longitudinal wind)
         wind_col = c.get("wind", "")

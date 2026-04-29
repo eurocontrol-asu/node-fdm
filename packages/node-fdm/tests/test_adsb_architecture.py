@@ -96,6 +96,16 @@ class TestAdsbStructuredInputCols:
         )
         assert spec.layers[1].input_cols == expected
 
+    def test_data_ode_input_has_g_sin_gamma(self) -> None:
+        """data_ode input_cols contains fdm_g_sin_gamma_ms2 (via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_g_sin_gamma_ms2" in spec.layers[1].input_cols
+
+    def test_data_ode_input_has_cos_gamma(self) -> None:
+        """data_ode input_cols contains fdm_cos_gamma (via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_cos_gamma" in spec.layers[1].input_cols
+
 
 class TestAdsbColMapV2:
     """Tests for AXM-808: gamma_sel col_map points to fdm_gamma_target_rad."""
