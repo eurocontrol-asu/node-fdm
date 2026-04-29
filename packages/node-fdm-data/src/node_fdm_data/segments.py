@@ -376,7 +376,7 @@ def _resolve_temp_k(df: pl.DataFrame, alt_arr: np.ndarray) -> np.ndarray:
     return np.asarray(isa_temperature(alt_m), dtype=np.float64)
 
 
-def _build_tas_target(df: pl.DataFrame, alt_arr: np.ndarray, tas_src: str) -> pl.DataFrame:
+def _build_tas_target(df: pl.DataFrame, alt_arr: np.ndarray) -> pl.DataFrame:
     """Build ``fdm_tas_target_kt`` from FMS envelope and emit ``fdm_tas_target_known``.
 
     On rows covered by both Mach and CAS segments, target is
@@ -791,5 +791,5 @@ def build_selected_params(
         "bds_ias_kt_clean",
         "fdm_cas_target_kt",
     )
-    df = _build_tas_target(df, alt_arr, tas_col)
+    df = _build_tas_target(df, alt_arr)
     return _build_gamma_target(df, tas_col)
