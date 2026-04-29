@@ -7,13 +7,15 @@ prediction, and produces a 3-column figure:
 * Column 2 (TAS): TAS + target overlay, then tas_diff below.
 * Column 3 (FPA): flight-path angle + gamma_target + GammaDefaultNet output,
   then gamma_diff below.
-* Row 3: Mach vs mach_sel, CAS vs cas_target, VZ vs vz_sel (true values only).
+* Row 3: Mach, CAS, VZ — true + predicted + sel target, with gray shading
+  on rows where the target/segment is absent.
 
 Output: ``data/figures/inference_check.png``.
 """
 
 from __future__ import annotations
 
+import sys
 from pathlib import Path
 
 import matplotlib.pyplot as plt
@@ -54,14 +56,22 @@ flight_ids = val_df["meta_flight_id"].unique().sort().to_list()
 if not flight_ids:
     raise SystemExit("No validation flights found")
 
-# Pick the longest flight
-best_fid = None
-best_len = 0
-for fid in flight_ids[:20]:
-    n = val_df.filter(pl.col("meta_flight_id") == fid).shape[0]
-    if n > best_len:
-        best_len = n
-        best_fid = fid
+# CLI override: `python check_inference.py <flight_id>` to target a specific vol
+cli_fid = sys.argv[1] if len(sys.argv) > 1 else None
+if cli_fid is not None:
+    if cli_fid not in flight_ids:
+        raise SystemExit(f"Flight {cli_fid!r} not in val split. Available: {flight_ids[:20]}")
+    best_fid = cli_fid
+    best_len = val_df.filter(pl.col("meta_flight_id") == best_fid).shape[0]
+else:
+    # Default: pick the longest flight from the first 20
+    best_fid = None
+    best_len = 0
+    for fid in flight_ids[:20]:
+        n = val_df.filter(pl.col("meta_flight_id") == fid).shape[0]
+        if n > best_len:
+            best_len = n
+            best_fid = fid
 
 print(f"Flight: {best_fid} ({best_len} timesteps, {best_len * STEP_S / 60:.0f} min)")
 
@@ -131,28 +141,52 @@ pct_known = gamma_known.mean() * 100
 print(f"Gamma target: {pct_known:.0f}% known, {100 - pct_known:.0f}% unknown (gamma_diff=0)")
 
 # --- Extract Mach / CAS / VZ (true + targets) from the raw flight DataFrame ---
+from node_fdm_data.physics.constants import GAMMA_AIR, R
+from node_fdm_data.physics.speed import tas_to_cas_real
+
 KT_TO_MS = 0.514444
 FTMIN_TO_MS = 0.00508
 
 extra_cols = [
     "era_mach",
     "fdm_mach_sel",
-    "fdm_cas_ms",
-    "fdm_cas_target_kt",
+    "bds_ias_ms",
+    "fdm_cas_sel_kt",
     "raw_vz_ms",
     "fdm_vz_sel_ms",
+    "fdm_tas_target_known",
+    "era_temp_K",
 ]
 extra = flight_df.select(extra_cols).to_numpy().astype(np.float32)[finite_mask]
 
 mach_true = extra[:, 0]
 mach_sel = extra[:, 1]  # NaN outside detected segments
-cas_true = extra[:, 2]
-cas_target = extra[:, 3] * KT_TO_MS  # kt → m/s
+cas_true = extra[:, 2]  # IAS Mode-S clean — same source as the detected plateau
+cas_sel = extra[:, 3] * KT_TO_MS  # plateau detected on bds_ias_kt_clean → m/s
 vz_true = extra[:, 4]
 vz_sel = extra[:, 5]  # NaN outside detected segments
+tas_known = extra[:, 6]  # 1.0 where Mach/CAS envelope yields a target
+temp_true = extra[:, 7]  # ERA5 real temperature [K] — used for round-trip closure
+
+# Unknown masks for shading "target absent" regions in gray
+mach_unknown = np.isnan(mach_sel)
+cas_unknown = np.isnan(cas_sel)
+vz_unknown = np.isnan(vz_sel)
+tas_unknown = tas_known == 0.0
+
+# --- Derive predicted Mach / CAS / VZ from predicted state (alt, tas, gamma) ---
+# Mach_pred = tas_pred / sqrt(γ·R·T_real)         — using real ERA5 temperature
+# CAS_pred  = tas_to_cas_real(tas_pred, alt_pred, T_real)
+# VZ_pred   = tas_pred * sin(gamma_pred)
+# Use real temperature (era_temp_K) so the round-trip TAS→CAS via real T closes
+# back onto bds_ias_ms; otherwise an ISA-only conversion biases CAS by ~2 m/s
+# at FL350 because era_tas_ms itself was derived via cas_to_tas_real (real T).
+mach_pred = tas_pred / np.sqrt(GAMMA_AIR * R * temp_true)
+cas_pred = tas_to_cas_real(tas_pred, alt_pred, temp_true)
+vz_pred = tas_pred * np.sin(gamma_pred)
 
 
-# --- Helper ---
+# --- Helpers ---
 def _set_ylim(ax, true_vals):
     valid = true_vals[np.isfinite(true_vals)]
     if len(valid) == 0:
@@ -160,6 +194,15 @@ def _set_ylim(ax, true_vals):
     ymin, ymax = valid.min(), valid.max()
     margin = (ymax - ymin) * 0.10 if ymax != ymin else abs(ymax) * 0.10 + 1.0
     ax.set_ylim(ymin - margin, ymax + margin)
+
+
+def _shade_unknown(ax, t, mask, label):
+    """Shade rows where target is absent (unknown / no detected segment)."""
+    if not mask.any():
+        return
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(t, ymin, ymax, where=mask, alpha=0.08, color="gray", label=label)
+    ax.set_ylim(ymin, ymax)  # fill_between can shift ylim; clamp back
 
 
 # --- Figure: 3 columns × 3 rows ---
@@ -193,6 +236,7 @@ ax.plot(time_true, tas_true, "k-", lw=1.5, label="True", alpha=0.8)
 ax.plot(time_pred, tas_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.plot(time_true, tas_target, "b-", lw=2.0, label="Target", alpha=0.4)
 _set_ylim(ax, tas_true)
+_shade_unknown(ax, time_true, tas_unknown, "TAS unknown")
 ax.set_ylabel("TAS [m/s]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
@@ -241,20 +285,24 @@ ax.set_ylabel("γ_target − γ [°]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
-# ── Row 2: Mach / CAS / VZ — true vs target (no prediction) ──
+# ── Row 2: Mach / CAS / VZ — true + predicted + target ──
 ax = axes[2, 0]
 ax.plot(time_true, mach_true, "k-", lw=1.5, label="True (era_mach)", alpha=0.8)
-ax.plot(time_true, mach_sel, "b-", lw=2.0, label="Mach target (sel)", alpha=0.6)
+ax.plot(time_pred, mach_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
+ax.plot(time_true, mach_sel, "b-", lw=2.0, label="Mach target (sel)", alpha=0.4)
 _set_ylim(ax, mach_true)
+_shade_unknown(ax, time_true, mach_unknown, "Mach unknown")
 ax.set_ylabel("Mach [-]")
 ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
 ax = axes[2, 1]
-ax.plot(time_true, cas_true, "k-", lw=1.5, label="True (fdm_cas_ms)", alpha=0.8)
-ax.plot(time_true, cas_target, "b-", lw=2.0, label="CAS target", alpha=0.4)
+ax.plot(time_true, cas_true, "k-", lw=1.5, label="True (bds_ias_ms)", alpha=0.8)
+ax.plot(time_pred, cas_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
+ax.plot(time_true, cas_sel, "b-", lw=2.0, label="CAS target (sel)", alpha=0.4)
 _set_ylim(ax, cas_true)
+_shade_unknown(ax, time_true, cas_unknown, "CAS unknown")
 ax.set_ylabel("CAS [m/s]")
 ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
@@ -262,9 +310,11 @@ ax.grid(True, alpha=0.3)
 
 ax = axes[2, 2]
 ax.plot(time_true, vz_true, "k-", lw=1.5, label="True (raw_vz_ms)", alpha=0.8)
-ax.plot(time_true, vz_sel, "b-", lw=2.0, label="VZ target (sel)", alpha=0.6)
+ax.plot(time_pred, vz_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
+ax.plot(time_true, vz_sel, "b-", lw=2.0, label="VZ target (sel)", alpha=0.4)
 ax.axhline(0, color="gray", ls=":", lw=0.8)
 _set_ylim(ax, vz_true)
+_shade_unknown(ax, time_true, vz_unknown, "VZ unknown")
 ax.set_ylabel("VZ [m/s]")
 ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
@@ -273,7 +323,7 @@ ax.grid(True, alpha=0.3)
 fig.suptitle(f"Neural ODE Inference — {best_fid}", fontsize=14)
 fig.tight_layout()
 
-out_path = Path("data/figures/inference_check.png")
+out_path = Path(f"data/figures/inference_check_{best_fid}.png")
 out_path.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(out_path, dpi=150)
 print(f"\nSaved to {out_path}")

@@ -42,6 +42,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "gamma": "fdm_gamma_rad",
                     "alt": "raw_alt_m",
                     "wind": "fdm_long_wind_ms",
+                    "temp": "era_temp_K",
                     "alt_sel": "fdm_alt_target_m",
                     "vz": "fdm_d_alt_ms",
                     "gs": "raw_gs_ms",

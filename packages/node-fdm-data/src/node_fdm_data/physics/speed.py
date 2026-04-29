@@ -17,6 +17,7 @@ __all__ = [
     "mach_to_tas",
     "mach_to_tas_real",
     "tas_to_cas",
+    "tas_to_cas_real",
     "vz_to_gamma",
 ]
 
@@ -118,6 +119,32 @@ def tas_to_cas(tas: float | np.ndarray, h_m: float | np.ndarray) -> float | np.n
 
     # Mach → impact pressure at altitude
     p = np.asarray(isa_pressure(h), dtype=np.float64)
+    qc = p * ((1.0 + _GM1_OVER_2 * mach**2) ** _G_OVER_GM1 - 1.0)
+
+    # Impact pressure → CAS (sea-level isentropic relation, inverse)
+    cas = A0 * np.sqrt((2.0 / (GAMMA_AIR - 1.0)) * ((qc / P0 + 1.0) ** _INV_G_OVER_GM1 - 1.0))
+    return np.where(tas_arr < 0.0, np.nan, cas)
+
+
+def tas_to_cas_real(
+    tas: float | np.ndarray,
+    h_m: float | np.ndarray,
+    temp_k: float | np.ndarray,
+) -> float | np.ndarray:
+    """Convert TAS (m/s) to CAS (m/s) using real temperature *temp_k* at altitude *h_m*.
+
+    Inverse of :func:`cas_to_tas_real`: TAS → Mach via real temperature,
+    Mach → impact pressure via ISA static pressure, impact pressure → CAS.
+    """
+    tas_arr = np.asarray(tas, dtype=np.float64)
+    t = np.asarray(temp_k, dtype=np.float64)
+    a_local = np.sqrt(GAMMA_AIR * R * t)
+
+    # TAS → Mach using real temperature
+    mach = tas_arr / a_local
+
+    # Mach → impact pressure at altitude (ISA pressure)
+    p = np.asarray(isa_pressure(h_m), dtype=np.float64)
     qc = p * ((1.0 + _GM1_OVER_2 * mach**2) ** _G_OVER_GM1 - 1.0)
 
     # Impact pressure → CAS (sea-level isentropic relation, inverse)

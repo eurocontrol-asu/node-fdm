@@ -17,7 +17,7 @@ from node_fdm_data.conversions import (
     kt_to_ms,
     nm_to_m,
 )
-from node_fdm_data.physics.speed import tas_to_cas
+from node_fdm_data.physics.speed import tas_to_cas, tas_to_cas_real
 
 __all__ = [
     "DELTA_DIFFS",
@@ -97,12 +97,20 @@ def convert_si(df: pl.DataFrame) -> pl.DataFrame:
     if exprs:
         df = df.with_columns(exprs)
 
-    # Compute CAS from TAS + altitude via ISA (fdm_cas_ms — always available,
+    # Compute CAS from TAS + altitude (fdm_cas_ms — always available,
     # unlike bds_ias_ms which has ~40% NaN from Mode-S gaps).
+    # Uses real ERA5 temperature when available so the round-trip closes:
+    # era_tas_ms is itself derived upstream via cas_to_tas_real(·, alt, era_temp_K),
+    # so applying tas_to_cas_real here recovers bds_ias_ms exactly. Falls back
+    # to the ISA variant when era_temp_K is absent (back-compat path).
     if "era_tas_ms" in df.columns and "raw_alt_m" in df.columns:
         tas_arr = df["era_tas_ms"].to_numpy()
         alt_arr = df["raw_alt_m"].to_numpy()
-        cas_arr = np.asarray(tas_to_cas(tas_arr, alt_arr), dtype=np.float64)
+        if "era_temp_K" in df.columns:
+            temp_arr = df["era_temp_K"].to_numpy()
+            cas_arr = np.asarray(tas_to_cas_real(tas_arr, alt_arr, temp_arr), dtype=np.float64)
+        else:
+            cas_arr = np.asarray(tas_to_cas(tas_arr, alt_arr), dtype=np.float64)
         df = df.with_columns(pl.Series("fdm_cas_ms", cas_arr))
 
     # Precompute delta columns when both operands are present.

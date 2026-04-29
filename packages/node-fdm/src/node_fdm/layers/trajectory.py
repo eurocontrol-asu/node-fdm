@@ -133,8 +133,16 @@ class TrajectoryLayer(nn.Module):
         long_wind = _x.get(wind_col, torch.zeros_like(tas)) if wind_col else torch.zeros_like(tas)
         output[c["gs"]] = tas - long_wind
 
-        # ISA temperature and speed of sound
-        temp = _isa_temperature_torch(alt)
+        # Speed of sound from real ERA5 temperature when available, else ISA.
+        # Mirrors `tas_to_cas_real` in the data pipeline so the predicted CAS
+        # closes the round-trip with the upstream IAS source. Static pressure
+        # below stays ISA (matches the NumPy reference).
+        temp_col = c.get("temp", "")
+        if temp_col and temp_col in _x:
+            temp = torch.nan_to_num(_x[temp_col], nan=288.15, posinf=320.0, neginf=150.0)
+            temp = torch.clamp(temp, min=150.0, max=320.0)
+        else:
+            temp = _isa_temperature_torch(alt)
         a = torch.sqrt(torch.clamp(GAMMA_AIR * R * temp, min=1e-6, max=1e8))
 
         # Mach number

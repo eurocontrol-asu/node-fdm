@@ -35,6 +35,7 @@ class TestConvertSI:
                 "raw_vz_ftmin": [1000.0, 0.0],
                 "fdm_adep_dist_nm": [0.0, 50.0],
                 "fdm_ades_dist_nm": [200.0, 150.0],
+                "era_temp_K": [228.71, 218.81],
             }
         )
 
@@ -186,6 +187,61 @@ class TestConvertSI:
         df = pl.DataFrame({"unrelated_col": [1.0, 2.0]})
         result = convert_si(df)
         assert result.columns == ["unrelated_col"]
+
+
+class TestConvertCasRealTemp:
+    """fdm_cas_ms uses real ERA5 temperature so the round-trip closes."""
+
+    def test_convert_fdm_cas_ms_uses_real_temp(self) -> None:
+        """convert_si(fdm_cas_ms) matches tas_to_cas_real(tas, alt, era_temp_K)."""
+        from node_fdm_data.physics.speed import tas_to_cas_real
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_m": [10000.0],
+                "era_tas_ms": [240.0],
+                "era_temp_K": [228.71],  # warmer than ISA at FL328
+            }
+        )
+        result = convert_si(df)
+        expected = float(tas_to_cas_real(240.0, 10000.0, 228.71))
+        assert result["fdm_cas_ms"][0] == pytest.approx(expected, rel=1e-9)
+
+    def test_convert_fdm_cas_ms_round_trip_closes(self) -> None:
+        """tas_to_cas_real(cas_to_tas_real(IAS, ·, T), ·, T) == IAS at machine precision."""
+        import numpy as np
+
+        from node_fdm_data.physics.speed import cas_to_tas_real
+
+        ias_kt = 280.0
+        alt_m = 10000.0
+        temp_k = 218.81
+        ias_ms = ias_kt * 0.514444
+        tas_arr = np.atleast_1d(cas_to_tas_real(np.array([ias_ms]), alt_m, temp_k))
+        tas_ms = float(tas_arr[0])
+        df = pl.DataFrame(
+            {
+                "raw_alt_m": [alt_m],
+                "era_tas_ms": [tas_ms],
+                "era_temp_K": [temp_k],
+            }
+        )
+        result = convert_si(df)
+        assert result["fdm_cas_ms"][0] == pytest.approx(ias_ms, rel=1e-9)
+
+    def test_convert_fdm_cas_ms_isa_fallback_when_temp_missing(self) -> None:
+        """When era_temp_K is absent, falls back to ISA-based tas_to_cas (back-compat)."""
+        from node_fdm_data.physics.speed import tas_to_cas
+
+        df = pl.DataFrame(
+            {
+                "raw_alt_m": [10000.0],
+                "era_tas_ms": [240.0],
+            }
+        )
+        result = convert_si(df)
+        expected = float(tas_to_cas(240.0, 10000.0))
+        assert result["fdm_cas_ms"][0] == pytest.approx(expected, rel=1e-9)
 
 
 class TestComputeDerivatives:
