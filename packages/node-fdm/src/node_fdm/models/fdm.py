@@ -127,6 +127,8 @@ class FlightDynamicsModel(nn.Module):
                 if col in self.spec.dx_bounds:
                     cap_dict[col] = self.spec.dx_bounds[col][1]
 
+        output_init_biases: dict[str, float] = layer_spec.config.get("output_init_biases", {})
+
         return layer_cls(
             input_cols=layer_spec.input_cols,
             input_stats=(input_mean, input_std),
@@ -139,6 +141,7 @@ class FlightDynamicsModel(nn.Module):
             denormalize_modes=denormalize_modes if denormalize_modes else None,
             scale_dict=scale_dict if scale_dict else None,
             cap_dict=cap_dict if cap_dict else None,
+            output_init_biases=output_init_biases if output_init_biases else None,
         )
 
     def reset_history(self) -> None:

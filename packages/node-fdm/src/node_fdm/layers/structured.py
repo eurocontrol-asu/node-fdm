@@ -35,6 +35,7 @@ class StructuredLayer(nn.Module):
         denormalize_modes: dict[str, str | None] | None = None,
         scale_dict: dict[str, float] | None = None,
         cap_dict: dict[str, float] | None = None,
+        output_init_biases: dict[str, float] | None = None,
     ) -> None:
         """Initialize structured layer.
 
@@ -63,6 +64,7 @@ class StructuredLayer(nn.Module):
         self.backbone = Backbone(input_dim, hidden_dim=backbone_dim, num_layers=backbone_depth)
 
         _activations = activations or {}
+        _init_biases = output_init_biases or {}
 
         def head_factory(col: str) -> Head:
             """Build a Head module for the given output column."""
@@ -72,6 +74,7 @@ class StructuredLayer(nn.Module):
                 output_dim=1,
                 num_layers=head_depth,
                 last_activation=_activations.get(col),
+                output_init_bias=_init_biases.get(col, 0.0),
             )
 
         self.heads = MultiLayerDict(self.output_cols, head_factory)

@@ -138,3 +138,48 @@ class TestPhysicsLayerEdgeCases:
         assert torch.isfinite(out["fdm_d_gamma_rads"]).all()
         # d_tas = -g sin(gamma) < 0 in steep climb
         assert (out["fdm_d_tas_ms2"] < 0).all()
+
+
+class TestPhysicsLayerInitBias:
+    """Init-time equilibrium: NN heads must seed n_z=1, a_spec=0 to avoid
+    a constant non-zero d_gamma on a freshly-initialized model.
+    """
+
+    def test_fresh_adsb_model_is_at_cruise_equilibrium(self) -> None:
+        """A freshly-built NODE_ADSB_V1 produces d_tas≈0 and d_gamma≈0 at gamma=0."""
+        from node_fdm.architectures.adsb import NODE_ADSB_V1
+        from node_fdm.models.fdm import FlightDynamicsModel
+
+        all_cols = (
+            NODE_ADSB_V1.x_cols
+            + NODE_ADSB_V1.u_cols
+            + NODE_ADSB_V1.e0_cols
+            + NODE_ADSB_V1.e1_cols
+            + [c for _, c in NODE_ADSB_V1.dx_cols]
+            + ["fdm_a_spec_ms2", "fdm_n_z"]
+        )
+        stats = {c: {"mean": 0.0, "std": 1.0, "max": 1.0, "p999": 1.0} for c in all_cols}
+        model = FlightDynamicsModel(spec=NODE_ADSB_V1, stats_dict=stats, model_params=(2, 1, 32))
+
+        batch = 8
+        n_x = len(NODE_ADSB_V1.x_cols)
+        n_u = len(NODE_ADSB_V1.u_cols)
+        n_e = len(NODE_ADSB_V1.e0_cols)
+        x = torch.zeros(batch, n_x)
+        x[:, NODE_ADSB_V1.x_cols.index("raw_alt_m")] = 5000.0
+        x[:, NODE_ADSB_V1.x_cols.index("era_tas_ms")] = 200.0
+        u = torch.zeros(batch, n_u)
+        e = torch.zeros(batch, n_e)
+
+        with torch.no_grad():
+            dx = model(x, u, e)
+
+        # dx_cols ordered as DX_COLS: (d_alt, d_gamma, d_tas)
+        dx_names = [c for _, c in NODE_ADSB_V1.dx_cols]
+        i_d_gamma = dx_names.index("fdm_d_gamma_rads")
+        i_d_tas = dx_names.index("fdm_d_tas_ms2")
+        # At cruise (gamma=0, n_z init=1, a_spec init=0):
+        # d_gamma = (g/V)·(1 - 1) = 0
+        # d_tas   = 0 - g·sin(0) = 0
+        assert torch.allclose(dx[:, i_d_gamma], torch.zeros(batch), atol=1e-6)
+        assert torch.allclose(dx[:, i_d_tas], torch.zeros(batch), atol=1e-6)

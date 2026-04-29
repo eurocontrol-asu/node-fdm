@@ -68,7 +68,10 @@ NODE_ADSB_V1 = ArchitectureSpec(
             + ["fdm_gamma_target_known", "fdm_tas_target_known"],
             output_cols=["fdm_a_spec_ms2", "fdm_n_z"],
             trainable=True,
-            config={},
+            config={
+                "output_init_biases": {"fdm_n_z": 1.0},
+                "denormalize_modes": {"fdm_a_spec_ms2": None, "fdm_n_z": None},
+            },
         ),
         LayerSpec(
             name="physics",

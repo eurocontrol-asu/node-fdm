@@ -95,13 +95,23 @@ class Head(MLPBlock):
         output_dim: int = 1,
         num_layers: int = 1,
         last_activation: type[nn.Module] | None = None,
+        output_init_bias: float = 0.0,
     ) -> None:
-        """Initialize head with optional activation.
+        """Initialize head with optional activation and bias offset.
 
-        The last linear layer is zero-initialized so that a fresh
-        Neural ODE predicts dx ≈ 0 (identity dynamics).  This is
-        critical for stable training: large initial derivatives cause
-        the ODE to diverge within the first integration window.
+        The last linear layer's weights are zero-initialized so a fresh
+        Neural ODE predicts a constant equal to ``output_init_bias`` for
+        every batch element.  Default ``0.0`` reproduces the historical
+        identity-dynamics behavior (dx ≈ 0).  Override per output when
+        the downstream pipeline expects a non-zero physical equilibrium
+        (e.g. ``n_z = 1`` for level cruise: gravity is exactly balanced
+        by lift).  Without this, the analytical gravity term injected
+        downstream creates a constant non-zero derivative at init and
+        the ODE diverges within the first integration window.
+
+        Args:
+            output_init_bias: Constant value emitted by every head at
+                init time. Stored on the final linear layer's bias.
         """
         super().__init__(
             input_dim,
@@ -110,11 +120,10 @@ class Head(MLPBlock):
             num_layers=num_layers,
             last_activation=last_activation,
         )
-        # Zero-init last linear so fresh model predicts dx ≈ 0
         last_linear = self.net[-1]
         if isinstance(last_linear, nn.Linear):
             nn.init.zeros_(last_linear.weight)
-            nn.init.zeros_(last_linear.bias)
+            nn.init.constant_(last_linear.bias, output_init_bias)
 
 
 class GammaDefaultNet(nn.Module):
