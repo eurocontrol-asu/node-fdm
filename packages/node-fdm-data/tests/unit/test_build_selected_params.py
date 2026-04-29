@@ -19,8 +19,8 @@ _KT_TO_MS = 0.5144444444
 _MS_TO_KT = 1.0 / _KT_TO_MS
 
 
-def _config(**overrides: dict) -> dict:
-    cfg: dict = {
+def _config(**overrides: dict[str, object]) -> dict[str, object]:
+    cfg: dict[str, object] = {
         "mach": {"min_length": 30, "tolerance": 0.005},
         "cas": {"min_length": 30, "tolerance": 2.0},
         "vz": {"min_length": 10, "tolerance": 50.0},
@@ -42,14 +42,14 @@ def _flight(  # noqa: PLR0913
     n = alt_ft.size
     if vz is None:
         vz = np.zeros(n)
-    cols: dict = {
-        "era_mach": mach,
-        "bds_ias_kt": cas,
+    cols: dict[str, np.ndarray] = {
+        "bds_mach_clean": mach,
+        "bds_ias_kt_clean": cas,
         "raw_alt_ft": alt_ft,
         "raw_vz_ftmin": vz,
     }
     if tas_kt is not None:
-        cols["era_tas_kt"] = tas_kt
+        cols["bds_tas_from_cas_kt"] = tas_kt
     if era_temp_K is not None:
         cols["era_temp_K"] = era_temp_K
     return pl.DataFrame(cols)
@@ -202,7 +202,7 @@ class TestEraTemperature:
     """AC4: Use era_temp_K when present, fall back to ISA otherwise."""
 
     def test_uses_era_temp_when_present(self):
-        from node_fdm_data.physics.speed import isa_temperature
+        from node_fdm_data.physics.isa import isa_temperature
 
         alt = _three_phase_alt(100, 100, 100)
         alt_m = alt * _FT_TO_M
@@ -372,8 +372,8 @@ class TestEmptyDataFrame:
     def test_empty_dataframe(self):
         df = pl.DataFrame(
             {
-                "era_mach": pl.Series([], dtype=pl.Float64),
-                "bds_ias_kt": pl.Series([], dtype=pl.Float64),
+                "bds_mach_clean": pl.Series([], dtype=pl.Float64),
+                "bds_ias_kt_clean": pl.Series([], dtype=pl.Float64),
                 "raw_alt_ft": pl.Series([], dtype=pl.Float64),
                 "raw_vz_ftmin": pl.Series([], dtype=pl.Float64),
             }

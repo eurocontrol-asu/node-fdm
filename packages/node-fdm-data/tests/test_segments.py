@@ -205,8 +205,8 @@ class TestBuildSelectedParams:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "era_mach": mach + rng.normal(0, 0.0001, n),
-                "CAS": cas + rng.normal(0, 0.1, n),
+                "bds_mach_clean": mach + rng.normal(0, 0.0001, n),
+                "bds_ias_kt_clean": cas + rng.normal(0, 0.1, n),
                 "raw_vz_ftmin": vz + rng.normal(0, 1, n),
                 "fdm_gamma_rad": gamma,
                 "bds_mcp_sel_alt_ft": np.where(alt > 15000, 35000.0, np.nan),
@@ -267,7 +267,7 @@ class TestBuildSelectedParams:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(50, 30000.0),
-                "era_mach": np.full(50, 0.78),
+                "bds_mach_clean": np.full(50, 0.78),
             }
         )
         config = {"mach": {"tol": 0.001, "min_len": 10, "alt_threshold": 15000, "use_alt": True}}
@@ -276,8 +276,7 @@ class TestBuildSelectedParams:
         assert "fdm_cas_sel_kt" not in result.columns  # CAS column not provided
 
     def test_mach_and_mach_sel_coexist(self) -> None:
-        """Both era_mach and fdm_mach_sel exist after full pipeline."""
-        from node_fdm_data.preprocessing.opensky import flight_processing
+        """Both bds_mach_clean and fdm_mach_sel exist after segments stage."""
 
         n = 200
         rng = np.random.default_rng(42)
@@ -297,22 +296,17 @@ class TestBuildSelectedParams:
 
         df = pl.DataFrame(
             {
-                "altitude": alt,
-                "Mach": mach_vals,
-                "TAS": np.full(n, 450.0),
-                "groundspeed": np.full(n, 430.0),
-                "vertical_rate": np.full(n, 0.0),
-                "IAS": np.full(n, 280.0),
-                "selected_mcp": np.full(n, 36000.0),
+                "raw_alt_ft": alt,
+                "bds_mach_clean": mach_vals,
+                "bds_tas_from_cas_kt": np.full(n, 450.0),
+                "raw_gs_kt": np.full(n, 430.0),
+                "raw_vz_ftmin": np.full(n, 0.0),
+                "bds_ias_kt_clean": np.full(n, 280.0),
+                "bds_mcp_sel_alt_ft": np.full(n, 36000.0),
             }
         )
 
-        # Step 1: flight_processing renames Mach → era_mach
-        df = flight_processing(df.lazy()).collect()
-        assert "era_mach" in df.columns
-        assert "fdm_mach_sel" not in df.columns  # not yet created
-
-        # Step 2: build_selected_params creates fdm_mach_sel from era_mach
+        # build_selected_params creates fdm_mach_sel from bds_mach_clean
         config = {
             "mach": {
                 "tol": 0.001,
@@ -334,11 +328,11 @@ class TestBuildSelectedParams:
         df = build_selected_params(df, config)
 
         # Both columns exist
-        assert "era_mach" in df.columns, "continuous era_mach column missing"
+        assert "bds_mach_clean" in df.columns, "continuous era_mach column missing"
         assert "fdm_mach_sel" in df.columns, "segment-detected fdm_mach_sel column missing"
 
         # era_mach is continuous (no NaN), fdm_mach_sel has NaN outside segments
-        assert df["era_mach"].null_count() == 0
+        assert df["bds_mach_clean"].null_count() == 0
         mach_sel_nans = df["fdm_mach_sel"].is_nan().sum()
         assert mach_sel_nans > 0, "fdm_mach_sel should have NaN gaps outside segments"
 
@@ -367,8 +361,8 @@ class TestBuildSelectedParamsV3:
         return pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "era_mach": mach + rng.normal(0, 0.0001, n),
-                "bds_ias_kt": np.full(n, 280.0) + rng.normal(0, 0.1, n),
+                "bds_mach_clean": mach + rng.normal(0, 0.0001, n),
+                "bds_ias_kt_clean": np.full(n, 280.0) + rng.normal(0, 0.1, n),
                 "raw_vz_ftmin": np.concatenate(
                     [
                         np.full(n // 3, 2000.0),
@@ -457,7 +451,7 @@ class TestBuildSelectedParamsV3:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": mach,
+                "bds_mach_clean": mach,
             }
         )
         config = {
@@ -479,7 +473,7 @@ class TestBuildSelectedParamsV3:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "era_mach": np.full(n, 0.78),
+                "bds_mach_clean": np.full(n, 0.78),
                 "bds_mcp_sel_alt_ft": np.where(
                     (np.arange(n) > 20) & (np.arange(n) < 80), 36000.0, np.nan
                 ),
@@ -501,7 +495,7 @@ class TestBuildSelectedParamsV3:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": np.full(n, 0.78),
+                "bds_mach_clean": np.full(n, 0.78),
                 "bds_fms_sel_alt_ft": np.where(
                     (np.arange(n) > 10) & (np.arange(n) < 90), 37000.0, np.nan
                 ),
@@ -526,7 +520,7 @@ class TestBuildSelectedParamsV3:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": mach,
+                "bds_mach_clean": mach,
             }
         )
         # With very high tolerance, even the ramp should be "constant"
@@ -549,7 +543,7 @@ class TestBuildSelectedParamsV3:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": np.full(n, np.nan),
+                "bds_mach_clean": np.full(n, np.nan),
             }
         )
         config = {"mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True}}
@@ -566,7 +560,7 @@ class TestBuildSelectedParamsV3:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": mach,
+                "bds_mach_clean": mach,
             }
         )
         config = {"mach": {"tol": 0.001, "min_len": 10, "alt_threshold": 15000, "use_alt": True}}
@@ -584,7 +578,7 @@ class TestBuildSelectedParamsV3:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": np.full(n, 0.78),
+                "bds_mach_clean": np.full(n, 0.78),
                 "bds_mcp_sel_alt_ft": np.full(n, np.nan),
                 "bds_fms_sel_alt_ft": np.full(n, np.nan),
             }
@@ -629,8 +623,8 @@ class TestTasSelected:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "era_mach": mach,
-                "era_tas_kt": tas,
+                "bds_mach_clean": mach,
+                "bds_tas_from_cas_kt": tas,
             }
         )
         config: dict[str, Any] = {
@@ -665,8 +659,8 @@ class TestTasSelected:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "era_mach": mach,
-                "era_tas_kt": tas,
+                "bds_mach_clean": mach,
+                "bds_tas_from_cas_kt": tas,
             }
         )
         config: dict[str, Any] = {
@@ -677,9 +671,9 @@ class TestTasSelected:
         assert "fdm_tas_sel_kt" in result.columns
         # Inside the Mach plateau (rows 50-149), TAS should be NaN (masked)
         mach_zone = result["fdm_tas_sel_kt"][50:150]
-        assert mach_zone.is_nan().sum() == len(mach_zone), (
-            "TAS segments must not be detected inside Mach-constant zones"
-        )
+        assert mach_zone.is_nan().sum() == len(
+            mach_zone
+        ), "TAS segments must not be detected inside Mach-constant zones"
 
     def test_tas_sel_masks_cas_zones(self) -> None:
         """TAS segments are NOT detected inside CAS-constant regions."""
@@ -699,9 +693,9 @@ class TestTasSelected:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "era_mach": mach,
-                "bds_ias_kt": cas,
-                "era_tas_kt": tas,
+                "bds_mach_clean": mach,
+                "bds_ias_kt_clean": cas,
+                "bds_tas_from_cas_kt": tas,
             }
         )
         config: dict[str, Any] = {
@@ -719,9 +713,9 @@ class TestTasSelected:
         assert "fdm_tas_sel_kt" in result.columns
         # Inside the CAS plateau (rows 0-99), TAS should be NaN (masked)
         cas_zone = result["fdm_tas_sel_kt"][:100]
-        assert cas_zone.is_nan().sum() == len(cas_zone), (
-            "TAS segments must not be detected inside CAS-constant zones"
-        )
+        assert cas_zone.is_nan().sum() == len(
+            cas_zone
+        ), "TAS segments must not be detected inside CAS-constant zones"
 
     def test_tas_sel_no_config(self) -> None:
         """Without 'tas' key in config, fdm_tas_sel_kt is not created (backward compat)."""
@@ -729,8 +723,8 @@ class TestTasSelected:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": np.full(n, 0.78),
-                "era_tas_kt": np.full(n, 460.0),
+                "bds_mach_clean": np.full(n, 0.78),
+                "bds_tas_from_cas_kt": np.full(n, 460.0),
             }
         )
         config: dict[str, Any] = {
@@ -745,8 +739,8 @@ class TestTasSelected:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": np.full(n, 0.78),
-                "era_tas_kt": np.full(n, np.nan),
+                "bds_mach_clean": np.full(n, 0.78),
+                "bds_tas_from_cas_kt": np.full(n, np.nan),
             }
         )
         config: dict[str, Any] = {
@@ -763,8 +757,8 @@ class TestTasSelected:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": np.full(n, 0.78),
-                "era_tas_kt": np.full(n, 460.0),
+                "bds_mach_clean": np.full(n, 0.78),
+                "bds_tas_from_cas_kt": np.full(n, 460.0),
             }
         )
         config: dict[str, Any] = {
@@ -781,7 +775,7 @@ class TestTasSelected:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(n, 35000.0),
-                "era_mach": np.full(n, 0.78),
+                "bds_mach_clean": np.full(n, 0.78),
             }
         )
         config: dict[str, Any] = {
@@ -803,9 +797,8 @@ class TestTargetColumns:
         return pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "era_mach": mach,
-                "era_cas_kt": cas,
-                "bds_ias_kt": cas + np.random.default_rng(42).normal(0, 0.5, n),
+                "bds_mach_clean": mach,
+                "bds_ias_kt_clean": cas + np.random.default_rng(42).normal(0, 0.5, n),
             }
         )
 
@@ -874,5 +867,5 @@ class TestTargetColumns:
         }
         result = build_selected_params(df, config)
         last_target = result["fdm_cas_target_kt"][-1]
-        last_actual = result["era_cas_kt"][-1]
+        last_actual = result["bds_ias_kt_clean"][-1]
         assert abs(last_target - last_actual) < 1e-6

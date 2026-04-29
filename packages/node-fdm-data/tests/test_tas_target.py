@@ -56,7 +56,7 @@ def _make_flight(  # noqa: PLR0913
                 np.linspace(mach_cruise, 0.3, third),
             ]
         )
-        cols["era_mach"] = mach
+        cols["bds_mach_clean"] = mach
 
     if include_cas:
         cas = np.concatenate(
@@ -66,7 +66,7 @@ def _make_flight(  # noqa: PLR0913
                 np.full(third, cas_descent) + rng.normal(0, 0.1, third),
             ]
         )
-        cols["bds_ias_kt"] = cas
+        cols["bds_ias_kt_clean"] = cas
 
     if include_tas:
         tas = np.concatenate(
@@ -76,7 +76,7 @@ def _make_flight(  # noqa: PLR0913
                 np.linspace(tas_cruise_kt, 200, third),
             ]
         )
-        cols["era_tas_kt"] = tas
+        cols["bds_tas_from_cas_kt"] = tas
 
     return pl.DataFrame(cols)
 
@@ -139,9 +139,9 @@ class TestTasTargetNoNan:
         mach_sel = result["fdm_mach_sel"].to_numpy()
         cas_sel = result["fdm_cas_sel_kt"].to_numpy()
         coverage = ~np.isnan(mach_sel) | ~np.isnan(cas_sel)
-        assert np.all(~np.isnan(target[coverage])), (
-            "fdm_tas_target_kt must be non-NaN wherever a Mach or CAS segment exists"
-        )
+        assert np.all(
+            ~np.isnan(target[coverage])
+        ), "fdm_tas_target_kt must be non-NaN wherever a Mach or CAS segment exists"
 
     def test_tas_target_known_mask_matches_target(self) -> None:
         df = _make_flight()
@@ -244,7 +244,7 @@ class TestNoSegmentsAtAll:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.linspace(0, 10_000, n),
-                "era_tas_kt": rng.uniform(200, 400, n),
+                "bds_tas_from_cas_kt": rng.uniform(200, 400, n),
             }
         )
         cfg: dict[str, dict[str, object]] = {}

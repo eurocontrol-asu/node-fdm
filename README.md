@@ -88,27 +88,34 @@ fdm aircraft-list --config config.yaml    # List aircraft types in scope
 fdm download --config config.yaml         # Download ADS-B parquet from OpenSky
 
 # 2. Preprocessing
-fdm preprocess --config config.yaml       # Clean, filter, unit-convert raw data
+fdm preprocess --config config.yaml       # Resample, unit-convert, attach raw_* columns
 fdm identify --config config.yaml         # Segment flights and attach metadata
-
-# 3. Quality flagging
 fdm flag --config config.yaml             # Add fdm_flag_* validity columns (no rows deleted)
 
-# 4. Processing (ERA5, segments, lateral)
-fdm process --arch opensky --config config.yaml  # Weather + derived columns + lateral augmentation
+# 3. Weather + speed cleaning
+fdm enrich --config config.yaml           # Join ERA5 (era_temp_K, era_mach, era_cas_kt, era_tas_kt, ...)
+fdm clean-speeds --config config.yaml     # Hampel + V-shape + zigzag + on-ground mask on BDS;
+                                          # produces bds_mach_clean, bds_ias_kt_clean, bds_tas_kt_clean
+                                          # and the derived bds_tas_from_cas_kt (CAS_clean → TAS via ERA T)
 
-# 4b. Split dataset by ICAO group
-fdm split --config config.yaml                   # Assign train/val/test split column (meta_split)
+# 4. Derived physics + segments + SI
+fdm derive --config config.yaml           # Gamma, lateral, distance, drift, ... from raw + ERA + clean-speeds
+fdm segments --config config.yaml         # FMS plateau detection on bds_mach_clean / bds_ias_kt_clean /
+                                          # bds_tas_from_cas_kt → fdm_*_sel + fdm_tas_target_kt
+fdm convert --config config.yaml          # Convert to SI units + finite-difference derivatives
 
-# 5. Training
+# 5. Split dataset by ICAO group
+fdm split --config config.yaml            # Assign train/val/test split column (meta_split)
+
+# 6. Training
 fdm train --config config.yaml            # Train Neural ODE model
 
-# 6. Evaluation
+# 7. Evaluation
 fdm predict --config config.yaml          # Run model predictions
 fdm predict-bada --config config.yaml     # BADA 4.2 physical baseline
 fdm evaluate --config config.yaml         # Compute MAE/MAPE per flight phase
 
-# 7. Visualization
+# 8. Visualization
 fdm visualize --config config.yaml        # Overlay plots (GT vs Model vs BADA)
 fdm dataset-stats --config config.yaml    # Coverage statistics
 fdm plot-performance --config config.yaml # Performance comparison plots
