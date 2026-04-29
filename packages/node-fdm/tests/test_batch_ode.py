@@ -69,13 +69,18 @@ class TestBatchNeuralODE:
         out = ode(torch.tensor(0.0), x)
         assert out.shape == (batch, 1)
 
-    def test_interpolation_midpoint(self) -> None:
-        """Mid-point interpolation produces blended u input."""
+    def test_u_zero_order_hold_midpoint(self) -> None:
+        """F3: ``u`` is held constant at the left grid point (ZOH).
+
+        Linear interpolation of commanded inputs turned a hard target
+        step into a multi-second ramp at inference; ``u`` must now match
+        the discrete training semantics. ``e`` keeps linear interp.
+        """
         batch, n_e = 1, 1
 
         class AddUModel(torch.nn.Module):
             def forward(self, x: torch.Tensor, u: torch.Tensor, e: torch.Tensor) -> torch.Tensor:
-                return u  # return interpolated u directly
+                return u  # return u directly
 
         u_seq = torch.tensor([[[0.0], [10.0]]])  # (1, 2, 1)
         e_seq = torch.zeros(batch, 2, n_e)
@@ -83,7 +88,24 @@ class TestBatchNeuralODE:
 
         ode = BatchNeuralODE(AddUModel(), u_seq, e_seq, t_grid)
         x = torch.zeros(batch, 1)
-        # At t=0.5, u should be 5.0 (linear interp)
+        # At t=0.5, u should equal u_seq[:, idx0=0, :] = 0.0 (zero-order-hold).
+        out = ode(torch.tensor(0.5), x)
+        assert torch.isclose(out, torch.tensor([[0.0]]), atol=1e-5).all()
+
+    def test_e_linear_interpolation_midpoint(self) -> None:
+        """Environment ``e`` keeps linear interpolation (continuous physics)."""
+        batch, n_u = 1, 1
+
+        class AddEModel(torch.nn.Module):
+            def forward(self, x: torch.Tensor, u: torch.Tensor, e: torch.Tensor) -> torch.Tensor:
+                return e  # return e directly
+
+        u_seq = torch.zeros(batch, 2, n_u)
+        e_seq = torch.tensor([[[0.0], [10.0]]])  # (1, 2, 1)
+        t_grid = torch.tensor([0.0, 1.0])
+
+        ode = BatchNeuralODE(AddEModel(), u_seq, e_seq, t_grid)
+        x = torch.zeros(batch, 1)
         out = ode(torch.tensor(0.5), x)
         assert torch.isclose(out, torch.tensor([[5.0]]), atol=1e-5).all()
 

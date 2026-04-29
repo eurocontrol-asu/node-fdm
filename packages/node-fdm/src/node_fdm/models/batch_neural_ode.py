@@ -15,8 +15,16 @@ __all__ = [
 class BatchNeuralODE(nn.Module):
     """Wrap a neural ODE model with batched control and environment inputs.
 
-    Interpolates ``u_seq`` and ``e_seq`` at arbitrary time ``t`` using
-    linear interpolation on the provided ``t_grid``.
+    Holds ``u_seq`` constant between grid points (zero-order-hold) and
+    interpolates ``e_seq`` linearly on the provided ``t_grid``.
+
+    Rationale (F3): training feeds ``u_seq`` as discrete commanded values
+    sampled at ``t_grid``; linear interpolation of step changes turns a
+    hard target step into a multi-second ramp at inference, pushing
+    ``tas_diff`` far out of training distribution and amplifying the
+    cross-coupling that causes the dive-for-speed bug. ZOH on ``u`` matches
+    the training semantics. ``e_seq`` (environment: wind, temp...) remains
+    physically continuous, so we keep linear interpolation on it.
     """
 
     def __init__(
@@ -46,7 +54,10 @@ class BatchNeuralODE(nn.Module):
         self.dx_bounds = dx_bounds or {}
 
     def forward(self, t: torch.Tensor, x: torch.Tensor) -> torch.Tensor:
-        """Evaluate dynamics at time ``t`` with linear interpolation.
+        """Evaluate dynamics at time ``t``.
+
+        Uses zero-order-hold on ``u_seq`` (left index) and linear
+        interpolation on ``e_seq``.
 
         Args:
             t: Scalar tensor with the evaluation time.
@@ -67,10 +78,11 @@ class BatchNeuralODE(nn.Module):
         t1 = float(self.t_grid[idx1].item())
         alpha = 0.0 if t1 == t0 else (t_val - t0) / (t1 - t0)
 
-        u0, u1 = self.u_seq[:, idx0, :], self.u_seq[:, idx1, :]
         e0, e1 = self.e_seq[:, idx0, :], self.e_seq[:, idx1, :]
 
-        u_t = (1 - alpha) * u0 + alpha * u1
+        # F3: zero-order-hold on commanded inputs (left index) to match
+        # the discrete training semantics; environment stays continuous.
+        u_t = self.u_seq[:, idx0, :]
         e_t = (1 - alpha) * e0 + alpha * e1
 
         result: torch.Tensor = self.model(x, u_t, e_t)
