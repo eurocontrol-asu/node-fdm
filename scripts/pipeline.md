@@ -74,7 +74,25 @@ uv run fdm enrich --config config.yaml
 
 ---
 
-## 7. derive
+## 7. clean-speeds
+
+Nettoie les vitesses BDS (`bds_mach`, `bds_ias_kt`, `bds_tas_kt`) avec :
+frozen-run filter, Hampel (window=50, 3 passes), V-shape detector, zigzag-region
+detector, ERA fill des longs trous Mode-S, post-fill Hampel, interpolation des
+gaps courts, on-ground mask. Produit `bds_mach_clean`, `bds_ias_kt_clean`,
+`bds_tas_kt_clean` et la colonne derivee `bds_tas_from_cas_kt` (CAS_clean → TAS
+via ERA T).
+
+> Necessite ERA5 (etape 6 enrich) pour `era_temp_K` et le ERA fill.
+> Alimente `segments` qui consomme directement les colonnes `*_clean`.
+
+```bash
+uv run fdm clean-speeds --config config.yaml
+```
+
+---
+
+## 8. derive
 
 Calcule les colonnes physiques derivees (`fdm_gamma_rad`, `fdm_long_wind_ms`, distances aeroports, etc.).
 
@@ -84,9 +102,11 @@ uv run fdm derive --config config.yaml
 
 ---
 
-## 8. segments
+## 9. segments
 
-Detecte les segments constants et construit les colonnes `fdm_*_sel` (mach, cas, vz, alt, gamma).
+Detecte les segments constants sur `bds_mach_clean`, `bds_ias_kt_clean`,
+`bds_tas_from_cas_kt` et construit les colonnes `fdm_*_sel` (mach, cas, vz, alt, gamma)
+ainsi que `fdm_tas_target_kt` (cible TAS unifiee Mach→TAS / CAS→TAS / TAS_sel).
 
 ```bash
 uv run fdm segments --config config.yaml
@@ -94,7 +114,7 @@ uv run fdm segments --config config.yaml
 
 ---
 
-## 9. convert
+## 10. convert
 
 Convertit en unites SI et calcule les derivees temporelles (`fdm_d_*`).
 
@@ -104,7 +124,7 @@ uv run fdm convert --config config.yaml
 
 ---
 
-## 10. split
+## 11. split
 
 Assigne le split train/val/test par hash icao24.
 
