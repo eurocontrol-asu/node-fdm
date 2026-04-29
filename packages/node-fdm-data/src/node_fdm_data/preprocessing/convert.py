@@ -31,12 +31,18 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # SI conversion table: (source_col, conversion_fn, target_col)
 # Matches pipeline v3 column names from étapes 0-5.
+#
+# The TAS state of the model (``era_tas_ms``) and the IAS surrogate
+# (``bds_ias_ms``) are sourced from the cleaned BDS columns produced by the
+# ``clean-speeds`` stage rather than from raw ``era_tas_kt`` / ``bds_ias_kt``.
+# Output column names are preserved for schema compatibility (architectures
+# still reference ``era_tas_ms`` / ``bds_ias_ms``).
 # ---------------------------------------------------------------------------
 SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
     ("raw_alt_ft", ft_to_m, "raw_alt_m"),
     ("bds_mcp_sel_alt_ft", ft_to_m, "bds_mcp_sel_alt_m"),
-    ("era_tas_kt", kt_to_ms, "era_tas_ms"),
-    ("bds_ias_kt", kt_to_ms, "bds_ias_ms"),
+    ("bds_tas_from_cas_kt", kt_to_ms, "era_tas_ms"),
+    ("bds_ias_kt_clean", kt_to_ms, "bds_ias_ms"),
     ("raw_gs_kt", kt_to_ms, "raw_gs_ms"),
     ("fdm_long_wind_kt", kt_to_ms, "fdm_long_wind_ms"),
     ("raw_vz_ftmin", ftmin_to_ms, "raw_vz_ms"),
