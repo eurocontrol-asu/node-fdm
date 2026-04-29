@@ -7,6 +7,7 @@ prediction, and produces a 3-column figure:
 * Column 2 (TAS): TAS + target overlay, then tas_diff below.
 * Column 3 (FPA): flight-path angle + gamma_target + GammaDefaultNet output,
   then gamma_diff below.
+* Row 3: Mach vs mach_sel, CAS vs cas_target, VZ vs vz_sel (true values only).
 
 Output: ``data/figures/inference_check.png``.
 """
@@ -129,6 +130,27 @@ n_pred = len(gamma_pred)
 pct_known = gamma_known.mean() * 100
 print(f"Gamma target: {pct_known:.0f}% known, {100 - pct_known:.0f}% unknown (gamma_diff=0)")
 
+# --- Extract Mach / CAS / VZ (true + targets) from the raw flight DataFrame ---
+KT_TO_MS = 0.514444
+FTMIN_TO_MS = 0.00508
+
+extra_cols = [
+    "era_mach",
+    "fdm_mach_sel",
+    "fdm_cas_ms",
+    "fdm_cas_target_kt",
+    "raw_vz_ms",
+    "fdm_vz_sel_ms",
+]
+extra = flight_df.select(extra_cols).to_numpy().astype(np.float32)[finite_mask]
+
+mach_true = extra[:, 0]
+mach_sel = extra[:, 1]  # NaN outside detected segments
+cas_true = extra[:, 2]
+cas_target = extra[:, 3] * KT_TO_MS  # kt → m/s
+vz_true = extra[:, 4]
+vz_sel = extra[:, 5]  # NaN outside detected segments
+
 
 # --- Helper ---
 def _set_ylim(ax, true_vals):
@@ -140,8 +162,8 @@ def _set_ylim(ax, true_vals):
     ax.set_ylim(ymin - margin, ymax + margin)
 
 
-# --- Figure: 3 columns × 2 rows ---
-fig, axes = plt.subplots(2, 3, figsize=(20, 8), sharex=True)
+# --- Figure: 3 columns × 3 rows ---
+fig, axes = plt.subplots(3, 3, figsize=(20, 12), sharex=True)
 
 # ── Col 1, Row 0: Altitude + target ──
 ax = axes[0, 0]
@@ -162,7 +184,6 @@ ax.plot(time_pred, diff_alt_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.axhline(0, color="gray", ls=":", lw=0.8)
 _set_ylim(ax, diff_alt_true)
 ax.set_ylabel("Alt_target − Alt [m]")
-ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
@@ -185,7 +206,6 @@ ax.plot(time_pred, diff_tas_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.axhline(0, color="gray", ls=":", lw=0.8)
 _set_ylim(ax, diff_tas_true)
 ax.set_ylabel("TAS_target − TAS [m/s]")
-ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
@@ -218,6 +238,34 @@ ax.plot(time_pred, np.degrees(diff_gamma_pred), "r--", lw=1.2, label="Predicted"
 ax.axhline(0, color="gray", ls=":", lw=0.8)
 _set_ylim(ax, np.degrees(diff_gamma_true))
 ax.set_ylabel("γ_target − γ [°]")
+ax.legend(loc="best", fontsize=8)
+ax.grid(True, alpha=0.3)
+
+# ── Row 2: Mach / CAS / VZ — true vs target (no prediction) ──
+ax = axes[2, 0]
+ax.plot(time_true, mach_true, "k-", lw=1.5, label="True (era_mach)", alpha=0.8)
+ax.plot(time_true, mach_sel, "b-", lw=2.0, label="Mach target (sel)", alpha=0.6)
+_set_ylim(ax, mach_true)
+ax.set_ylabel("Mach [-]")
+ax.set_xlabel("Time [min]")
+ax.legend(loc="best", fontsize=8)
+ax.grid(True, alpha=0.3)
+
+ax = axes[2, 1]
+ax.plot(time_true, cas_true, "k-", lw=1.5, label="True (fdm_cas_ms)", alpha=0.8)
+ax.plot(time_true, cas_target, "b-", lw=2.0, label="CAS target", alpha=0.4)
+_set_ylim(ax, cas_true)
+ax.set_ylabel("CAS [m/s]")
+ax.set_xlabel("Time [min]")
+ax.legend(loc="best", fontsize=8)
+ax.grid(True, alpha=0.3)
+
+ax = axes[2, 2]
+ax.plot(time_true, vz_true, "k-", lw=1.5, label="True (raw_vz_ms)", alpha=0.8)
+ax.plot(time_true, vz_sel, "b-", lw=2.0, label="VZ target (sel)", alpha=0.6)
+ax.axhline(0, color="gray", ls=":", lw=0.8)
+_set_ylim(ax, vz_true)
+ax.set_ylabel("VZ [m/s]")
 ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
