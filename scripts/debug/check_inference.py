@@ -18,7 +18,7 @@ from pathlib import Path
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
-import torch
+
 from node_fdm.predictor import NodeFDMPredictor
 from node_fdm_pipeline.resolver import resolve_architecture
 
@@ -91,18 +91,6 @@ gamma_known = gamma_known[finite_mask]
 
 x0 = x_arr[0]
 
-# --- Load GammaDefaultNet from trajectory checkpoint ---
-traj_layer = predictor.model.layers_dict["trajectory"]
-gamma_net = traj_layer.gamma_default_net
-
-traj_ckpt_path = model_path / "trajectory.pt"
-if traj_ckpt_path.exists():
-    traj_ckpt = torch.load(traj_ckpt_path, weights_only=True, map_location="cpu")
-    traj_layer.load_state_dict(traj_ckpt["layer_state"])
-    print("Loaded GammaDefaultNet weights from trajectory.pt")
-else:
-    print("No trajectory.pt found, using initial (zero-init) GammaDefaultNet")
-
 # --- Predict ---
 predictions = predictor.predict_flight(x0, u_arr, e_arr)
 print(f"Prediction length: {len(list(predictions.values())[0])} steps")
@@ -131,35 +119,15 @@ gamma_target_idx = info.u_cols.index("fdm_gamma_target_rad")
 
 alt_target = u_arr[:, alt_target_idx]
 tas_target = u_arr[:, tas_target_idx]
-# Compute per-timestep gamma_default from the net on TRUE trajectory
+# gamma_diff = known * (target - gamma), 0 when unknown
 gamma_target_raw = u_arr[:, gamma_target_idx]
-vz_true = tas_true * np.sin(gamma_true)
-with torch.no_grad():
-    gamma_default_true = gamma_net(
-        torch.from_numpy(alt_true),
-        torch.from_numpy(tas_true),
-        torch.from_numpy(vz_true),
-    ).numpy()
-
-# Effective gamma target: real target where known, net output where unknown
-gamma_target_effective = np.where(gamma_known == 1.0, gamma_target_raw, gamma_default_true)
-# For display: show real target (blue) and net default (cyan) separately
+gamma_target_effective = np.where(gamma_known == 1.0, gamma_target_raw, 0.0)
 gamma_target = np.where(gamma_known == 1.0, gamma_target_raw, np.nan)  # gaps where unknown
-
-# Also compute net output on PREDICTED trajectory (for the diff subplot)
 n_pred = len(gamma_pred)
-vz_pred = tas_pred * np.sin(gamma_pred)
-with torch.no_grad():
-    gamma_default_pred = gamma_net(
-        torch.from_numpy(alt_pred.astype(np.float32)),
-        torch.from_numpy(tas_pred.astype(np.float32)),
-        torch.from_numpy(vz_pred.astype(np.float32)),
-    ).numpy()
 
 # Stats for display
-gd_mean = np.degrees(gamma_default_true.mean())
-gd_std = np.degrees(gamma_default_true.std())
-print(f"GammaDefaultNet output (on true traj): mean={gd_mean:.2f}°, std={gd_std:.2f}°")
+pct_known = gamma_known.mean() * 100
+print(f"Gamma target: {pct_known:.0f}% known, {100 - pct_known:.0f}% unknown (gamma_diff=0)")
 
 
 # --- Helper ---
@@ -226,16 +194,11 @@ ax = axes[0, 2]
 ax.plot(time_true, np.degrees(gamma_true), "k-", lw=0.8, label="True", alpha=0.5)
 ax.plot(time_pred, np.degrees(gamma_pred), "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.plot(time_true, np.degrees(gamma_target), "b-", lw=3.0, label="γ target (known)", alpha=0.9)
-# Show GammaDefaultNet output where unknown (per-timestep, not flat)
-gamma_default_line = np.where(gamma_known == 0.0, gamma_default_true, np.nan)
-ax.plot(
-    time_true,
-    np.degrees(gamma_default_line),
-    "c-",
-    lw=1.5,
-    label=f"γ net default (μ={gd_mean:.1f}°)",
-    alpha=0.7,
-)
+# Show unknown regions as shaded
+unknown_mask = gamma_known == 0.0
+if unknown_mask.any():
+    ax.fill_between(time_true, ax.get_ylim()[0] if ax.get_ylim()[0] != 0 else -10, 10,
+                     where=unknown_mask, alpha=0.08, color="gray", label="γ unknown")
 _set_ylim(ax, np.degrees(gamma_true))
 ax.set_ylabel("FPA [°]")
 ax.legend(loc="best", fontsize=8)
@@ -243,15 +206,13 @@ ax.grid(True, alpha=0.3)
 
 # ── Col 3, Row 1: Gamma diff ──
 ax = axes[1, 2]
-# True diff uses net output on true trajectory where unknown
-diff_gamma_true = gamma_target_effective - gamma_true
-# Predicted diff uses net output on predicted trajectory where unknown
-gamma_target_eff_pred = np.where(
+# Only show diff where gamma target is known; 0 otherwise
+diff_gamma_true = np.where(gamma_known == 1.0, gamma_target_raw - gamma_true, 0.0)
+diff_gamma_pred = np.where(
     gamma_known[:n_pred] == 1.0,
-    gamma_target_raw[:n_pred],
-    gamma_default_pred,
+    gamma_target_raw[:n_pred] - gamma_pred,
+    0.0,
 )
-diff_gamma_pred = gamma_target_eff_pred - gamma_pred
 ax.plot(time_true, np.degrees(diff_gamma_true), "k-", lw=1.5, label="True", alpha=0.8)
 ax.plot(time_pred, np.degrees(diff_gamma_pred), "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.axhline(0, color="gray", ls=":", lw=0.8)

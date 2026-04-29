@@ -3,12 +3,10 @@
 AXM-806: initial gamma_diff support.
 AXM-810: NaN-aware gamma_diff — NaN target yields zero diff, not -gamma.
 
-Validates that:
-- TrajectoryLayer computes gamma difference (target - current) when gamma_sel is in col_map.
-- Output includes fdm_gamma_diff_rad when properly configured.
-- Backward compatibility: no gamma_diff output when gamma_sel not in col_map.
-- NODE_ADSB_V1 spec includes fdm_gamma_diff_rad in StructuredLayer input_cols.
-- NaN-aware: NaN gamma_target → gamma_diff = 0 (not -gamma).
+After removing GammaDefaultNet:
+- known=1: gamma_diff = target - gamma
+- known=0: gamma_diff = 0
+- gamma_known flag is passed through to output
 """
 
 from __future__ import annotations
@@ -99,6 +97,11 @@ class TestAdsbGammaDiffSpec:
         assert "gamma_sel" in trajectory_col_map
         assert trajectory_col_map["gamma_sel"] == "fdm_gamma_target_rad"
 
+    def test_adsb_structured_input_has_gamma_known(self) -> None:
+        """fdm_gamma_target_known flag in StructuredLayer input_cols."""
+        spec = get("node_adsb_v1")
+        assert "fdm_gamma_target_known" in spec.layers[1].input_cols
+
 
 # ---------------------------------------------------------------------------
 # Functional tests
@@ -107,7 +110,7 @@ class TestAdsbGammaDiffSpec:
 
 def _make_stats(cols: list[str]) -> dict[str, dict[str, float]]:
     """Build a dummy stats_dict covering all columns."""
-    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0} for col in cols}
+    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0, "p999": 0.8} for col in cols}
 
 
 class TestAdsbForwardPassWithGammaDiff:
@@ -116,7 +119,8 @@ class TestAdsbForwardPassWithGammaDiff:
     def test_model_forward_new_dims(self) -> None:
         """Build FDM with gamma diff spec, run forward — output shape correct, no error."""
         spec = get("node_adsb_v1")
-        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
+        dx_col_names = [c for _, c in spec.dx_cols]
+        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols + dx_col_names
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)
@@ -130,12 +134,12 @@ class TestAdsbForwardPassWithGammaDiff:
 
 
 # ---------------------------------------------------------------------------
-# Edge cases
+# Known / Unknown gamma_diff tests
 # ---------------------------------------------------------------------------
 
 
-class TestGammaDiffLearnableDefault:
-    """Gamma diff uses known mask + learnable default when target is unknown."""
+class TestGammaDiffKnownUnknown:
+    """gamma_diff = known * (target - gamma); 0 when unknown."""
 
     _col_map: ClassVar[dict[str, str]] = {
         "tas": "era_tas_ms",
@@ -155,21 +159,18 @@ class TestGammaDiffLearnableDefault:
             "fdm_long_wind_ms": torch.tensor([10.0, 5.0]),
         }
 
-    def test_gamma_diff_unknown_uses_default(self) -> None:
-        """known=0 → gamma_diff = gamma_default - gamma (learnable)."""
+    def test_gamma_diff_unknown_is_zero(self) -> None:
+        """known=0 → gamma_diff = 0."""
         layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
-        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.0])  # filled value (was NaN)
-        x["fdm_gamma_target_known"] = torch.tensor([0.0, 0.0])  # unknown
+        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.0])
+        x["fdm_gamma_target_known"] = torch.tensor([0.0, 0.0])
 
         output = layer(x)
 
         assert "fdm_gamma_diff_rad" in output
-        # gamma_default starts at 0.0, gamma = [0.05, -0.03]
-        # diff = 0.0 - gamma = [-0.05, 0.03]
-        expected = torch.tensor([0.0 - 0.05, 0.0 - (-0.03)])
-        assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
+        assert torch.allclose(output["fdm_gamma_diff_rad"], torch.zeros(2), atol=1e-6)
 
     def test_gamma_diff_known_uses_target(self) -> None:
         """known=1 → gamma_diff = target - gamma."""
@@ -186,27 +187,30 @@ class TestGammaDiffLearnableDefault:
         assert torch.allclose(output["fdm_gamma_diff_rad"], expected, atol=1e-6)
 
     def test_gamma_diff_mixed_known_unknown(self) -> None:
-        """Mixed known/unknown: target where known=1, default where known=0."""
+        """Mixed: target where known=1, zero where known=0."""
         layer = TrajectoryLayer(col_map=self._col_map)
 
         x = self._base_inputs()
-        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.02])  # [filled, real]
-        x["fdm_gamma_target_known"] = torch.tensor([0.0, 1.0])  # [unknown, known]
+        x["fdm_gamma_target_rad"] = torch.tensor([0.0, 0.02])
+        x["fdm_gamma_target_known"] = torch.tensor([0.0, 1.0])
 
         output = layer(x)
 
-        # idx 0: unknown → gamma_default(0.0) - 0.05 = -0.05
-        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(-0.05), atol=1e-6)
+        # idx 0: unknown → 0
+        assert torch.isclose(output["fdm_gamma_diff_rad"][0], torch.tensor(0.0), atol=1e-6)
         # idx 1: known → 0.02 - (-0.03) = 0.05
         assert torch.isclose(output["fdm_gamma_diff_rad"][1], torch.tensor(0.05), atol=1e-6)
 
-    def test_gamma_default_is_learnable(self) -> None:
-        """gamma_default_net is an nn.Module with trainable parameters."""
+    def test_no_trainable_parameters(self) -> None:
+        """TrajectoryLayer has no trainable parameters (GammaNet removed)."""
         layer = TrajectoryLayer(col_map=self._col_map)
-        assert hasattr(layer, "gamma_default_net")
-        params = list(layer.gamma_default_net.parameters())
-        assert len(params) > 0
-        assert all(p.requires_grad for p in params)
+        params = list(layer.parameters())
+        assert len(params) == 0
+
+
+# ---------------------------------------------------------------------------
+# Edge cases
+# ---------------------------------------------------------------------------
 
 
 class TestTrajectoryGammaDiffEdgeCases:

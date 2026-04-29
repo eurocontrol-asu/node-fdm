@@ -183,8 +183,8 @@ class TestComputeStatsExtra:
 
         assert stats_original == stats_no_extra
 
-    def test_compute_stats_extra_overrides(self) -> None:
-        """Extra col with same name as existing col overwrites the value."""
+    def test_compute_stats_extra_no_overwrite(self) -> None:
+        """Extra col with same name as existing col keeps original stats."""
         # Use "e1" which already exists in _e_cols
         e1_cols = ["e1"]
         samples = [
@@ -207,8 +207,8 @@ class TestComputeStatsExtra:
             e1_cols=e1_cols,
         )
 
-        # The e1 key should reflect the extra value (99.0), not the original (1.0)
-        assert stats["e1"]["mean"] == pytest.approx(99.0, abs=1e-4)
+        # The e1 key should keep the base stats (1.0), not the e1 value (99.0)
+        assert stats["e1"]["mean"] == pytest.approx(1.0, abs=1e-4)
 
     def test_compute_stats_empty_extra(self) -> None:
         """Empty extra_data tensor — stats dict unchanged."""

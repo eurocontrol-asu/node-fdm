@@ -96,7 +96,13 @@ class Head(MLPBlock):
         num_layers: int = 1,
         last_activation: type[nn.Module] | None = None,
     ) -> None:
-        """Initialize head with optional activation."""
+        """Initialize head with optional activation.
+
+        The last linear layer is zero-initialized so that a fresh
+        Neural ODE predicts dx ≈ 0 (identity dynamics).  This is
+        critical for stable training: large initial derivatives cause
+        the ODE to diverge within the first integration window.
+        """
         super().__init__(
             input_dim,
             hidden_dim,
@@ -104,72 +110,116 @@ class Head(MLPBlock):
             num_layers=num_layers,
             last_activation=last_activation,
         )
+        # Zero-init last linear so fresh model predicts dx ≈ 0
+        last_linear = self.net[-1]
+        if isinstance(last_linear, nn.Linear):
+            nn.init.zeros_(last_linear.weight)
+            nn.init.zeros_(last_linear.bias)
 
 
 class GammaDefaultNet(nn.Module):
     """Context-aware default gamma predictor.
 
-    Takes altitude, TAS, and vertical speed as inputs and produces a
-    bounded scalar correction per batch element.  Output is clamped to
-    ±``max_gamma_rad`` (default 0.18 rad ≈ 10°) via tanh.
+    Takes altitude, TAS, vertical speed, and altitude difference
+    (alt_target - alt) as inputs and produces a bounded default gamma
+    per batch element.  Output is clamped to ±``max_gamma_rad``
+    (default 0.18 rad ≈ 10°) via tanh.
+
+    ``alt_diff`` carries the climb/descend intent: negative means
+    "above target → descend", positive means "below target → climb".
+    Without it the net cannot determine flight direction from state
+    alone (an aircraft at 5 000 m could be climbing or descending).
 
     Gamma is intentionally excluded from inputs to avoid a feedback
     loop (the net's output influences gamma via gamma_diff).  Vertical
     speed (``vz = tas * sin(gamma)``) is used instead to convey
-    climb/descent intent without creating a direct feedback path.
+    current climb/descent rate without creating a direct feedback path.
 
-    Zero-initialized so that a fresh network outputs 0.0 (preserving
-    the old scalar-default behavior).
+    When ``input_stats`` is provided, inputs are z-score normalized
+    before the MLP to prevent tanh saturation on raw physical values
+    (alt ~10 000, TAS ~230).  Without normalization the MLP output
+    is O(10³), tanh saturates to ±1, and gradients vanish.
     """
 
-    _INPUT_DIM: int = 3  # alt, tas, vz
+    _INPUT_DIM: int = 4  # alt, tas, vz, alt_diff
 
     _MAX_GAMMA_RAD: float = 0.18  # ≈ 10°, physical upper bound
+
+    _mean_alt: torch.Tensor
+    _std_alt: torch.Tensor
+    _mean_tas: torch.Tensor
+    _std_tas: torch.Tensor
+    _mean_vz: torch.Tensor
+    _std_vz: torch.Tensor
+    _mean_alt_diff: torch.Tensor
+    _std_alt_diff: torch.Tensor
+    _scale: torch.Tensor
 
     def __init__(
         self,
         hidden_dim: int = 32,
         num_layers: int = 1,
+        input_stats: dict[str, dict[str, float]] | None = None,
     ) -> None:
         """Initialize the gamma default network.
 
         Args:
             hidden_dim: Hidden layer width.
             num_layers: Number of hidden layers.
+            input_stats: Optional mapping ``{"alt": {"mean": ..., "std": ...},
+                "tas": ..., "vz": ..., "alt_diff": ...}`` for input
+                z-score normalization.  Keys are canonical names.
         """
         super().__init__()
         self.register_buffer("_scale", torch.tensor(self._MAX_GAMMA_RAD))
-        self.mlp = MLPBlock(
-            input_dim=self._INPUT_DIM,
-            hidden_dim=hidden_dim,
-            output_dim=1,
-            num_layers=num_layers,
-        )
-        # Zero-init the last linear layer so fresh net outputs ≈ 0.
-        last_linear = self.mlp.net[-1]
-        if isinstance(last_linear, nn.Linear):
-            nn.init.zeros_(last_linear.weight)
-            nn.init.zeros_(last_linear.bias)
+
+        # Register normalization buffers (default: no-op identity)
+        _keys = ("alt", "tas", "vz", "alt_diff")
+        for key in _keys:
+            mean = 0.0
+            std = 1.0
+            if input_stats and key in input_stats:
+                mean = input_stats[key].get("mean", 0.0)
+                std = input_stats[key].get("std", 1.0)
+            self.register_buffer(f"_mean_{key}", torch.tensor(mean, dtype=torch.float32))
+            self.register_buffer(f"_std_{key}", torch.tensor(std, dtype=torch.float32))
+
+        # Custom MLP with SiLU activation (smooth, no dead neurons unlike ReLU)
+        # and Xavier init for balanced gradients.  No small-init needed since
+        # inputs are z-score normalized and tanh bounds the output.
+        layers: list[nn.Module] = []
+        prev_dim = self._INPUT_DIM
+        for _ in range(num_layers):
+            layers.append(nn.Linear(prev_dim, hidden_dim))
+            layers.append(nn.SiLU())
+            prev_dim = hidden_dim
+        layers.append(nn.Linear(hidden_dim, 1))
+        self.mlp = nn.Sequential(*layers)
 
     def forward(
         self,
         alt: torch.Tensor,
         tas: torch.Tensor,
         vz: torch.Tensor,
+        alt_diff: torch.Tensor,
     ) -> torch.Tensor:
-        """Predict default gamma correction from flight context.
+        """Predict default gamma from flight context.
 
         Args:
             alt: Altitude tensor of shape ``(batch,)``.
             tas: True airspeed tensor of shape ``(batch,)``.
             vz: Vertical speed tensor of shape ``(batch,)``.
+            alt_diff: Altitude difference (target - current) ``(batch,)``.
 
         Returns:
-            Scalar correction per sample, shape ``(batch,)``.
+            Scalar gamma per sample, shape ``(batch,)``.
         """
-        x = torch.stack([alt, tas, vz], dim=-1)  # (batch, 3)
-        scale: torch.Tensor = self._scale  # type: ignore[assignment]
-        out: torch.Tensor = torch.tanh(self.mlp(x).squeeze(-1)) * scale
+        alt_n = (alt - self._mean_alt) / self._std_alt
+        tas_n = (tas - self._mean_tas) / self._std_tas
+        vz_n = (vz - self._mean_vz) / self._std_vz
+        alt_diff_n = (alt_diff - self._mean_alt_diff) / self._std_alt_diff
+        x = torch.stack([alt_n, tas_n, vz_n, alt_diff_n], dim=-1)  # (batch, 4)
+        out: torch.Tensor = torch.tanh(self.mlp(x).squeeze(-1)) * self._scale
         return out
 
 

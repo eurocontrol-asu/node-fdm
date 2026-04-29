@@ -9,21 +9,22 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 
 | Module | Description |
 |---|---|
-| `architectures.registry` | Typed architecture registry with `ArchitectureSpec` and `LayerSpec` (Pydantic) |
+| `architectures.registry` | Typed architecture registry with `ArchitectureSpec` (incl. physical `x_bounds`/`dx_bounds`) and `LayerSpec` (Pydantic) |
 | `architectures.opensky` | OpenSky 2025 architecture (auto-registered) |
 | `architectures.qar` | QAR architecture (auto-registered) |
 | `architectures.adsb` | ADS-B v1 architecture (auto-registered) |
 | `models.fdm` | `FlightDynamicsModel` — layered state derivative computation |
-| `models.batch_neural_ode` | `BatchNeuralODE` — ODE wrapper with input interpolation |
+| `models.batch_neural_ode` | `BatchNeuralODE` — ODE wrapper with input interpolation and optional `dx_bounds` soft clamping |
+| `models.projected_integrator` | `ClampedEuler`, `ClampedRK4` — fixed-step solvers with state projection after each step; `_clamp_columns` (hard), `_soft_clamp_columns` (tanh-based) |
 | `models.fdm_prod` | `FlightDynamicsModelProd` — load pretrained weights for inference |
 | `layers.blocks` | `MLPBlock`, `Backbone`, `Head`, `MultiLayerDict`, `GammaDefaultNet` |
-| `layers.normalizers` | `InputNormalizer`, `OutputDenormalizer` |
+| `layers.normalizers` | `InputNormalizer` (z-score all inputs incl. E1 columns), `OutputDenormalizer` (modes: `normal_clamp`, `max`, `scaled`) |
 | `layers.structured` | `StructuredLayer` — normalize → backbone → heads → denormalize |
 | `layers.trajectory` | `TrajectoryLayer` — vertical speed, Mach, CAS, groundspeed, TAS diff, gamma diff (learnable default, `gamma_known` mask) |
 | `layers.engine` | `EngineLayer` — N1 and fuel flow (QAR) |
-| `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, optional tracking loss on autopilot targets (`lambda_tracking`), model weights + optimizer checkpoint save/load |
+| `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, optional tracking loss on autopilot targets (`lambda_tracking`), projected integration via `ClampedEuler`/`ClampedRK4` when `x_bounds` present, `grad_clip_norm` default 10.0, model weights + optimizer checkpoint save/load |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
-| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1); `compute_stats` with NaN-safe e1 handling |
+| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1); `compute_stats` with p99.9 percentile (`p999`), NaN-safe e1 handling, and DX-precedence for overlapping e1 columns |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame (NaN/inf filtered in x, u, e, dx, and e1 columns) |
 | `losses` | `get_loss` factory |
 | `callbacks` | `TrainingCallback` protocol + `ConsoleCallback` |
@@ -49,6 +50,8 @@ from node_fdm.architectures.registry import get, REGISTRY
 spec = get("opensky_2025")
 print(spec.x_cols)   # ['distance_m', 'altitude_ft', 'gamma_rad', 'tas_kt']
 print(spec.layers)   # [LayerSpec(name='structured', ...), LayerSpec(name='trajectory', ...)]
+print(spec.x_bounds) # {} (no bounds) or {'raw_alt_m': (0.0, 15000.0), ...}
+print(spec.dx_bounds) # {} (no bounds) or {'fdm_d_alt_ms': (-10.0, 10.0), ...}
 
 # List all registered architectures
 print(list(REGISTRY.keys()))  # ['opensky_2025', 'qar', 'node_adsb_v1']

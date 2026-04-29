@@ -58,7 +58,7 @@ SAMPLE_SIZE  ?= 100
 START_DATE   ?= 2025-09-01
 END_DATE     ?= 2025-09-08
 
-.PHONY: pipeline clean-data aircraft download preprocess identify flag enrich derive segments convert split
+.PHONY: pipeline clean-data aircraft download identify preprocess flag enrich derive segments convert split
 
 ## Run full data pipeline from scratch: clean → split
 pipeline: clean-data aircraft download identify preprocess flag enrich derive segments convert split

@@ -150,27 +150,33 @@ def detect_turning_points(
     d_track = np.abs(np.diff(track_uw, n=diff_n, prepend=[track_uw[0]] * diff_n))
     rate = d_track / (diff_n * dt)
 
-    # Mark turning
     in_turn = rate >= threshold_deg_per_sec
+    _fill_short_straight_gaps(in_turn, min_straight_len)
+    boundaries = _segment_boundaries(in_turn)
 
-    # Remove short "straight" gaps inside turns (< min_straight_len)
-    straight_start: int | None = None
-    for i in range(n):
-        if not in_turn[i]:
-            if straight_start is None:
-                straight_start = i
-        else:
-            if straight_start is not None and (i - straight_start) < min_straight_len:
-                in_turn[straight_start:i] = True
-            straight_start = None
+    return boundaries, in_turn
 
-    # Segment boundaries = transitions from turn→straight (start of new segment)
-    boundaries = [0]
-    for i in range(1, n):
-        if in_turn[i - 1] and not in_turn[i]:
-            boundaries.append(i)
 
-    return np.array(boundaries, dtype=np.intp), in_turn
+def _fill_short_straight_gaps(in_turn: npt.NDArray[np.bool_], min_len: int) -> None:
+    """Mark short straight runs (< ``min_len``) as turning, in-place.
+
+    Matches the legacy behavior: a gap is filled only when entering a turn,
+    i.e. it must be bounded by turns on both sides.
+    """
+    straight = ~in_turn
+    edges = np.diff(straight.astype(np.int8), prepend=0, append=0)
+    starts = np.flatnonzero(edges == 1)
+    ends = np.flatnonzero(edges == -1)
+    n = in_turn.size
+    fillable = (ends - starts < min_len) & (starts > 0) & (ends < n)
+    for s, e in zip(starts[fillable], ends[fillable], strict=True):
+        in_turn[s:e] = True
+
+
+def _segment_boundaries(in_turn: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
+    """Indices of turn→straight transitions, prefixed with 0."""
+    transitions = np.flatnonzero(in_turn[:-1] & ~in_turn[1:]) + 1
+    return np.concatenate(([0], transitions)).astype(np.intp)
 
 
 # ---------------------------------------------------------------------------

@@ -45,7 +45,7 @@ class TestAdsbStructuredInputCols:
 
 def _make_stats(cols: list[str]) -> dict[str, dict[str, float]]:
     """Build a dummy stats_dict covering all columns."""
-    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0} for col in cols}
+    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0, "p999": 0.8} for col in cols}
 
 
 class TestAdsbForwardPass:
@@ -54,7 +54,8 @@ class TestAdsbForwardPass:
     def test_model_forward_without_alt_target_input(self) -> None:
         """Build FDM with new spec, run forward — output shape correct, no error."""
         spec = get("node_adsb_v1")
-        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
+        dx_col_names = [c for _, c in spec.dx_cols]
+        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols + dx_col_names
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)
@@ -78,7 +79,8 @@ class TestAdsbAltDiffEdgeCases:
     def test_structured_layer_without_alt_diff_stats(self) -> None:
         """StructuredLayer builds even without alt_diff stats (degraded)."""
         spec = get("node_adsb_v1")
-        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
+        dx_col_names = [c for _, c in spec.dx_cols]
+        all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols + dx_col_names
         stats = _make_stats(all_cols)
         # Remove alt_diff stats to simulate AXM-758 not yet implemented
         stats.pop("fdm_alt_diff_m", None)

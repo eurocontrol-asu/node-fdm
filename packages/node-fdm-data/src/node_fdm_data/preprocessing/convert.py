@@ -31,12 +31,18 @@ __all__ = [
 # ---------------------------------------------------------------------------
 # SI conversion table: (source_col, conversion_fn, target_col)
 # Matches pipeline v3 column names from étapes 0-5.
+#
+# The TAS state of the model (``era_tas_ms``) and the IAS surrogate
+# (``bds_ias_ms``) are sourced from the cleaned BDS columns produced by the
+# ``clean-speeds`` stage rather than from raw ``era_tas_kt`` / ``bds_ias_kt``.
+# Output column names are preserved for schema compatibility (architectures
+# still reference ``era_tas_ms`` / ``bds_ias_ms``).
 # ---------------------------------------------------------------------------
 SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
     ("raw_alt_ft", ft_to_m, "raw_alt_m"),
     ("bds_mcp_sel_alt_ft", ft_to_m, "bds_mcp_sel_alt_m"),
-    ("era_tas_kt", kt_to_ms, "era_tas_ms"),
-    ("bds_ias_kt", kt_to_ms, "bds_ias_ms"),
+    ("bds_tas_from_cas_kt", kt_to_ms, "era_tas_ms"),
+    ("bds_ias_kt_clean", kt_to_ms, "bds_ias_ms"),
     ("raw_gs_kt", kt_to_ms, "raw_gs_ms"),
     ("fdm_long_wind_kt", kt_to_ms, "fdm_long_wind_ms"),
     ("raw_vz_ftmin", ftmin_to_ms, "raw_vz_ms"),
@@ -50,9 +56,9 @@ SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
 
 # Derivative table: (source_si_col, target_deriv_col)
 SI_DERIVATIVES: list[tuple[str, str]] = [
-    ("raw_alt_m", "fdm_d_vz_ms"),
+    ("raw_alt_m", "fdm_d_alt_ms"),
     ("fdm_gamma_rad", "fdm_d_gamma_rads"),
-    ("era_tas_ms", "fdm_d_tas_ms"),
+    ("era_tas_ms", "fdm_d_tas_ms2"),
 ]
 
 # Delta diffs: (target_col, source_col, output_col)
@@ -64,9 +70,9 @@ DELTA_DIFFS: list[tuple[str, str, str]] = [
 ]
 
 DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
-    "fdm_d_vz_ms": (-75.0, 75.0),
+    "fdm_d_alt_ms": (-75.0, 75.0),
     "fdm_d_gamma_rads": (-0.025, 0.025),
-    "fdm_d_tas_ms": (-12.5, 12.5),
+    "fdm_d_tas_ms2": (-12.5, 12.5),
 }
 
 

@@ -26,6 +26,11 @@ from node_fdm.dataset import FlightDataset, FlightSample, compute_stats
 from node_fdm.losses import get_loss
 from node_fdm.models.batch_neural_ode import BatchNeuralODE
 from node_fdm.models.fdm import FlightDynamicsModel
+from node_fdm.models.projected_integrator import (
+    ClampedEuler,
+    ClampedRK4,
+    _clamp_columns,
+)
 
 __all__ = [
     "ODETrainer",
@@ -75,7 +80,7 @@ class TrainingConfig(BaseModel):
     val_batch_size: int = Field(default=10000, gt=0)
     num_workers: int = Field(default=4, ge=0)
     loss_name: str = "mse"
-    grad_clip_norm: float = Field(default=1.0, gt=0)
+    grad_clip_norm: float = Field(default=10.0, gt=0)
     alpha_dict: dict[str, float] | None = None
     lambda_tracking: float = Field(default=0.0, ge=0)
 
@@ -135,11 +140,13 @@ class ODETrainer:
 
         self.callbacks: Sequence[TrainingCallback] = callbacks or [ConsoleCallback()]
 
-        # Compute stats from training data
-        # Only compute stats for U columns that enter the StructuredLayer (U_ODE),
-        # not all U_COLS (which include targets consumed by TrajectoryLayer).
-        ode_layer = next(ly for ly in self.spec.layers if ly.trainable)
-        u_ode_cols = [c for c in self.spec.u_cols if c in ode_layer.input_cols]
+        # Compute stats from training data.
+        # U_ODE_COLS from the architecture spec (empty for adsb).
+        # Do NOT reconstruct from input_cols — passthrough flags like
+        # fdm_gamma_target_known appear in input_cols but are not ODE
+        # controls and must not enter compute_stats (which indexes the
+        # u tensor by position, causing column misalignment).
+        u_ode_cols = list(getattr(self.spec, "u_ode_cols", []) or [])
         dx_col_names = [col for _, col in self.spec.dx_cols]
         e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
         _samples = list(train_dataset)  # type: ignore[call-overload]
@@ -151,30 +158,16 @@ class ODETrainer:
         }
         self.stats_dict = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
 
-        # Model stats: computed without e1 so that tracking targets
-        # stored in FlightSample.e1 cannot overwrite base column stats
-        # (e1_cols may overlap with dx_cols).
-        model_stats = compute_stats(_samples, **_stats_args)
+        # Model stats: include e1 so StructuredLayer inputs are normalized.
+        # compute_stats skips e1 columns already covered by DX, so no
+        # overwrite risk for overlapping columns like fdm_d_alt_ms.
+        model_stats = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
 
         self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(
             self.device
         )
 
         # Freeze GammaDefaultNet when tracking loss is disabled — the ODE
-        # gradient path (through StructuredLayer → gamma_diff) otherwise
-        # pushes the net to saturation without a physically meaningful signal.
-        if config.lambda_tracking == 0:
-            traj = (
-                self.model.layers_dict["trajectory"]
-                if "trajectory" in self.model.layers_dict
-                else None
-            )
-            if traj is not None:
-                gamma_net = getattr(traj, "gamma_default_net", None)
-                if gamma_net is not None:
-                    for p in gamma_net.parameters():
-                        p.requires_grad_(False)
-
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=config.lr,
@@ -262,12 +255,18 @@ class ODETrainer:
         self.save_meta()
         log.debug("model_saved", epoch=epoch)
 
-    def load_model_weights(self) -> None:
+    def load_model_weights(self, *, reset_loss: bool = False) -> None:
         """Load layer weights from checkpoints saved by :meth:`save_layer_checkpoint`.
 
         For each layer in ``model.layers_name``, loads the corresponding
         ``.pt`` file, extracts ``layer_state``, and restores it.  Also
-        restores ``best_val_loss`` from the checkpoint.
+        restores ``best_val_loss`` from the checkpoint unless *reset_loss*
+        is ``True``, in which case ``best_val_loss`` stays at ``inf`` so
+        that the first improving epoch triggers a save.
+
+        Args:
+            reset_loss: If ``True``, ignore the saved ``best_val_loss``
+                and keep the initial ``inf`` value.
 
         Raises:
             FileNotFoundError: If a layer checkpoint file is missing.
@@ -279,8 +278,13 @@ class ODETrainer:
                 raise FileNotFoundError(msg)
             ckpt = torch.load(ckpt_path, weights_only=True)
             self.model.layers_dict[name].load_state_dict(ckpt["layer_state"])
-            self.best_val_loss = ckpt.get("best_val_loss", self.best_val_loss)
-        log.debug("model_weights_loaded", layers=list(self.model.layers_name))
+            if not reset_loss:
+                self.best_val_loss = ckpt.get("best_val_loss", self.best_val_loss)
+        log.debug(
+            "model_weights_loaded",
+            layers=list(self.model.layers_name),
+            reset_loss=reset_loss,
+        )
 
     def load_optimizer_state(self) -> None:
         """Load optimizer state from checkpoint if available.
@@ -306,9 +310,13 @@ class ODETrainer:
         means: list[float] = []
         stds: list[float] = []
         for col in self.spec.x_cols:
-            stats = self.stats_dict.get(col, {"mean": 0.0, "std": 1.0})
+            stats = self.stats_dict.get(col, {"mean": 0.0, "std": 1.0, "iqr": 1.0})
             means.append(stats["mean"])
-            stds.append(stats["std"])
+            # Use IQR 0.5-99.5 for loss normalization when available.
+            # IQR is robust to the cruise-dominated distribution that
+            # makes std too small for gamma (→ 100% of loss) and too
+            # large for altitude (→ 0% of loss).
+            stds.append(stats.get("iqr", stats["std"]) / 5.0)
         return (
             torch.tensor(means, device=self.device),
             torch.tensor(stds, device=self.device),
@@ -327,6 +335,30 @@ class ODETrainer:
                 if col in self.config.alpha_dict:
                     weights[i] = self.config.alpha_dict[col]
         return weights
+
+    @staticmethod
+    def _resolve_bounds(
+        named_bounds: dict[str, tuple[float, float]],
+        cols: list[str] | list[tuple[int, str]],
+    ) -> dict[int, tuple[float, float]]:
+        """Convert named bounds to column-index bounds.
+
+        Args:
+            named_bounds: Mapping from column name to ``(lo, hi)``.
+            cols: Column list — either ``["name", ...]`` for x_cols or
+                ``[(sign, "name"), ...]`` for dx_cols.
+
+        Returns:
+            Mapping from column index to ``(lo, hi)``.
+        """
+        if not named_bounds:
+            return {}
+        result: dict[int, tuple[float, float]] = {}
+        for i, col in enumerate(cols):
+            name: str = col[1] if isinstance(col, tuple) else col  # type: ignore[assignment]
+            if name in named_bounds:
+                result[i] = named_bounds[name]
+        return result
 
     def _compute_batch_loss(
         self,
@@ -368,10 +400,38 @@ class ODETrainer:
         )
 
         self.model.reset_history()
-        func = BatchNeuralODE(self.model, u_seq, e_seq, t_grid)
-        x_pred = odeint(func, x0, t_grid, method=self.config.method)
 
-        # odeint returns (time, batch, n_x) → (batch, time, n_x)
+        # Convert named bounds to column-index dicts
+        x_bounds_idx = self._resolve_bounds(self.spec.x_bounds, self.spec.x_cols)
+        dx_bounds_idx = self._resolve_bounds(self.spec.dx_bounds, self.spec.dx_cols)
+
+        func = BatchNeuralODE(self.model, u_seq, e_seq, t_grid, dx_bounds=dx_bounds_idx)
+
+        if x_bounds_idx:
+            # Use projected integrator for bounded specs
+            project_fn = lambda x: _clamp_columns(x, x_bounds_idx)  # noqa: E731
+            method = self.config.method
+            solver_kwargs = {
+                "atol": 1e-6,
+                "rtol": 1e-3,
+                "step_size": self.config.step,
+            }
+            if method == "euler":
+                solver = ClampedEuler(func, x0, project_fn=project_fn, **solver_kwargs)
+                x_pred = solver.integrate(t_grid)
+            elif method == "rk4":
+                solver = ClampedRK4(func, x0, project_fn=project_fn, **solver_kwargs)
+                x_pred = solver.integrate(t_grid)
+            else:
+                msg = (
+                    f"Method '{method}' does not support state projection. "
+                    f"Use 'euler' or 'rk4' with x_bounds."
+                )
+                raise ValueError(msg)
+        else:
+            x_pred = odeint(func, x0, t_grid, method=self.config.method)
+
+        # odeint / solver returns (time, batch, n_x) → (batch, time, n_x)
         x_pred = x_pred.permute(1, 0, 2)
 
         # Compare predicted vs true trajectory (skip initial condition)

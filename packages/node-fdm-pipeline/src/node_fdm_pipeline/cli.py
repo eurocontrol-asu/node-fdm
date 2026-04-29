@@ -7,11 +7,14 @@ from pathlib import Path
 from typing import Annotated
 
 import cyclopts
+import structlog
 
 __all__ = [
     "app",
     "main",
 ]
+
+log = structlog.get_logger()
 
 app = cyclopts.App(
     name="fdm",
@@ -78,6 +81,13 @@ def train(
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
     ] = "cpu",
+    model_name: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--model-name",
+            help="Custom model name (default: {arch}_{typecode})",
+        ),
+    ] = None,
     lambda_tracking: Annotated[
         float | None,
         cyclopts.Parameter(
@@ -100,6 +110,7 @@ def train(
         seq_len=seq_len,
         shift=shift,
         device=device,
+        model_name=model_name,
         lambda_tracking=lambda_tracking,
     )
 
@@ -143,6 +154,17 @@ def resume(
         str,
         cyclopts.Parameter(help="PyTorch device for training"),
     ] = "cpu",
+    method: Annotated[
+        str | None,
+        cyclopts.Parameter(help="Override ODE integration method: euler or rk4"),
+    ] = None,
+    model_name: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--model-name",
+            help="Custom output model name (default: same as source model)",
+        ),
+    ] = None,
     lambda_tracking: Annotated[
         float | None,
         cyclopts.Parameter(
@@ -150,6 +172,13 @@ def resume(
             help="Tracking loss weight on autopilot targets (0=disabled)",
         ),
     ] = None,
+    reset_loss: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name="--reset-loss",
+            help="Ignore saved best_val_loss and start fresh from inf",
+        ),
+    ] = False,
 ) -> None:
     """Resume training from an existing model checkpoint."""
     from node_fdm_pipeline.commands.resume import run_resume
@@ -164,7 +193,10 @@ def resume(
         shift=shift,
         overwrite=overwrite,
         device=device,
+        method=method,
+        model_name=model_name,
         lambda_tracking=lambda_tracking,
+        reset_loss=reset_loss,
     )
 
 
@@ -349,6 +381,24 @@ def derive(
     from node_fdm_pipeline.commands.data import derive as derive_fn
 
     derive_fn(config=config, dry_run=dry_run)
+
+
+@app.command(name="clean-speeds")
+def clean_speeds(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Clean BDS speed signals via Hampel + ERA fill — étape 4 (pre-derive)."""
+    from node_fdm_pipeline.commands.data import clean_speeds as clean_speeds_fn
+
+    clean_speeds_fn(config=config, dry_run=dry_run)
 
 
 @app.command

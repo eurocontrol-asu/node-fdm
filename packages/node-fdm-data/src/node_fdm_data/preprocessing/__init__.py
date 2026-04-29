@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 __all__ = [
+    "clean_speeds",
     "convert",
     "derive",
     "flags",

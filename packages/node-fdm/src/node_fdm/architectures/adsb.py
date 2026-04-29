@@ -34,7 +34,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
             name="trajectory",
             layer_class="node_fdm.layers.trajectory.TrajectoryLayer",
             input_cols=X_COLS + U_COLS + E0_COLS,
-            output_cols=E1_COLS,
+            output_cols=[*E1_COLS, "fdm_gamma_target_known"],
             trainable=False,
             config={
                 "col_map": {
@@ -43,7 +43,7 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "alt": "raw_alt_m",
                     "wind": "fdm_long_wind_ms",
                     "alt_sel": "fdm_alt_target_m",
-                    "vz": "fdm_d_vz_ms",
+                    "vz": "fdm_d_alt_ms",
                     "gs": "raw_gs_ms",
                     "mach": "era_mach",
                     "cas": "fdm_cas_ms",
@@ -59,13 +59,26 @@ NODE_ADSB_V1 = ArchitectureSpec(
         LayerSpec(
             name="data_ode",
             layer_class="node_fdm.layers.structured.StructuredLayer",
-            input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS,
-            output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms"],
+            input_cols=X_COLS + U_ODE_COLS + E0_COLS + E1_COLS + ["fdm_gamma_target_known"],
+            output_cols=["fdm_d_gamma_rads", "fdm_d_tas_ms2"],
             trainable=True,
+            config={
+                "denormalize_modes": {"fdm_d_gamma_rads": "scaled", "fdm_d_tas_ms2": "scaled"}
+            },
         ),
     ],
     preprocessing_fn="node_fdm_data.preprocessing.opensky.flight_processing",
     segment_filter_fn=None,
+    x_bounds={
+        "raw_alt_m": (-500.0, 20000.0),
+        "fdm_gamma_rad": (-0.3, 0.3),
+        "era_tas_ms": (0.0, 350.0),
+    },
+    dx_bounds={
+        "fdm_d_alt_ms": (-50.0, 50.0),
+        "fdm_d_gamma_rads": (-0.03, 0.03),
+        "fdm_d_tas_ms2": (-12.5, 12.5),
+    },
 )
 
 register(NODE_ADSB_V1)

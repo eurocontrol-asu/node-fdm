@@ -9,6 +9,7 @@ flags ``pre_gap_position``, ``pre_gap_altitude``, ``pre_gap_bds``.
 from __future__ import annotations
 
 from collections import Counter
+from dataclasses import dataclass
 from datetime import timedelta
 
 import polars as pl
@@ -46,6 +47,26 @@ COLUMN_GROUPS: dict[str, tuple[list[str], list[str]]] = {
 _CARRY_OVER: set[str] = {"raw_icao24", "raw_callsign"}
 
 
+def _assign_seg_ids(
+    indices: list[int],
+    diffs: list[float | None],
+    max_gap_s: float,
+    n: int,
+) -> list[int]:
+    seg_ids: list[int] = [-1] * n
+    current_seg = 0
+    for pos, (idx, diff) in enumerate(zip(indices, diffs, strict=False)):
+        if pos > 0 and diff is not None and diff > max_gap_s:
+            current_seg += 1
+        seg_ids[idx] = current_seg
+    return seg_ids
+
+
+def _drop_singletons(seg_ids: list[int]) -> list[int]:
+    counts = Counter(s for s in seg_ids if s >= 0)
+    return [s if s < 0 or counts[s] >= 2 else -1 for s in seg_ids]  # noqa: PLR2004
+
+
 def detect_subsegments(
     df: pl.DataFrame,
     ref_cols: list[str],
@@ -67,37 +88,83 @@ def detect_subsegments(
         a sub-segment ID starting at 0; rows without data (or in
         single-point segments) get -1.
     """
-    present = [c for c in ref_cols if c in df.columns]
     n = len(df)
+    present = [c for c in ref_cols if c in df.columns]
     if not present:
         return pl.Series("seg_id", [-1] * n, dtype=pl.Int32)
 
     has_data = df.select(
         pl.all_horizontal(pl.col(c).is_not_null() for c in present),
     ).to_series()
-
-    seg_ids: list[int] = [-1] * n
     if not has_data.any():
-        return pl.Series("seg_id", seg_ids, dtype=pl.Int32)
+        return pl.Series("seg_id", [-1] * n, dtype=pl.Int32)
 
     indices = has_data.arg_true()
-    timestamps = df["raw_timestamp"].gather(indices)
-    diffs_s = timestamps.diff().dt.total_seconds()
+    diffs_s = df["raw_timestamp"].gather(indices).diff().dt.total_seconds()
 
-    current_seg = 0
-    indices_list = indices.to_list()
-    diffs_list = diffs_s.to_list()
+    seg_ids = _assign_seg_ids(indices.to_list(), diffs_s.to_list(), max_gap_s, n)
+    return pl.Series("seg_id", _drop_singletons(seg_ids), dtype=pl.Int32)
 
-    for pos, (idx, diff) in enumerate(zip(indices_list, diffs_list, strict=False)):
-        if pos > 0 and diff is not None and diff > max_gap_s:
-            current_seg += 1
-        seg_ids[idx] = current_seg
 
-    # Filter out single-point segments
-    seg_counts = Counter(s for s in seg_ids if s >= 0)
-    seg_ids = [s if s < 0 or seg_counts[s] >= 2 else -1 for s in seg_ids]  # noqa: PLR2004
+@dataclass
+class _GridAccumulator:
+    columns: list[str]
+    ts_to_idx: dict[object, int]
+    result: dict[str, list[object]]
+    covered: list[bool]
 
-    return pl.Series("seg_id", seg_ids, dtype=pl.Int32)
+    def write(self, row: dict[str, object]) -> None:
+        idx = self.ts_to_idx.get(row["raw_timestamp"])
+        if idx is None:
+            return
+        self.covered[idx] = True
+        for c in self.columns:
+            self.result[c][idx] = row[c]
+
+
+def _interpolate_segment(
+    seg_data: pl.DataFrame,
+    grid_ts: pl.Series,
+    columns: list[str],
+) -> pl.DataFrame | None:
+    seg_start = seg_data["raw_timestamp"].min()
+    seg_end = seg_data["raw_timestamp"].max()
+    seg_grid_ts = grid_ts.filter((grid_ts >= seg_start) & (grid_ts <= seg_end))
+    if len(seg_grid_ts) == 0:
+        return None
+
+    grid_only = pl.DataFrame({"raw_timestamp": seg_grid_ts})
+    seg_tagged = seg_data.with_columns(pl.lit(0).alias("_ord"))
+    grid_tagged = grid_only.with_columns(pl.lit(1).alias("_ord"))
+    combined = (
+        pl.concat([seg_tagged, grid_tagged], how="diagonal_relaxed")
+        .sort("raw_timestamp", "_ord")
+        .unique("raw_timestamp", keep="first")
+        .drop("_ord")
+        .with_columns(pl.col(c).interpolate() for c in columns)
+    )
+    return combined.join(grid_only, on="raw_timestamp", how="inner")
+
+
+def _process_segment(
+    seg_data: pl.DataFrame,
+    grid_ts: pl.Series,
+    acc: _GridAccumulator,
+) -> None:
+    if len(seg_data) == 0:
+        return
+    if len(seg_data) == 1:
+        row: dict[str, object] = {"raw_timestamp": seg_data["raw_timestamp"][0]}
+        for c in acc.columns:
+            row[c] = seg_data[c][0]
+        acc.write(row)
+        return
+
+    interpolated = _interpolate_segment(seg_data, grid_ts, acc.columns)
+    if interpolated is None:
+        return
+    for row in interpolated.iter_rows(named=True):
+        acc.write(row)
 
 
 def interpolate_group_by_subsegments(
@@ -130,64 +197,53 @@ def interpolate_group_by_subsegments(
     if not unique_segs:
         return result, pl.Series("gap", [True] * n_grid, dtype=pl.Boolean)
 
-    grid_ts_list = grid_ts.to_list()
-    ts_to_idx: dict[object, int] = {ts: i for i, ts in enumerate(grid_ts_list)}
+    acc = _GridAccumulator(
+        columns=columns,
+        ts_to_idx={ts: i for i, ts in enumerate(grid_ts.to_list())},
+        result=result,
+        covered=covered,
+    )
 
     for seg_id in unique_segs:
-        seg_mask = seg_ids == seg_id
-        seg_data = original.filter(seg_mask).select("raw_timestamp", *columns)
-
-        if len(seg_data) == 0:
-            continue
-
-        seg_start = seg_data["raw_timestamp"].min()
-        seg_end = seg_data["raw_timestamp"].max()
-
-        if len(seg_data) == 1:
-            ts = seg_data["raw_timestamp"][0]
-            if ts in ts_to_idx:
-                idx = ts_to_idx[ts]
-                covered[idx] = True
-                for c in columns:
-                    result[c][idx] = seg_data[c][0]
-            continue
-
-        # Grid points within segment bounds
-        seg_grid_ts = grid_ts.filter(
-            (grid_ts >= seg_start) & (grid_ts <= seg_end),
-        )
-        if len(seg_grid_ts) == 0:
-            continue
-
-        # Combine original segment data + grid timestamps, interpolate
-        grid_only = pl.DataFrame({"raw_timestamp": seg_grid_ts})
-        seg_tagged = seg_data.with_columns(pl.lit(0).alias("_ord"))
-        grid_tagged = grid_only.with_columns(pl.lit(1).alias("_ord"))
-        combined = (
-            pl.concat([seg_tagged, grid_tagged], how="diagonal_relaxed")
-            .sort("raw_timestamp", "_ord")
-            .unique("raw_timestamp", keep="first")
-            .drop("_ord")
-        )
-        combined = combined.with_columns(pl.col(c).interpolate() for c in columns)
-
-        # Filter to grid timestamps
-        interpolated = combined.join(
-            pl.DataFrame({"raw_timestamp": seg_grid_ts}),
-            on="raw_timestamp",
-            how="inner",
-        )
-
-        for row in interpolated.iter_rows(named=True):
-            ts = row["raw_timestamp"]
-            if ts in ts_to_idx:
-                idx = ts_to_idx[ts]
-                covered[idx] = True
-                for c in columns:
-                    result[c][idx] = row[c]
+        seg_data = original.filter(seg_ids == seg_id).select("raw_timestamp", *columns)
+        _process_segment(seg_data, grid_ts, acc)
 
     gap_flag = pl.Series("gap", [not c for c in covered], dtype=pl.Boolean)
     return result, gap_flag
+
+
+_MIN_RUN_LEN = 10
+
+
+def _smooth_run(
+    df: pl.DataFrame,
+    mask: pl.Series,
+    flight_cls: type,
+) -> tuple[list[int], list[tuple[float, float]]] | None:
+    """Smooth one contiguous run of valid positions; return (indices, lat/lon) or None."""
+    indices = mask.arg_true().to_list()
+    if len(indices) < _MIN_RUN_LEN:
+        return None
+
+    select_cols = [
+        pl.col("raw_timestamp").alias("timestamp"),
+        pl.col("raw_lat_deg").alias("latitude"),
+        pl.col("raw_lon_deg").alias("longitude"),
+    ]
+    if "raw_alt_ft" in df.columns:
+        select_cols.append(pl.col("raw_alt_ft").alias("altitude"))
+
+    segment = df.filter(mask).select(select_cols)
+    smoothed = flight_cls(segment.to_pandas()).filter("aggressive")
+    if smoothed is None or len(smoothed) != len(indices):
+        return None
+
+    smooth_pd = smoothed.data[["latitude", "longitude"]]
+    pairs = [
+        (float(smooth_pd.iloc[i]["latitude"]), float(smooth_pd.iloc[i]["longitude"]))
+        for i in range(len(indices))
+    ]
+    return indices, pairs
 
 
 def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
@@ -213,47 +269,70 @@ def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
         return df
 
     try:
-        from traffic.core import Flight
+        from traffic.core import Flight  # type: ignore[import-not-found,unused-ignore]
     except ImportError:
         return df
 
-    # Detect runs of non-null position
-    changes = has_pos != has_pos.shift()
-    run_ids = changes.cum_sum()
-
+    run_ids = (has_pos != has_pos.shift()).cum_sum()
     lats = df["raw_lat_deg"].to_list()
     lons = df["raw_lon_deg"].to_list()
 
     for run_id in run_ids.filter(has_pos).unique().drop_nulls().sort().to_list():
-        mask = (run_ids == run_id) & has_pos
-        indices = mask.arg_true().to_list()
-
-        if len(indices) < 10:  # noqa: PLR2004
+        result = _smooth_run(df, (run_ids == run_id) & has_pos, Flight)
+        if result is None:
             continue
-
-        select_cols = [
-            pl.col("raw_timestamp").alias("timestamp"),
-            pl.col("raw_lat_deg").alias("latitude"),
-            pl.col("raw_lon_deg").alias("longitude"),
-        ]
-        if "raw_alt_ft" in df.columns:
-            select_cols.append(pl.col("raw_alt_ft").alias("altitude"))
-
-        segment = df.filter(mask).select(select_cols)
-        flight = Flight(segment.to_pandas())
-        smoothed = flight.filter("aggressive")
-
-        if smoothed is None or len(smoothed) != len(indices):
-            continue
-
-        smooth_pd = smoothed.data[["latitude", "longitude"]]
-        for i, idx in enumerate(indices):
-            lats[idx] = float(smooth_pd.iloc[i]["latitude"])
-            lons[idx] = float(smooth_pd.iloc[i]["longitude"])
+        indices, pairs = result
+        for idx, (lat, lon) in zip(indices, pairs, strict=True):
+            lats[idx] = lat
+            lons[idx] = lon
 
     return df.with_columns(
         pl.Series("raw_lat_deg", lats, dtype=pl.Float64),
         pl.Series("raw_lon_deg", lons, dtype=pl.Float64),
+    )
+
+
+def _build_grid_ts(df: pl.DataFrame, rate_s: int) -> pl.Series:
+    ts_min = df["raw_timestamp"].min()
+    ts_max = df["raw_timestamp"].max()
+    assert ts_min is not None and ts_max is not None
+    return pl.datetime_range(
+        ts_min,  # type: ignore[arg-type]
+        ts_max,  # type: ignore[arg-type]
+        interval=timedelta(seconds=rate_s),
+        eager=True,
+    ).rename("raw_timestamp")  # type: ignore[union-attr]
+
+
+def _carry_over_columns(result: pl.DataFrame, df: pl.DataFrame) -> pl.DataFrame:
+    carry_cols = [c for c in df.columns if c.startswith("meta_") or c in _CARRY_OVER]
+    if not carry_cols:
+        return result
+    return result.with_columns(pl.lit(df[c][0]).alias(c) for c in carry_cols)
+
+
+def _apply_column_group(
+    result: pl.DataFrame,
+    df: pl.DataFrame,
+    grid_ts: pl.Series,
+    group: tuple[str, list[str], list[str]],
+    max_gap_s: float,
+) -> pl.DataFrame:
+    group_name, interp_cols, ref_cols = group
+    present_cols = [c for c in interp_cols if c in df.columns]
+    if not present_cols:
+        return result.with_columns(pl.lit(True).alias(f"pre_gap_{group_name}"))
+
+    seg_ids = detect_subsegments(df, ref_cols, max_gap_s)
+    col_values, gap_flag = interpolate_group_by_subsegments(
+        df,
+        grid_ts,
+        present_cols,
+        seg_ids,
+    )
+    return result.with_columns(
+        *[pl.Series(c, col_values[c]) for c in present_cols],
+        gap_flag.alias(f"pre_gap_{group_name}"),
     )
 
 
@@ -280,45 +359,18 @@ def resample_flight(
     Returns:
         Resampled DataFrame on a regular *rate_s* grid.
     """
-    ts_min = df["raw_timestamp"].min()
-    ts_max = df["raw_timestamp"].max()
-    assert ts_min is not None and ts_max is not None
+    grid_ts = _build_grid_ts(df, rate_s)
+    result = _carry_over_columns(pl.DataFrame({"raw_timestamp": grid_ts}), df)
 
-    grid_ts: pl.Series = pl.datetime_range(
-        ts_min,  # type: ignore[arg-type]
-        ts_max,  # type: ignore[arg-type]
-        interval=timedelta(seconds=rate_s),
-        eager=True,
-    ).rename("raw_timestamp")  # type: ignore[union-attr]
-
-    result = pl.DataFrame({"raw_timestamp": grid_ts})
-
-    # Carry over constant meta columns and per-flight string identifiers
-    carry_cols = [c for c in df.columns if c.startswith("meta_") or c in _CARRY_OVER]
-    if carry_cols:
-        result = result.with_columns(pl.lit(df[c][0]).alias(c) for c in carry_cols)
-
-    # Process each column group
     for group_name, (interp_cols, ref_cols) in COLUMN_GROUPS.items():
-        present_cols = [c for c in interp_cols if c in df.columns]
-        if not present_cols:
-            result = result.with_columns(pl.lit(True).alias(f"pre_gap_{group_name}"))
-            continue
-
-        seg_ids = detect_subsegments(df, ref_cols, max_gap_s)
-        col_values, gap_flag = interpolate_group_by_subsegments(
+        result = _apply_column_group(
+            result,
             df,
             grid_ts,
-            present_cols,
-            seg_ids,
+            (group_name, interp_cols, ref_cols),
+            max_gap_s,
         )
 
-        result = result.with_columns(
-            *[pl.Series(c, col_values[c]) for c in present_cols],
-            gap_flag.alias(f"pre_gap_{group_name}"),
-        )
-
-    # Smooth position sub-segments
     if smooth:
         result = smooth_position_subsegments(result)
 

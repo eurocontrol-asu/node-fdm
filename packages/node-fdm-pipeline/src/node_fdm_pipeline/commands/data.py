@@ -19,8 +19,11 @@ if TYPE_CHECKING:
     import polars as pl
     from traffic.core import Flight
 
+    from node_fdm_pipeline.config import PipelineConfig
+
 __all__ = [
     "aircraft_list",
+    "clean_speeds",
     "convert",
     "derive",
     "download",
@@ -168,7 +171,85 @@ def _rename_to_v3(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
     return df.with_columns(pl.lit(batch_date).alias("meta_batch_date"))
 
 
-def download(  # noqa: PLR0915
+def _load_aircraft_db(cfg: PipelineConfig) -> tuple[pl.DataFrame, list[str]]:
+    import polars as pl
+
+    aircraft_csv = cfg.paths.data_dir / "aircraft_db.csv"
+    if not aircraft_csv.exists():
+        log.error("download_missing_aircraft_db", path=str(aircraft_csv))
+        raise SystemExit(
+            f"aircraft_db.csv not found at {aircraft_csv}. Run 'fdm aircraft-list' first."
+        )
+    aircraft_db = pl.read_csv(aircraft_csv)
+    return aircraft_db, aircraft_db["icao24"].to_list()
+
+
+def _build_window_df(
+    history: object,
+    extended: object,
+) -> pl.DataFrame:
+    import polars as pl
+    from traffic.core import Traffic
+
+    history_df = pl.from_pandas(history.data)  # type: ignore[attr-defined]
+    if extended is None:
+        return history_df
+
+    ext_pd = extended.data if hasattr(extended, "data") else extended
+    decoder = _RawEHSDecoder(ext_pd)
+    decoded_flights: list[Flight] = []
+    for flight in history:  # type: ignore[attr-defined]
+        decoded = decoder(flight)
+        if decoded is not None:
+            decoded_flights.append(decoded)
+
+    if not decoded_flights:
+        return history_df
+    merged = Traffic.from_flights(decoded_flights)
+    if merged is None:
+        return history_df
+    return pl.from_pandas(merged.data)
+
+
+def _attach_typecode(df: pl.DataFrame, aircraft_db: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    db_typecode = aircraft_db.select("icao24", "typecode").rename({"typecode": "_db_typecode"})
+    df = df.join(db_typecode, left_on="raw_icao24", right_on="icao24", how="left")
+    return df.with_columns(
+        pl.coalesce("_db_typecode", "meta_aircraft_type").alias("meta_aircraft_type"),
+    ).drop("_db_typecode")
+
+
+def _process_window(
+    current: datetime,
+    next_day: datetime,
+    icao24_list: list[str],
+    aircraft_db: pl.DataFrame,
+) -> pl.DataFrame | None:
+    from traffic.data import opensky
+
+    date_str = current.strftime("%Y%m%d")
+    log.info("download_fetch", date=date_str)
+
+    history = opensky.history(current, next_day, icao24=icao24_list)
+    if history is None:
+        log.warning("download_empty", kind="history", date=date_str)
+        return None
+
+    extended = opensky.extended(current, next_day, icao24=icao24_list)
+    df = _build_window_df(history, extended)
+    df = _rename_to_v3(df, batch_date=date_str)
+
+    flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
+    df = _join_flightlist_inline(df, flightlist)
+    df = _attach_typecode(df, aircraft_db)
+
+    log.info("download_processed", date=date_str, rows=len(df))
+    return df
+
+
+def download(
     *,
     config: Path,
     start_date: str,
@@ -193,20 +274,9 @@ def download(  # noqa: PLR0915
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
+    aircraft_db, icao24_list = _load_aircraft_db(cfg)
 
-    # Load aircraft list for ICAO24 filtering
-    aircraft_csv = cfg.paths.data_dir / "aircraft_db.csv"
-    if not aircraft_csv.exists():
-        log.error("download_missing_aircraft_db", path=str(aircraft_csv))
-        raise SystemExit(
-            f"aircraft_db.csv not found at {aircraft_csv}. Run 'fdm aircraft-list' first."
-        )
-
-    log.info(
-        "download_start",
-        start_date=start_date,
-        end_date=end_date,
-    )
+    log.info("download_start", start_date=start_date, end_date=end_date)
 
     if dry_run:
         log.info("download_dry_run", msg="Config valid, would download to Delta table")
@@ -216,70 +286,19 @@ def download(  # noqa: PLR0915
     from node_fdm_data.delta import write_columns
 
     _require_traffic()
-    from traffic.core import Traffic
-    from traffic.data import opensky
 
     delta_table = cfg.paths.resolve("delta_table")
-
-    aircraft_db = pl.read_csv(aircraft_csv)
-    icao24_list = aircraft_db["icao24"].to_list()
-
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
     step = timedelta(hours=step_hours)
 
     all_frames: list[pl.DataFrame] = []
-
     current = start
     while current < end:
-        date_str = current.strftime("%Y%m%d")
         next_day = current + timedelta(hours=24)
-
-        log.info("download_fetch", date=date_str)
-
-        # Fetch ADS-B history
-        history = opensky.history(current, next_day, icao24=icao24_list)
-        if history is None:
-            log.warning("download_empty", kind="history", date=date_str)
-            current += step
-            continue
-
-        # Fetch raw EHS messages and decode BDS
-        extended = opensky.extended(current, next_day, icao24=icao24_list)
-        if extended is not None:
-            ext_pd = extended.data if hasattr(extended, "data") else extended
-            decoder = _RawEHSDecoder(ext_pd)
-            decoded_flights: list[Flight] = []
-            for flight in history:
-                decoded = decoder(flight)
-                if decoded is not None:
-                    decoded_flights.append(decoded)
-
-            if decoded_flights:
-                merged = Traffic.from_flights(decoded_flights)
-                df = pl.from_pandas(merged.data)  # type: ignore[union-attr]
-            else:
-                df = pl.from_pandas(history.data)
-        else:
-            df = pl.from_pandas(history.data)
-
-        # Rename to v3 schema and collect
-        df = _rename_to_v3(df, batch_date=date_str)
-
-        # Join flightlist metadata directly into the batch
-        flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
-        df = _join_flightlist_inline(df, flightlist)
-
-        # Fill meta_aircraft_type from aircraft_db (more reliable than flightlist)
-        db_typecode = aircraft_db.select("icao24", "typecode").rename({"typecode": "_db_typecode"})
-        df = df.join(db_typecode, left_on="raw_icao24", right_on="icao24", how="left")
-        df = df.with_columns(
-            pl.coalesce("_db_typecode", "meta_aircraft_type").alias("meta_aircraft_type"),
-        ).drop("_db_typecode")
-
-        all_frames.append(df)
-        log.info("download_processed", date=date_str, rows=len(df))
-
+        df = _process_window(current, next_day, icao24_list, aircraft_db)
+        if df is not None:
+            all_frames.append(df)
         current += step
 
     if all_frames:
@@ -338,6 +357,58 @@ def _assign_flight_ids(df: pl.DataFrame, gap_threshold_s: int) -> pl.DataFrame:
     )
 
 
+_FL_META_RENAME = {"departure": "departure", "arrival": "arrival", "typecode": "aircraft_type"}
+_FL_META_COLS = ("meta_departure", "meta_arrival", "meta_aircraft_type")
+
+
+def _coerce_flightlist(flightlist: object) -> pl.DataFrame | None:
+    import polars as pl
+
+    if flightlist is None:
+        return None
+    fl_pd = flightlist.data if hasattr(flightlist, "data") else flightlist
+    fl = fl_pd if isinstance(fl_pd, pl.DataFrame) else pl.from_pandas(fl_pd)
+    if len(fl) == 0 or "icao24" not in fl.columns:
+        return None
+    if "callsign" in fl.columns:
+        fl = fl.with_columns(
+            pl.col("callsign").fill_null("NOCALL").str.strip_chars().alias("callsign"),
+        )
+    return fl
+
+
+def _join_flight_meta(df: pl.DataFrame, fl: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    fl_cols = [c for c in ("departure", "arrival", "typecode") if c in fl.columns]
+    df = df.with_columns(
+        pl.col("raw_callsign").fill_null("NOCALL").str.strip_chars().alias("_fl_callsign"),
+    )
+    if fl_cols:
+        fl_select = fl.select(["icao24", "callsign", *fl_cols]).unique(
+            subset=["icao24", "callsign"],
+            keep="first",
+        )
+        df = df.join(
+            fl_select,
+            left_on=["raw_icao24", "_fl_callsign"],
+            right_on=["icao24", "callsign"],
+            how="left",
+        )
+        rename = {c: f"meta_{a}" for c, a in _FL_META_RENAME.items() if c in df.columns}
+        df = df.rename(rename)
+    return df.drop("_fl_callsign")
+
+
+def _ensure_meta_columns(df: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    missing = [c for c in _FL_META_COLS if c not in df.columns]
+    if not missing:
+        return df
+    return df.with_columns([pl.lit(None).cast(pl.Utf8).alias(c) for c in missing])
+
+
 def _join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFrame:
     """Join flightlist metadata directly onto a download batch.
 
@@ -353,49 +424,10 @@ def _join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFram
         DataFrame with ``meta_departure``, ``meta_arrival``,
         ``meta_aircraft_type`` columns added.
     """
-    import polars as pl
-
-    if flightlist is not None:
-        fl_pd = flightlist.data if hasattr(flightlist, "data") else flightlist
-        fl = pl.from_pandas(fl_pd) if not isinstance(fl_pd, pl.DataFrame) else fl_pd
-
-        if len(fl) > 0 and "icao24" in fl.columns:
-            if "callsign" in fl.columns:
-                fl = fl.with_columns(
-                    pl.col("callsign").fill_null("NOCALL").str.strip_chars().alias("callsign"),
-                )
-            # Normalize raw_callsign for join
-            df = df.with_columns(
-                pl.col("raw_callsign").fill_null("NOCALL").str.strip_chars().alias("_fl_callsign"),
-            )
-            fl_cols = [c for c in ("departure", "arrival", "typecode") if c in fl.columns]
-            if fl_cols:
-                fl_select = fl.select(["icao24", "callsign", *fl_cols]).unique(
-                    subset=["icao24", "callsign"],
-                    keep="first",
-                )
-                df = df.join(
-                    fl_select,
-                    left_on=["raw_icao24", "_fl_callsign"],
-                    right_on=["icao24", "callsign"],
-                    how="left",
-                )
-                rename = {
-                    c: f"meta_{alias}"
-                    for c, alias in [
-                        ("departure", "departure"),
-                        ("arrival", "arrival"),
-                        ("typecode", "aircraft_type"),
-                    ]
-                    if c in df.columns
-                }
-                df = df.rename(rename)
-            df = df.drop("_fl_callsign")
-
-    for col in ("meta_departure", "meta_arrival", "meta_aircraft_type"):
-        if col not in df.columns:
-            df = df.with_columns(pl.lit(None).cast(pl.Utf8).alias(col))
-    return df
+    fl = _coerce_flightlist(flightlist)
+    if fl is not None:
+        df = _join_flight_meta(df, fl)
+    return _ensure_meta_columns(df)
 
 
 def identify(
@@ -459,6 +491,48 @@ def identify(
 # ---------------------------------------------------------------------------
 
 
+def _ensure_identify_ran(df: pl.DataFrame) -> None:
+    if "meta_flight_id" in df.columns and not df["meta_flight_id"].is_null().all():
+        return
+    log.error("preprocess_missing_identify", msg="meta_flight_id is missing or all null")
+    print(  # noqa: T201
+        "Error: 'identify' must be run before 'preprocess'. "
+        "Run 'fdm identify --config ...' first.",
+        file=sys.stderr,
+    )
+    raise SystemExit(1)
+
+
+def _drop_pre_existing(df: pl.DataFrame) -> pl.DataFrame:
+    pre_existing = [c for c in df.columns if c.startswith("pre_gap_")]
+    if pre_existing:
+        log.info("preprocess_drop_existing", columns=pre_existing)
+        df = df.drop(pre_existing)
+    return df
+
+
+def _cast_null_columns(result: pl.DataFrame) -> pl.DataFrame:
+    import polars as pl
+
+    null_cols = [c for c in result.columns if result[c].dtype == pl.Null]
+    if not null_cols:
+        return result
+    log.info("preprocess_cast_null_cols", columns=null_cols)
+    return result.with_columns([pl.col(c).cast(pl.Float64) for c in null_cols])
+
+
+def _build_preprocess_write_options(result: pl.DataFrame, delta_table: Path) -> dict[str, object]:
+    options: dict[str, object] = {"schema_mode": "merge"}
+    if "meta_batch_date" not in result.columns:
+        return options
+    options["partition_by"] = ["meta_batch_date"]
+    if delta_table.exists():
+        dates = result["meta_batch_date"].unique().sort().to_list()
+        quoted = ", ".join(f"'{d}'" for d in dates)
+        options["predicate"] = f"meta_batch_date IN ({quoted})"
+    return options
+
+
 def preprocess(
     *,
     config: Path,
@@ -485,19 +559,16 @@ def preprocess(
         log.info("preprocess_dry_run", msg="Config valid, would preprocess")
         return
 
-    import polars as pl
     from node_fdm_data.delta import read_delta_table
     from node_fdm_data.preprocessing.resample import preprocess_flights
 
     df = read_delta_table(delta_table)
+    _ensure_identify_ran(df)
+
     rows_before = len(df)
     flights_before = df["meta_flight_id"].n_unique()
 
-    # Drop existing preprocess columns to allow re-run
-    pre_existing = [c for c in df.columns if c.startswith("pre_gap_")]
-    if pre_existing:
-        log.info("preprocess_drop_existing", columns=pre_existing)
-        df = df.drop(pre_existing)
+    df = _drop_pre_existing(df)
 
     result = preprocess_flights(
         df,
@@ -507,23 +578,12 @@ def preprocess(
         smooth=cfg.preprocess.smooth,
     )
 
-    # Cast Null-typed columns (all-null after resample) to Float64 for Delta Lake
-    null_cols = [c for c in result.columns if result[c].dtype == pl.Null]
-    if null_cols:
-        log.info("preprocess_cast_null_cols", columns=null_cols)
-        result = result.with_columns(
-            [pl.col(c).cast(pl.Float64) for c in null_cols],
-        )
-
-    # Overwrite entire table (row count changes with resampling)
-    delta_write_options: dict[str, object] = {"schema_mode": "merge"}
-    if "meta_batch_date" in result.columns:
-        delta_write_options["partition_by"] = ["meta_batch_date"]
+    result = _cast_null_columns(result)
 
     result.write_delta(
         str(delta_table),
         mode="overwrite",
-        delta_write_options=delta_write_options,
+        delta_write_options=_build_preprocess_write_options(result, delta_table),
     )
 
     log.info(
@@ -635,8 +695,7 @@ def enrich(
     except ImportError:
         log.error(
             "fastmeteo_missing",
-            msg="fastmeteo is required for ERA5 enrichment. "
-            "Install with: pip install fastmeteo",
+            msg="fastmeteo is required for ERA5 enrichment. Install with: pip install fastmeteo",
         )
         raise SystemExit(1) from None
 
@@ -721,6 +780,85 @@ def derive(
     )
 
 
+def clean_speeds(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Clean BDS speed signals per flight (Hampel + ERA fill).
+
+    Reads the Delta Table, runs
+    :func:`~node_fdm_data.preprocessing.clean_speeds.clean_bds_speeds`
+    on each ``meta_flight_id`` group, and writes the new
+    ``bds_*_clean`` columns back.  Raw ``bds_*`` columns are never
+    modified; existing ``bds_*_clean`` columns are dropped before
+    recomputation, making the stage idempotent.
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    import polars as pl
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+    cs_cfg = cfg.clean_speeds
+
+    log.info("clean_speeds_start", table=str(delta_table))
+
+    if dry_run:
+        log.info("clean_speeds_dry_run", msg="Config valid, would clean BDS speeds")
+        return
+
+    df = read_delta_table(delta_table)
+
+    clean_existing = [c for c in df.columns if c.startswith("bds_") and c.endswith("_clean")]
+    if clean_existing:
+        log.info("clean_speeds_drop_existing", columns=clean_existing)
+        df = df.drop(clean_existing)
+
+    flights = df.partition_by("meta_flight_id", maintain_order=True)
+    processed: list[pl.DataFrame] = []
+    for flight_df in flights:
+        processed.append(
+            clean_bds_speeds(
+                flight_df,
+                bds_window=cs_cfg.bds_window,
+                era_window=cs_cfg.era_window,
+                k=cs_cfg.k,
+                n_passes=cs_cfg.n_passes,
+                interp_max_gap=cs_cfg.interp_max_gap,
+                frozen_min_run_len_mach=cs_cfg.frozen_min_run_len_mach,
+                frozen_min_run_len_ias=cs_cfg.frozen_min_run_len_ias,
+                frozen_min_run_len_tas=cs_cfg.frozen_min_run_len_tas,
+                point_jump_max_mach=cs_cfg.point_jump_max_mach,
+                point_jump_max_kt=cs_cfg.point_jump_max_kt,
+                zigzag_jump_min_mach=cs_cfg.zigzag_jump_min_mach,
+                zigzag_jump_min_kt=cs_cfg.zigzag_jump_min_kt,
+                zigzag_half_window=cs_cfg.zigzag_half_window,
+                zigzag_density_min_bds=cs_cfg.zigzag_density_min_bds,
+                zigzag_density_min_era=cs_cfg.zigzag_density_min_era,
+                on_ground_vz_threshold=cs_cfg.on_ground_vz_threshold,
+                on_ground_alt_threshold=cs_cfg.on_ground_alt_threshold,
+            )
+        )
+
+    df = pl.concat(processed, how="diagonal_relaxed")
+    write_columns(df, delta_table)
+
+    clean_cols = [c for c in df.columns if c.startswith("bds_") and c.endswith("_clean")]
+    log.info(
+        "clean_speeds_done",
+        rows=len(df),
+        flights=len(processed),
+        clean_cols=clean_cols,
+    )
+
+
 def segments(
     *,
     config: Path,
@@ -781,6 +919,60 @@ def segments(
     )
 
 
+def _segments_run(*, input_path: str, output_path: str) -> None:
+    """Run segment detection on a stand-alone Delta table I/O boundary.
+
+    Reads the Delta table at *input_path*, partitions per ``flight_id`` (or
+    ``meta_flight_id`` when present), runs :func:`build_selected_params` per
+    flight with the default selected-parameter config, and writes the result
+    to *output_path*.  Used by integration tests that exercise the on-disk
+    contract (e.g. ``fdm_tas_target_known`` emission, no-global-backfill
+    invariant) without needing the full pipeline config plumbing.
+    """
+    import deltalake
+    import polars as pl
+    from node_fdm_data.segments import build_selected_params
+
+    from node_fdm_pipeline.config import SelectedParamConfig
+
+    df = pl.read_delta(input_path)
+    sel_config = SelectedParamConfig().model_dump()
+
+    partition_col: str | None = None
+    for candidate in ("meta_flight_id", "flight_id"):
+        if candidate in df.columns:
+            partition_col = candidate
+            break
+
+    flights = (
+        df.partition_by(partition_col, maintain_order=True) if partition_col is not None else [df]
+    )
+    processed = [build_selected_params(flight, sel_config) for flight in flights]
+    out = pl.concat(processed, how="diagonal_relaxed")
+
+    deltalake.write_deltalake(output_path, out.to_arrow(), mode="overwrite")
+
+
+segments.run = _segments_run  # type: ignore[attr-defined]
+
+
+def _drop_existing_convert_columns(df: pl.DataFrame) -> pl.DataFrame:
+    from node_fdm_data.preprocessing.convert import SI_CONVERSIONS, SI_DERIVATIVES
+
+    targets = {t for _, _, t in SI_CONVERSIONS} | {t for _, t in SI_DERIVATIVES}
+    existing = [c for c in df.columns if c in targets]
+    if not existing:
+        return df
+    log.info("convert_drop_existing", columns=existing)
+    return df.drop(existing)
+
+
+def _collect_convert_output_columns(df: pl.DataFrame) -> tuple[list[str], list[str]]:
+    si_cols = [c for c in df.columns if c.endswith(("_m", "_ms"))]
+    deriv_cols = [c for c in df.columns if c.startswith("fdm_d_")]
+    return si_cols, deriv_cols
+
+
 def convert(
     *,
     config: Path,
@@ -815,24 +1007,13 @@ def convert(
         return
 
     df = read_delta_table(delta_table)
-
-    # Drop existing SI and derivative columns to allow re-conversion
-    from node_fdm_data.preprocessing.convert import SI_CONVERSIONS, SI_DERIVATIVES
-
-    si_targets = {target for _, _, target in SI_CONVERSIONS}
-    deriv_targets = {target for _, target in SI_DERIVATIVES}
-    convert_existing = [c for c in df.columns if c in si_targets or c in deriv_targets]
-    if convert_existing:
-        log.info("convert_drop_existing", columns=convert_existing)
-        df = df.drop(convert_existing)
-
+    df = _drop_existing_convert_columns(df)
     df = convert_si(df)
     df = compute_derivatives(df)
 
     write_columns(df, delta_table)
 
-    si_cols = [c for c in df.columns if c.endswith(("_m", "_ms"))]
-    deriv_cols = [c for c in df.columns if c.startswith("fdm_d_")]
+    si_cols, deriv_cols = _collect_convert_output_columns(df)
     log.info(
         "convert_done",
         rows=len(df),

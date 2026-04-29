@@ -15,7 +15,13 @@ import torch
 from pydantic import BaseModel
 
 from node_fdm.architectures.registry import get
+from node_fdm.models.batch_neural_ode import BatchNeuralODE
 from node_fdm.models.fdm_prod import FlightDynamicsModelProd
+from node_fdm.models.projected_integrator import (
+    ClampedEuler,
+    ClampedRK4,
+    _clamp_columns,
+)
 
 __all__ = [
     "ColumnStats",
@@ -38,6 +44,8 @@ class ColumnStats(BaseModel, frozen=True):
     mean: float
     std: float
     max: float
+    p999: float = 0.0
+    iqr: float = 0.0
 
 
 class ModelMeta(BaseModel):
@@ -110,7 +118,7 @@ class NodeFDMPredictor:
 
         # Build stats_dict in the format expected by FlightDynamicsModelProd
         stats_plain: dict[str, dict[str, float]] = {
-            col: {"mean": s.mean, "std": s.std, "max": s.max}
+            col: {"mean": s.mean, "std": s.std, "max": s.max, "p999": s.p999, "iqr": s.iqr}
             for col, s in self.meta.stats_dict.items()
         }
 
@@ -135,6 +143,11 @@ class NodeFDMPredictor:
     ) -> dict[str, np.ndarray]:
         """Generate model predictions for a flight.
 
+        Uses the same integration pipeline as the trainer
+        (``BatchNeuralODE`` + ``ClampedRK4`` / ``ClampedEuler``) so that
+        control and environment inputs are linearly interpolated at
+        intermediate RK4 sub-steps.
+
         Args:
             x_init: Initial state vector of shape ``(n_x,)``.
             u_seq: Control sequence of shape ``(n_steps, n_u)``.
@@ -153,80 +166,53 @@ class NodeFDMPredictor:
             raise ValueError(msg)
 
         n_steps = u_seq.shape[0]
-        results: dict[str, list[float]] = {col: [] for col in self.spec.x_cols}
+        step = self.meta.step
 
-        x_t = torch.tensor(x_init, dtype=torch.float32, device=self.device).unsqueeze(0)
+        # Resolve physical bounds from architecture spec
+        x_bounds_idx = self._resolve_bounds(self.spec.x_bounds, self.spec.x_cols)
+        dx_bounds_idx = self._resolve_bounds(self.spec.dx_bounds, self.spec.dx_cols)
+
+        # Build tensors with batch dim = 1 (same shape as trainer).
+        # Pad u/e with a repeated last row so that the solver can
+        # interpolate at the final time point (t_grid has n_steps+1
+        # entries: x0 at t=0 plus n_steps predictions).
+        x0 = torch.tensor(x_init, dtype=torch.float32, device=self.device).unsqueeze(0)
+        u_pad = np.concatenate([u_seq, u_seq[-1:]], axis=0)
+        e_pad = np.concatenate([e_seq, e_seq[-1:]], axis=0)
+        u_t = torch.tensor(u_pad, dtype=torch.float32, device=self.device).unsqueeze(0)
+        e_t = torch.tensor(e_pad, dtype=torch.float32, device=self.device).unsqueeze(0)
+        t_grid = torch.arange(
+            0, (n_steps + 1) * step, step, dtype=torch.float32, device=self.device
+        )
 
         with torch.no_grad():
-            for i in range(n_steps):
-                u_t = torch.tensor(
-                    u_seq[i],
-                    dtype=torch.float32,
-                    device=self.device,
-                ).unsqueeze(0)
-                e_t = torch.tensor(
-                    e_seq[i],
-                    dtype=torch.float32,
-                    device=self.device,
-                ).unsqueeze(0)
+            self.model.reset_history()
+            func = BatchNeuralODE(self.model, u_t, e_t, t_grid, dx_bounds=dx_bounds_idx)
 
-                if self.meta.method == "rk4":
-                    x_t = self._rk4_step(x_t, u_t, e_t)
-                else:
-                    x_t = self._euler_step(x_t, u_t, e_t)
+            project_fn = (lambda x: _clamp_columns(x, x_bounds_idx)) if x_bounds_idx else None
+            solver_kwargs = {"atol": 1e-6, "rtol": 1e-3, "step_size": step}
 
-                for j, col in enumerate(self.spec.x_cols):
-                    results[col].append(x_t[0, j].item())
+            if self.meta.method == "rk4":
+                solver = ClampedRK4(func, x0, project_fn=project_fn, **solver_kwargs)
+            else:
+                solver = ClampedEuler(func, x0, project_fn=project_fn, **solver_kwargs)
 
-        return {col: np.array(vals) for col, vals in results.items()}
+            # (time, batch, n_x) — first entry is x0, skip it
+            x_pred = solver.integrate(t_grid)[1:, 0, :].cpu().numpy()
 
-    def _euler_step(
-        self,
-        x_t: torch.Tensor,
-        u_t: torch.Tensor,
-        e_t: torch.Tensor,
-    ) -> torch.Tensor:
-        """Advance state by one Euler step."""
-        self.model.reset_history()
-        dx = self.model(x_t, u_t, e_t)
-        x_next = x_t.clone()
-        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
-            x_next[0, j] = x_t[0, j] + coeff * self.meta.step * dx[0, j]
-        return x_next
+        return {col: x_pred[:, j] for j, col in enumerate(self.spec.x_cols)}
 
-    def _rk4_step(
-        self,
-        x_t: torch.Tensor,
-        u_t: torch.Tensor,
-        e_t: torch.Tensor,
-    ) -> torch.Tensor:
-        """Advance state by one classical RK4 step."""
-        dt = self.meta.step
-
-        self.model.reset_history()
-        k1 = self.model(x_t, u_t, e_t)
-
-        x2 = x_t.clone()
-        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
-            x2[0, j] = x_t[0, j] + 0.5 * coeff * dt * k1[0, j]
-        self.model.reset_history()
-        k2 = self.model(x2, u_t, e_t)
-
-        x3 = x_t.clone()
-        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
-            x3[0, j] = x_t[0, j] + 0.5 * coeff * dt * k2[0, j]
-        self.model.reset_history()
-        k3 = self.model(x3, u_t, e_t)
-
-        x4 = x_t.clone()
-        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
-            x4[0, j] = x_t[0, j] + coeff * dt * k3[0, j]
-        self.model.reset_history()
-        k4 = self.model(x4, u_t, e_t)
-
-        x_next = x_t.clone()
-        for j, (coeff, _col) in enumerate(self.spec.dx_cols):
-            x_next[0, j] = (
-                x_t[0, j] + coeff * dt * (k1[0, j] + 2 * k2[0, j] + 2 * k3[0, j] + k4[0, j]) / 6
-            )
-        return x_next
+    @staticmethod
+    def _resolve_bounds(
+        named_bounds: dict[str, tuple[float, float]],
+        cols: list[str] | list[tuple[int, str]],
+    ) -> dict[int, tuple[float, float]]:
+        """Convert named bounds to column-index bounds."""
+        if not named_bounds:
+            return {}
+        result: dict[int, tuple[float, float]] = {}
+        for i, col in enumerate(cols):
+            name: str = col[1] if isinstance(col, tuple) else col  # type: ignore[assignment]
+            if name in named_bounds:
+                result[i] = named_bounds[name]
+        return result

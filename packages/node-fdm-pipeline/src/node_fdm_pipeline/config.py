@@ -11,6 +11,7 @@ __all__ = [
     "AltFilterConfig",
     "BadaConfig",
     "CasFilterConfig",
+    "CleanSpeedsConfig",
     "ComputingConfig",
     "FlagConfig",
     "GammaFilterConfig",
@@ -19,6 +20,7 @@ __all__ = [
     "PipelineConfig",
     "PreprocessConfig",
     "SelectedParamConfig",
+    "TasFilterConfig",
     "VzFilterConfig",
 ]
 
@@ -145,6 +147,37 @@ class PreprocessConfig(BaseModel, frozen=True):
     smooth: bool = True
 
 
+class CleanSpeedsConfig(BaseModel, frozen=True):
+    """Cleaning of BDS (Mode-S) and ERA5 speed signals.
+
+    Applied per flight by the ``clean-speeds`` stage between ``enrich``
+    and ``derive``.  Produces ``bds_*_clean`` columns plus a derived
+    ``bds_tas_from_cas_kt`` (TAS recomputed from cleaned IAS via the
+    ERA5 static temperature).
+
+    Defaults are calibrated against the visual validation in
+    ``scripts/check_speed_sources_v3.py`` on the production dataset.
+    """
+
+    bds_window: int = 50
+    era_window: int = 15
+    k: float = 3.0
+    n_passes: int = 3
+    interp_max_gap: int = 10
+    frozen_min_run_len_mach: int = 20
+    frozen_min_run_len_ias: int = 20
+    frozen_min_run_len_tas: int = 6
+    point_jump_max_mach: float = 0.05
+    point_jump_max_kt: float = 20.0
+    zigzag_jump_min_mach: float = 0.05
+    zigzag_jump_min_kt: float = 20.0
+    zigzag_half_window: int = 15
+    zigzag_density_min_bds: float = 0.25
+    zigzag_density_min_era: float = 0.15
+    on_ground_vz_threshold: float = 200.0
+    on_ground_alt_threshold: float = 1500.0
+
+
 class FlagConfig(BaseModel, frozen=True):
     """Validity flag thresholds for pipeline v3 étape 2."""
 
@@ -171,6 +204,12 @@ class SelectedParamConfig(BaseModel, frozen=True):
     alt: AltFilterConfig = AltFilterConfig()
     gamma: GammaFilterConfig = GammaFilterConfig()
 
+    # Crossover-aware Mach/CAS detection knobs (see node_fdm_data.segments)
+    cas_deviation_kt: float = 5.0
+    mach_min_value: float = 0.5
+    transition_margin: int = 30
+    cas_search_window: int = 60
+
 
 class PipelineConfig(BaseModel, frozen=True):
     """Root configuration model — replaces raw YAML dict access.
@@ -190,6 +229,7 @@ class PipelineConfig(BaseModel, frozen=True):
     preprocess: PreprocessConfig = PreprocessConfig()
     flag: FlagConfig = FlagConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()
+    clean_speeds: CleanSpeedsConfig = CleanSpeedsConfig()
 
     @field_validator("typecodes", mode="before")
     @classmethod

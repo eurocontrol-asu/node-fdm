@@ -6,7 +6,9 @@ all logic paths in process_single_flight and _run_bada_step.
 
 from __future__ import annotations
 
+from collections.abc import Generator
 from pathlib import Path
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -96,8 +98,9 @@ class TestProcessSingleFlight:
 
         tcl_result = _make_tcl_result()
 
-        with patch("node_fdm_bada.predictor._HAS_PYBADA", True), patch(
-            "node_fdm_bada.predictor._run_bada_step", return_value=tcl_result
+        with (
+            patch("node_fdm_bada.predictor._HAS_PYBADA", True),
+            patch("node_fdm_bada.predictor._run_bada_step", return_value=tcl_result),
         ):
             result = process_single_flight(flight_path=flight_path, ac=mock_ac)
 
@@ -120,12 +123,11 @@ class TestProcessSingleFlight:
         out_dir = tmp_path / "output"
         out_dir.mkdir()
 
-        with patch("node_fdm_bada.predictor._HAS_PYBADA", True), patch(
-            "node_fdm_bada.predictor._run_bada_step", return_value=_make_tcl_result()
+        with (
+            patch("node_fdm_bada.predictor._HAS_PYBADA", True),
+            patch("node_fdm_bada.predictor._run_bada_step", return_value=_make_tcl_result()),
         ):
-            result = process_single_flight(
-                flight_path=flight_path, ac=mock_ac, output_dir=out_dir
-            )
+            result = process_single_flight(flight_path=flight_path, ac=mock_ac, output_dir=out_dir)
 
         assert result is not None
         saved = out_dir / "flight_001.parquet"
@@ -140,12 +142,11 @@ class TestProcessSingleFlight:
         mock_ac.MTOW = 80000.0
         mock_proc = MagicMock()
 
-        with patch("node_fdm_bada.predictor._HAS_PYBADA", True), patch(
-            "node_fdm_bada.predictor._run_bada_step", return_value=_make_tcl_result()
+        with (
+            patch("node_fdm_bada.predictor._HAS_PYBADA", True),
+            patch("node_fdm_bada.predictor._run_bada_step", return_value=_make_tcl_result()),
         ):
-            process_single_flight(
-                flight_path=flight_path, ac=mock_ac, processor=mock_proc
-            )
+            process_single_flight(flight_path=flight_path, ac=mock_ac, processor=mock_proc)
 
         mock_proc.process_flight.assert_called_once()
 
@@ -167,14 +168,15 @@ class TestProcessSingleFlight:
         mock_ac = MagicMock()
         mock_ac.MTOW = 80000.0
 
-        captured_dfs: list[pl.DataFrame] = []
+        _captured_dfs: list[pl.DataFrame] = []
 
         def capture_step(**kwargs: object) -> pd.DataFrame:
             # We just return a valid result
             return _make_tcl_result()
 
-        with patch("node_fdm_bada.predictor._HAS_PYBADA", True), patch(
-            "node_fdm_bada.predictor._run_bada_step", side_effect=capture_step
+        with (
+            patch("node_fdm_bada.predictor._HAS_PYBADA", True),
+            patch("node_fdm_bada.predictor._run_bada_step", side_effect=capture_step),
         ):
             result = process_single_flight(flight_path=flight_path, ac=mock_ac)
 
@@ -203,14 +205,15 @@ class TestProcessSingleFlight:
         mock_ac = MagicMock()
         mock_ac.MTOW = 80000.0
 
-        captured_kwargs: list[dict] = []
+        captured_kwargs: list[dict[str, Any]] = []
 
         def capture_step(**kwargs: object) -> pd.DataFrame:
             captured_kwargs.append(kwargs)
             return _make_tcl_result()
 
-        with patch("node_fdm_bada.predictor._HAS_PYBADA", True), patch(
-            "node_fdm_bada.predictor._run_bada_step", side_effect=capture_step
+        with (
+            patch("node_fdm_bada.predictor._HAS_PYBADA", True),
+            patch("node_fdm_bada.predictor._run_bada_step", side_effect=capture_step),
         ):
             result = process_single_flight(flight_path=path, ac=mock_ac)
 
@@ -237,15 +240,11 @@ class TestRunBadaStep:
         self.mock_accdec = MagicMock(return_value=_make_tcl_result())
         self.mock_target = MagicMock()
 
-        self.patches = [
+        self.patches: list[Any] = [
             patch("node_fdm_bada.predictor._HAS_PYBADA", True),
             patch("node_fdm_bada.predictor.constantSpeedLevel", self.mock_csl, create=True),
-            patch(
-                "node_fdm_bada.predictor.constantSpeedRating_time", self.mock_csr, create=True
-            ),
-            patch(
-                "node_fdm_bada.predictor.constantSpeedROCD_time", self.mock_csrocd, create=True
-            ),
+            patch("node_fdm_bada.predictor.constantSpeedRating_time", self.mock_csr, create=True),
+            patch("node_fdm_bada.predictor.constantSpeedROCD_time", self.mock_csrocd, create=True),
             patch("node_fdm_bada.predictor.accDec_time", self.mock_accdec, create=True),
             patch("node_fdm_bada.predictor.target", self.mock_target, create=True),
         ]
@@ -253,12 +252,12 @@ class TestRunBadaStep:
             p.start()
 
     @pytest.fixture(autouse=True)
-    def _stop_patches(self) -> None:
+    def _stop_patches(self) -> Generator[None]:
         yield
         for p in self.patches:
             p.stop()
 
-    def _base_kwargs(self) -> dict:
+    def _base_kwargs(self) -> dict[str, Any]:
         return {
             "ac": MagicMock(),
             "speed_type": "CAS",
@@ -335,7 +334,7 @@ class TestRunBadaStep:
         self.mock_accdec.side_effect = ValueError("TCL error")
         kwargs = self._base_kwargs()
         kwargs["speed_diff_ratio"] = 0.1
-        result = _run_bada_step(**kwargs)
+        _run_bada_step(**kwargs)
         self.mock_csl.assert_called_once()
 
     def test_rocd_fallback_on_value_error(self) -> None:
@@ -346,7 +345,7 @@ class TestRunBadaStep:
         kwargs = self._base_kwargs()
         kwargs["phase"] = "Descent"
         kwargs["rocd_target"] = -1500.0
-        result = _run_bada_step(**kwargs)
+        _run_bada_step(**kwargs)
         self.mock_csl.assert_called_once()
 
     def test_descent_with_rocd_target_uses_control(self) -> None:

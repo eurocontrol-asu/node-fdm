@@ -3,15 +3,97 @@
 from __future__ import annotations
 
 import importlib
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from node_fdm_pipeline.resolver import ARCH_BY_NAME, resolve_architecture
 
+if TYPE_CHECKING:
+    import polars as pl
+
 __all__ = ["run_resume"]
 
 log = structlog.get_logger("node_fdm_pipeline.commands.resume")
+
+
+@dataclass(frozen=True)
+class _Overrides:
+    epochs: int | None = None
+    batch_size: int | None = None
+    lr: float | None = None
+    seq_len: int | None = None
+    shift: int | None = None
+    method: str | None = None
+    model_name: str | None = None
+    lambda_tracking: float | None = None
+
+
+def _load_meta(model: Path) -> Any:
+    from node_fdm.predictor import ModelMeta
+
+    meta_path = model / "meta.json"
+    if not meta_path.exists():
+        log.error("resume_missing_meta", path=str(meta_path))
+        msg = f"meta.json not found at {meta_path}"
+        raise SystemExit(msg)
+    return ModelMeta.from_json(meta_path)
+
+
+def _resolve_arch_info(architecture_name: str) -> Any:
+    arch_key = ARCH_BY_NAME.get(architecture_name)
+    if arch_key is None:
+        msg = (
+            f"Unknown architecture_name in meta.json: {architecture_name!r}. "
+            f"Known: {', '.join(sorted(ARCH_BY_NAME))}"
+        )
+        raise SystemExit(msg)
+    info = resolve_architecture(arch_key)
+    importlib.import_module(info.architecture_import)
+    return info
+
+
+def _load_data(delta_table: Path, typecode_suffix: str) -> pl.DataFrame:
+    import polars as pl
+
+    if not delta_table.exists():
+        log.error("resume_missing_delta", path=str(delta_table))
+        msg = f"Delta table not found at {delta_table}. Run the pipeline first."
+        raise SystemExit(msg)
+
+    full_df = pl.read_delta(str(delta_table))
+    full_df = full_df.filter(pl.col("fdm_flag_valid"))
+    data_df = full_df.filter(pl.col("meta_aircraft_type") == typecode_suffix)
+
+    if len(data_df) == 0:
+        log.warning("resume_empty_dataset", typecode=typecode_suffix)
+        msg = f"No data for typecode {typecode_suffix!r}."
+        raise SystemExit(msg)
+    return data_df
+
+
+def _build_training_config(meta: Any, model_name: str, ov: _Overrides) -> Any:
+    from node_fdm.trainer import TrainingConfig
+
+    effective_seq_len = ov.seq_len or meta.seq_len
+    effective_shift = ov.shift or effective_seq_len
+    return TrainingConfig(
+        architecture_name=meta.architecture_name,
+        model_name=model_name,
+        model_params=meta.model_params,
+        step=meta.step,
+        shift=effective_shift,
+        lr=ov.lr or meta.lr,
+        weight_decay=1e-4,
+        seq_len=effective_seq_len,
+        batch_size=ov.batch_size or meta.batch_size,
+        epochs=ov.epochs or 200,
+        method=ov.method or meta.method,
+        num_workers=4,
+        lambda_tracking=ov.lambda_tracking or 0.0,
+    )
 
 
 def run_resume(
@@ -25,98 +107,37 @@ def run_resume(
     shift: int | None = None,
     overwrite: bool = False,
     device: str = "cpu",
+    method: str | None = None,
+    model_name: str | None = None,
     lambda_tracking: float | None = None,
+    reset_loss: bool = False,
 ) -> None:
-    """Resume training from a saved model checkpoint.
-
-    Loads ``meta.json`` from *model*, infers the architecture, rebuilds
-    datasets, and continues training.  CLI overrides (epochs, lr, etc.)
-    take precedence over the values stored in the checkpoint.
-
-    Args:
-        model: Path to the model directory containing ``meta.json``.
-        config: Path to YAML pipeline config.
-        epochs: Override number of training epochs.
-        batch_size: Override batch size.
-        lr: Override learning rate.
-        seq_len: Override sequence length for training windows.
-        shift: Override shift between windows.
-        overwrite: Save back into the same model directory.
-        device: PyTorch device string.
-        lambda_tracking: Tracking loss weight (0=disabled).
-    """
-    import polars as pl
+    """Resume training from a saved model checkpoint."""
     from node_fdm.loader import get_train_val_data
-    from node_fdm.predictor import ModelMeta
-    from node_fdm.trainer import ODETrainer, TrainingConfig
+    from node_fdm.trainer import ODETrainer
 
     from node_fdm_pipeline.config import PipelineConfig
 
-    # --- Load meta --------------------------------------------------------
-    meta_path = model / "meta.json"
-    if not meta_path.exists():
-        log.error("resume_missing_meta", path=str(meta_path))
-        msg = f"meta.json not found at {meta_path}"
-        raise SystemExit(msg)
+    meta = _load_meta(model)
+    info = _resolve_arch_info(meta.architecture_name)
 
-    meta = ModelMeta.from_json(meta_path)
-
-    # --- Resolve architecture from meta -----------------------------------
-    arch_key = ARCH_BY_NAME.get(meta.architecture_name)
-    if arch_key is None:
-        msg = (
-            f"Unknown architecture_name in meta.json: {meta.architecture_name!r}. "
-            f"Known: {', '.join(sorted(ARCH_BY_NAME))}"
-        )
-        raise SystemExit(msg)
-
-    info = resolve_architecture(arch_key)
-    importlib.import_module(info.architecture_import)
-
-    # --- Pipeline config & data -------------------------------------------
     cfg = PipelineConfig.from_yaml(config)
+    typecode_suffix = model.name.removeprefix(f"{meta.architecture_name}_")
+    data_df = _load_data(cfg.paths.resolve("delta_table"), typecode_suffix)
 
-    delta_table = cfg.paths.resolve("delta_table")
-    if not delta_table.exists():
-        log.error("resume_missing_delta", path=str(delta_table))
-        msg = f"Delta table not found at {delta_table}. Run the pipeline first."
-        raise SystemExit(msg)
-
-    # Infer typecode from model_name  (e.g. "opensky_2025_A320" → "A320")
-    model_name = model.name
-    typecode_suffix = model_name.removeprefix(f"{meta.architecture_name}_")
-
-    full_df = pl.read_delta(str(delta_table))
-    full_df = full_df.filter(pl.col("fdm_flag_valid"))
-    data_df = full_df.filter(pl.col("meta_aircraft_type") == typecode_suffix)
-
-    if len(data_df) == 0:
-        log.warning("resume_empty_dataset", typecode=typecode_suffix)
-        msg = f"No data for typecode {typecode_suffix!r}."
-        raise SystemExit(msg)
-
-    # --- Build TrainingConfig with overrides ------------------------------
-    effective_seq_len = seq_len or meta.seq_len
-    effective_shift = shift or effective_seq_len
-
-    training_config = TrainingConfig(
-        architecture_name=meta.architecture_name,
+    overrides = _Overrides(
+        epochs=epochs,
+        batch_size=batch_size,
+        lr=lr,
+        seq_len=seq_len,
+        shift=shift,
+        method=method,
         model_name=model_name,
-        model_params=meta.model_params,
-        step=meta.step,
-        shift=effective_shift,
-        lr=lr or meta.lr,
-        weight_decay=1e-4,
-        seq_len=effective_seq_len,
-        batch_size=batch_size or meta.batch_size,
-        epochs=epochs or 200,
-        method=meta.method,
-        num_workers=4,
-        lambda_tracking=lambda_tracking or 0.0,
+        lambda_tracking=lambda_tracking,
     )
+    training_config = _build_training_config(meta, model.name, overrides)
 
     dx_col_names = [col for _, col in info.dx_cols]
-
     train_ds, val_ds = get_train_val_data(
         data_df=data_df,
         x_cols=info.x_cols,
@@ -130,7 +151,6 @@ def run_resume(
         val_limit=5000,
     )
 
-    # --- Determine output directory ---------------------------------------
     models_dir = model.parent if overwrite else cfg.paths.resolve("models_dir")
     models_dir.mkdir(parents=True, exist_ok=True)
 
@@ -150,7 +170,7 @@ def run_resume(
         model_dir=models_dir,
         device=device,
     )
-    trainer.load_model_weights()
+    trainer.load_model_weights(reset_loss=reset_loss)
     trainer.load_optimizer_state()
     trainer.train()
 

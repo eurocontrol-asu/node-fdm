@@ -114,6 +114,71 @@ def compute_errors_by_phase(
     )
 
 
+def _load_flight_frame(
+    flight_df: pl.DataFrame,
+    pred_path: Path,
+    bada_path: Path,
+) -> pl.DataFrame | None:
+    if not pred_path.exists() and not bada_path.exists():
+        return None
+    f = flight_df
+    if pred_path.exists():
+        f = f.hstack(pl.read_parquet(pred_path))
+    if bada_path.exists():
+        f = f.hstack(pl.read_parquet(bada_path))
+    if "raw_alt_ft" in f.columns:
+        f = f.filter(pl.col("raw_alt_ft") > _MIN_ALTITUDE_FT)
+    return f
+
+
+def _collect_acft_frames(
+    acft: str,
+    flights: list[pl.DataFrame],
+    predict_dir: Path,
+    bada_dir: Path,
+) -> list[pl.DataFrame]:
+    acft_frames: list[pl.DataFrame] = []
+    for flight_df in flights:
+        fid = flight_df["meta_flight_id"][0]
+        try:
+            fname = f"{fid}.parquet"
+            f = _load_flight_frame(
+                flight_df,
+                predict_dir / acft / fname,
+                bada_dir / acft / fname,
+            )
+            if f is not None:
+                acft_frames.append(f)
+        except Exception:  # noqa: BLE001
+            log.debug("evaluate_flight_error", flight_id=fid)
+    return acft_frames
+
+
+def _metrics_for_variable(
+    df_acft: pl.DataFrame,
+    acft: str,
+    var: str,
+    label: str,
+    prefix: str,
+) -> pl.DataFrame | None:
+    pred_col = f"{prefix}{var}"
+    if pred_col not in df_acft.columns or var not in df_acft.columns:
+        return None
+    if "raw_vz_ms" not in df_acft.columns:
+        return None
+    metrics = compute_errors_by_phase(
+        df_acft,
+        pred_col=pred_col,
+        target_col=var,
+        vertical_rate_col="raw_vz_ms",
+    )
+    return metrics.with_columns(
+        pl.lit(acft).alias("Aircraft"),
+        pl.lit(label).alias("Variable"),
+        pl.lit(prefix[:-1].upper()).alias("Model"),
+    )
+
+
 def _evaluate_typecode(
     acft: str,
     *,
@@ -127,68 +192,24 @@ def _evaluate_typecode(
     Ground truth comes from the Delta Table (``acft_df``).  Prediction
     and BADA output files are matched by ``meta_flight_id``.
     """
-    acft_bada = bada_dir / acft
-    acft_pred = predict_dir / acft
-    if not acft_bada.exists() and not acft_pred.exists():
+    if not (bada_dir / acft).exists() and not (predict_dir / acft).exists():
         log.info("evaluate_skip_typecode", typecode=acft, reason="no predictions")
         return []
 
     flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
-
     log.info("evaluate_typecode", typecode=acft, flights=len(flights))
 
-    acft_frames: list[pl.DataFrame] = []
-    for flight_df in flights:
-        try:
-            fid = flight_df["meta_flight_id"][0]
-            fname = f"{fid}.parquet"
-
-            pred_path = predict_dir / acft / fname
-            bada_path = bada_dir / acft / fname
-            if not pred_path.exists() and not bada_path.exists():
-                continue
-
-            f = flight_df
-            if pred_path.exists():
-                f = f.hstack(pl.read_parquet(pred_path))
-            if bada_path.exists():
-                f = f.hstack(pl.read_parquet(bada_path))
-
-            # Filter low-altitude data
-            if "raw_alt_ft" in f.columns:
-                f = f.filter(pl.col("raw_alt_ft") > _MIN_ALTITUDE_FT)
-
-            acft_frames.append(f)
-        except Exception:  # noqa: BLE001
-            log.debug("evaluate_flight_error", flight_id=fid)
-            continue
-
+    acft_frames = _collect_acft_frames(acft, flights, predict_dir, bada_dir)
     if not acft_frames:
         return []
 
     df_acft = pl.concat(acft_frames, how="vertical_relaxed")
     results: list[pl.DataFrame] = []
-
     for var, label in variables.items():
-        for prefix in ["bada_", "pred_"]:
-            pred_col = f"{prefix}{var}"
-            if pred_col not in df_acft.columns or var not in df_acft.columns:
-                continue
-            if "raw_vz_ms" not in df_acft.columns:
-                continue
-            metrics = compute_errors_by_phase(
-                df_acft,
-                pred_col=pred_col,
-                target_col=var,
-                vertical_rate_col="raw_vz_ms",
-            )
-            metrics = metrics.with_columns(
-                pl.lit(acft).alias("Aircraft"),
-                pl.lit(label).alias("Variable"),
-                pl.lit(prefix[:-1].upper()).alias("Model"),
-            )
-            results.append(metrics)
-
+        for prefix in ("bada_", "pred_"):
+            metrics = _metrics_for_variable(df_acft, acft, var, label, prefix)
+            if metrics is not None:
+                results.append(metrics)
     return results
 
 

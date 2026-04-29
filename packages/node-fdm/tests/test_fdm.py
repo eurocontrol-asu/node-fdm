@@ -10,7 +10,7 @@ from node_fdm.models.fdm import FlightDynamicsModel
 
 def _make_stats(cols: list[str]) -> dict[str, dict[str, float]]:
     """Create dummy stats dict for all columns."""
-    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0} for col in cols}
+    return {col: {"mean": 0.0, "std": 1.0, "max": 1.0, "p999": 0.8} for col in cols}
 
 
 class TestFDMOpenSky:

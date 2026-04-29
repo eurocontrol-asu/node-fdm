@@ -9,13 +9,13 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 
 - **Unit conversions** — 14 pure Polars expressions (`ft_to_m`, `kt_to_ms`, `celsius_to_kelvin`, `deg_to_rad`, …)
 - **ISA model** — Temperature, pressure, and density as numpy functions (`isa_temperature`, `isa_pressure`, `isa_density`) plus a Polars expression variant (`isa_pressure_expr`)
-- **Speed conversions** — `mach_to_tas`, `cas_to_tas`, and `vz_to_gamma` using ISA model, isentropic compressible-flow relations, and flight-path angle geometry
+- **Speed conversions** — `mach_to_tas`, `cas_to_tas`, and `vz_to_gamma` using ISA model, isentropic compressible-flow relations, and flight-path angle geometry; `mach_to_tas_real` and `cas_to_tas_real` accept an explicit static temperature (e.g. ERA5 reanalysis) instead of deriving it from ISA
 - **Physics constants** — ISA atmosphere parameters, unit conversion factors, QAR discrete-signal lookup tables
 - **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components; Polars expression variants: `haversine_expr`, `compute_mach_expr`, `compute_cas_expr`
 - **Column schemas** — OpenSky 2025, QAR, and ADS-B architectures with typed column lists and conversion registries
 - **Flight processor** — Configurable `FlightProcessor` pipeline with method-chaining API
-- **Segment detection** — `build_selected_params` detects constant-speed/altitude plateaus and produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`, `fdm_gamma_target_rad`); `fdm_gamma_target_rad` fuses three sources with priority vz→gamma (highest) > gamma_sel > gamma_from_alt=0 / ALT HLD (lowest), NaN-preserving (gaps between segments stay NaN); `GammaFilterConfig` provides sensible defaults including `min_abs_value` to filter near-zero cruise plateaus; altitude plateaus also emit `fdm_gamma_from_alt_rad` (0.0 in level flight, NaN elsewhere)
-- **Preprocessing** — SI conversion with precomputed delta columns (`fdm_alt_diff_m`, `fdm_tas_diff_ms`, `fdm_gamma_diff_rad`; diff=0 where target is NaN), temporal derivatives, OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction)
+- **Segment detection** — `build_selected_params` detects constant-speed/altitude plateaus and produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`, `fdm_gamma_target_rad`) plus a `fdm_tas_target_known` boolean mask (True iff TAS target is non-NaN). Mach detection is restricted to altitude plateaus and aberrant low-Mach segments (mean below `mach_min_value`, default 0.5) are dropped. The TAS target is the FMS envelope `min(mach_to_tas_real, cas_to_tas_real)` on overlap, single-source TAS elsewhere, NaN where neither segment covers (no global backward-fill); ERA5 `era_temp_K` is used when present, ISA otherwise. Climb/descent transition CAS is recovered by minimising `Σ (min(mach_to_tas_real, cas_to_tas_real) − TAS_real)²` and walking outward from the cruise boundary while `|CAS_real − CAS_opt| ≤ cas_deviation_kt` (default 5 kt). `fdm_gamma_target_rad` fuses three sources with priority vz→gamma (highest) > gamma_sel > gamma_from_alt=0 / ALT HLD (lowest), NaN-preserving (gaps between segments stay NaN); `GammaFilterConfig` provides sensible defaults including `min_abs_value` to filter near-zero cruise plateaus; altitude plateaus also emit `fdm_gamma_from_alt_rad` (0.0 in level flight, NaN elsewhere)
+- **Preprocessing** — SI conversion with precomputed delta columns (`fdm_alt_diff_m`, `fdm_tas_diff_ms`, `fdm_gamma_diff_rad`; diff=0 where target is NaN), temporal derivatives, OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction); BDS speed cleaning (`clean_speeds`, `clean_bds_speeds`: multi-pass Hampel + ERA-deviation cap + short-gap interpolation)
 - **Dataset splitting** — `split_by_icao` for deterministic train/val/test split (prevents data leakage)
 
 ## Installation
@@ -70,11 +70,19 @@ rho = isa_density(h)     # 0.3836 kg/m³
 ### Speed conversions (Mach/CAS to TAS)
 
 ```python
-from node_fdm_data.physics.speed import mach_to_tas, cas_to_tas, vz_to_gamma
+from node_fdm_data.physics.speed import (
+    cas_to_tas,
+    cas_to_tas_real,
+    mach_to_tas,
+    mach_to_tas_real,
+    vz_to_gamma,
+)
 
-tas = mach_to_tas(0.78, 10_000.0)   # Mach 0.78 at 10 km → ~233 m/s
-tas = cas_to_tas(128.6, 10_000.0)   # 250 kt CAS at 10 km → ~212 m/s
-gamma = vz_to_gamma(10.0, 250.0)    # 10 m/s climb at 250 m/s TAS → ~0.04 rad
+tas = mach_to_tas(0.78, 10_000.0)         # Mach 0.78 at 10 km (ISA) → ~233 m/s
+tas = cas_to_tas(128.6, 10_000.0)         # 250 kt CAS at 10 km (ISA) → ~212 m/s
+tas = mach_to_tas_real(0.78, 213.0)       # Mach 0.78 at T=213 K (ERA5) → ~228 m/s
+tas = cas_to_tas_real(128.6, 10_000.0, 213.0)  # 250 kt CAS at 10 km, T=213 K
+gamma = vz_to_gamma(10.0, 250.0)          # 10 m/s climb at 250 m/s TAS → ~0.04 rad
 ```
 
 ### Column schemas
@@ -112,7 +120,7 @@ split_df = split_by_icao(df, ratios=(0.7, 0.15, 0.15), seed=42)
 
 ## Development
 
-<!-- 256 tests -->
+<!-- 394 tests -->
 ```bash
 uv run pytest packages/node-fdm-data/ -q
 uv run ruff check packages/node-fdm-data/

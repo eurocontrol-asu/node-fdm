@@ -107,10 +107,14 @@ def compute_stats(
     stats: dict[str, dict[str, float]] = {}
     for i, col in enumerate(all_cols):
         vals = data[:, i]
+        p05 = torch.quantile(vals, 0.005).item()
+        p995 = torch.quantile(vals, 0.995).item()
         stats[col] = {
             "mean": vals.mean().item(),
             "std": vals.std().item() + 1e-6,
             "max": vals.abs().max().item(),
+            "p999": torch.quantile(vals.abs(), 0.999).item(),
+            "iqr": max(p995 - p05, 1e-6),
         }
 
     # Append extra E1 columns if provided
@@ -122,6 +126,8 @@ def compute_stats(
             # (loader may skip missing columns)
             n_e1 = e1_all.shape[1]
             for i, col in enumerate(e1_cols[:n_e1]):
+                if col in stats:
+                    continue  # DX/E stats take precedence over E1
                 vals = e1_all[:, i]
                 finite_mask = vals.isfinite()
                 clean = vals[finite_mask] if not finite_mask.all() else vals

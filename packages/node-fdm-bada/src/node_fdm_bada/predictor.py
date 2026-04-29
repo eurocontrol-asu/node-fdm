@@ -17,10 +17,10 @@ from typing import TYPE_CHECKING, Any
 import numpy as np
 import polars as pl
 import structlog
-
-from node_fdm_bada.utils import get_phase, ms_to_kt, tas_to_cas
 from node_fdm_data.physics.constants import FT
 from node_fdm_data.physics.isa import isa_temperature
+
+from node_fdm_bada.utils import get_phase, ms_to_kt, tas_to_cas
 
 __all__ = [
     "process_single_flight",

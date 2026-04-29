@@ -24,23 +24,47 @@ GROUPS: list[tuple[str, str, list[tuple[str, str, dict[str, object]]]]] = [
         ],
     ),
     (
-        "Groundspeed / TAS",
+        "TAS",
         "kt",
         [
-            ("raw_gs_kt", "GS raw", {"alpha": 0.4, "lw": 0.5}),
-            ("bds_tas_kt", "BDS TAS", {"alpha": 0.6, "lw": 0.8}),
-            ("era_tas_kt", "ERA5 TAS", {"lw": 1.2}),
-            ("bds_ias_kt", "BDS IAS", {"alpha": 0.5, "lw": 0.8, "ls": "--"}),
-            ("era_cas_kt", "ERA5 CAS", {"lw": 1.2, "ls": "--"}),
-            ("fdm_cas_sel_kt", "fdm CAS sel", {"lw": 1.5, "ls": "-", "color": "tab:red"}),
+            ("raw_gs_kt", "GS raw", {"alpha": 0.3, "lw": 0.5, "color": "tab:gray"}),
+            ("bds_tas_kt", "BDS TAS raw", {"alpha": 0.4, "lw": 0.6}),
+            ("bds_tas_kt_clean", "BDS TAS clean", {"alpha": 0.7, "lw": 0.9}),
+            ("era_tas_kt", "ERA5 TAS", {"alpha": 0.6, "lw": 1.0, "color": "tab:orange"}),
+            (
+                "bds_tas_from_cas_kt",
+                "TAS from CAS clean",
+                {"lw": 1.5, "color": "tab:green"},
+            ),
+            (
+                "fdm_tas_target_kt",
+                "fdm TAS target",
+                {"lw": 1.5, "color": "tab:red"},
+            ),
+        ],
+    ),
+    (
+        "CAS / IAS",
+        "kt",
+        [
+            ("bds_ias_kt", "BDS IAS raw", {"alpha": 0.4, "lw": 0.6}),
+            ("bds_ias_kt_clean", "BDS IAS clean", {"alpha": 0.7, "lw": 0.9}),
+            ("era_cas_kt", "ERA5 CAS", {"alpha": 0.6, "lw": 1.0, "color": "tab:orange"}),
+            ("fdm_cas_sel_kt", "fdm CAS sel", {"lw": 1.5, "color": "tab:red"}),
+            (
+                "fdm_cas_target_kt",
+                "fdm CAS target",
+                {"lw": 1.2, "ls": ":", "color": "tab:red"},
+            ),
         ],
     ),
     (
         "Mach",
         "",
         [
-            ("bds_mach", "BDS mach", {"alpha": 0.5, "lw": 0.8}),
-            ("era_mach", "ERA5 mach", {"lw": 1.2}),
+            ("bds_mach", "BDS mach raw", {"alpha": 0.4, "lw": 0.6}),
+            ("bds_mach_clean", "BDS mach clean", {"alpha": 0.7, "lw": 0.9}),
+            ("era_mach", "ERA5 mach", {"alpha": 0.6, "lw": 1.0, "color": "tab:orange"}),
             ("fdm_mach_sel", "fdm mach sel", {"lw": 1.5, "color": "tab:red"}),
         ],
     ),
@@ -96,7 +120,7 @@ GROUPS: list[tuple[str, str, list[tuple[str, str, dict[str, object]]]]] = [
         "Derivatives",
         "",
         [
-            ("fdm_d_tas_ms", "d(TAS)/dt [m/s²]", {"lw": 0.8}),
+            ("fdm_d_tas_ms2", "d(TAS)/dt [m/s²]", {"lw": 0.8}),
             ("fdm_d_vz_ms", "d(Vz)/dt [m/s²]", {"lw": 0.8}),
             ("fdm_d_gamma_rads", "d(gamma)/dt [rad/s]", {"lw": 0.8}),
         ],
@@ -158,8 +182,8 @@ def plot_flight(df: pl.DataFrame, flight_id: str) -> None:
 
 
 def main() -> None:
-    config_dir = Path(__file__).resolve().parent.parent
-    delta_path = config_dir / "data" / "flights.delta"
+    repo_root = Path(__file__).resolve().parent.parent.parent
+    delta_path = repo_root / "data" / "flights.delta"
 
     if not delta_path.exists():
         print(f"Delta table not found: {delta_path}", file=sys.stderr)
