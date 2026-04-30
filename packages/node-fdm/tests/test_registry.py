@@ -124,12 +124,19 @@ class TestArchitectureSpecBounds:
         assert spec.dx_bounds == {}
 
     def test_adsb_bounds_registered(self) -> None:
-        """node_adsb_v1 spec declares physical bounds."""
+        """node_adsb_v1 spec declares physical bounds.
+
+        ``fdm_heading_rad`` is intentionally NOT bounded (Phase 2B
+        Decision 4: the projected integrator would clip the wrap-around
+        instead of letting it wrap freely).
+        """
         import node_fdm.architectures.adsb  # noqa: F401 — triggers auto-register
 
         spec = get("node_adsb_v1")
         assert len(spec.x_bounds) == 3
-        assert len(spec.dx_bounds) == 3
+        assert "fdm_heading_rad" not in spec.x_bounds
+        assert len(spec.dx_bounds) == 4
+        assert spec.dx_bounds["fdm_d_heading_rads"] == (-0.1, 0.1)
 
     def test_partial_bounds(self) -> None:
         """Only some columns have bounds; unbounded columns unaffected."""

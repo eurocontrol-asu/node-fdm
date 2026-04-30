@@ -68,12 +68,21 @@ class PhysicsLayer(nn.Module):
         (``"scaled"``, ``"normal_clamp"``) behave correctly.  This layer
         adds ``1`` back before applying the dynamics equation.
 
+        When ``fdm_phi_bank_rad`` is present in the input mapping (lateral
+        channel), this layer also emits ``fdm_d_heading_rads`` from the
+        coordinated-turn equation ``d_heading = (g/V)·tan(phi_bank)``.
+        ``phi_bank`` is hard-capped upstream (StructuredLayer cap=1.0 rad);
+        the resulting rate can exceed ±0.1 rad/s and is bounded again by
+        the projected integrator's ``dx_bounds``.
+
         Args:
             x: Mapping containing ``fdm_a_spec_ms2``, ``fdm_n_z_residual``,
-                ``era_tas_ms``, and ``fdm_gamma_rad``.
+                ``era_tas_ms``, ``fdm_gamma_rad`` and (optional)
+                ``fdm_phi_bank_rad``.
 
         Returns:
-            Dictionary with ``fdm_d_tas_ms2`` and ``fdm_d_gamma_rads``.
+            Dictionary with ``fdm_d_tas_ms2``, ``fdm_d_gamma_rads``,
+            ``fdm_n_z`` and (when phi_bank is provided) ``fdm_d_heading_rads``.
         """
         a_spec = x["fdm_a_spec_ms2"]
         n_z = x["fdm_n_z_residual"] + 1.0
@@ -84,8 +93,15 @@ class PhysicsLayer(nn.Module):
         d_tas = a_spec - G * torch.sin(gamma)
         d_gamma = (G / tas_safe) * (n_z - torch.cos(gamma))
 
-        return {
+        out: dict[str, torch.Tensor] = {
             "fdm_d_tas_ms2": d_tas,
             "fdm_d_gamma_rads": d_gamma,
             "fdm_n_z": n_z,
         }
+
+        if "fdm_phi_bank_rad" in x:
+            phi_bank = x["fdm_phi_bank_rad"]
+            d_heading = (G / tas_safe) * torch.tan(phi_bank)
+            out["fdm_d_heading_rads"] = d_heading
+
+        return out

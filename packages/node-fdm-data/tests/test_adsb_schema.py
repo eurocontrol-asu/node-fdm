@@ -9,23 +9,30 @@ class TestAdsbSchema:
     """Tests for the adsb schema simplifications vs opensky_2025."""
 
     def test_x_cols_no_distance(self) -> None:
-        """X_COLS removes fdm_distance_cum_m, keeps 3 state variables."""
+        """X_COLS removes fdm_distance_cum_m, keeps 4 state variables (Phase 2B)."""
         assert "fdm_distance_cum_m" not in adsb.X_COLS
-        assert len(adsb.X_COLS) == 3
+        assert len(adsb.X_COLS) == 4
 
     def test_x_cols_content(self) -> None:
-        """X_COLS contains the expected state variables."""
-        assert adsb.X_COLS == ["raw_alt_m", "fdm_gamma_rad", "era_tas_ms"]
+        """X_COLS contains the expected state variables incl. heading (Phase 2B)."""
+        assert adsb.X_COLS == [
+            "raw_alt_m",
+            "fdm_gamma_rad",
+            "era_tas_ms",
+            "fdm_heading_rad",
+        ]
 
     def test_u_cols_alt_target(self) -> None:
         """U_COLS[0] is fdm_alt_target_m (robust, never NaN)."""
         assert adsb.U_COLS[0] == "fdm_alt_target_m"
 
     def test_e0_cols_no_airport_dist(self) -> None:
-        """E0_COLS has 2 variables, no airport distances."""
-        assert len(adsb.E0_COLS) == 2
+        """E0_COLS has 4 variables (long_wind, temp, u_wind, v_wind); no airport distances."""
+        assert len(adsb.E0_COLS) == 4
         assert "fdm_adep_dist_m" not in adsb.E0_COLS
         assert "fdm_ades_dist_m" not in adsb.E0_COLS
+        assert "era_u_wind_ms" in adsb.E0_COLS
+        assert "era_v_wind_ms" in adsb.E0_COLS
 
     def test_e1_cols_has_error_signals(self) -> None:
         """E1_COLS contains diff error signals and fdm_cas_ms (not bds_ias_ms)."""
@@ -40,11 +47,12 @@ class TestAdsbSchema:
         assert "raw_gs_ms" not in dx_names
 
     def test_dx_cols_content(self) -> None:
-        """DX_COLS has 3 derivatives with correct signs."""
+        """DX_COLS has 4 derivatives (long + lateral d_heading) with correct signs."""
         assert adsb.DX_COLS == [
             (1, "fdm_d_alt_ms"),
             (1, "fdm_d_gamma_rads"),
             (1, "fdm_d_tas_ms2"),
+            (1, "fdm_d_heading_rads"),
         ]
 
 
@@ -96,13 +104,20 @@ class TestUColsV3:
         assert "fdm_gamma_sel_rad" not in adsb.U_COLS
 
     def test_u_cols_all_target_convention(self) -> None:
-        """All U_COLS entries use the _target_ naming convention."""
+        """All U_COLS entries use either ``_target_`` or ``_known`` naming.
+
+        Phase 2B adds ``fdm_heading_known`` (a state-quality flag, not a
+        target flag) — kept under ``_known`` for the wrap-aware loss to
+        potentially mask catastrophic samples downstream.
+        """
         for col in adsb.U_COLS:
-            assert "_target_" in col, f"U_COLS entry {col!r} does not follow _target_ convention"
+            assert "_target_" in col or col.endswith("_known"), (
+                f"U_COLS entry {col!r} does not follow _target_/_known convention"
+            )
 
     def test_u_cols_length(self) -> None:
-        """U_COLS has 5 entries: 3 targets + gamma_known + tas_known masks."""
-        assert len(adsb.U_COLS) == 5
+        """U_COLS has 8 entries: 4 targets + 3 target_known flags + heading_known."""
+        assert len(adsb.U_COLS) == 8
 
 
 class TestBothSchemasCoexist:
@@ -111,4 +126,4 @@ class TestBothSchemasCoexist:
     def test_both_loaded(self) -> None:
         """Importing both schemas does not raise."""
         assert len(opensky.X_COLS) == 4
-        assert len(adsb.X_COLS) == 3
+        assert len(adsb.X_COLS) == 4

@@ -12,6 +12,8 @@ NumPy-based ISA in ``node_fdm_data.physics.isa``.
 
 from __future__ import annotations
 
+import math
+
 import torch
 import torch.nn as nn
 
@@ -43,6 +45,20 @@ DEFAULT_COL_MAP: dict[str, str] = {
     "cos_gamma": "fdm_cos_gamma",
     "q": "q_pa",
     "g_over_v": "g_over_v",
+    # Lateral channel — added in Phase 2B.  Architectures wire these to the
+    # actual fdm_*/era_* column names; layers using only the longitudinal
+    # canonical keys ignore them naturally because the values are not
+    # present in the input dict.
+    "u_wind": "u_wind_ms",
+    "v_wind": "v_wind_ms",
+    "heading": "heading_rad",
+    "heading_target": "heading_target_rad",
+    "heading_target_known": "heading_target_known",
+    "heading_known": "heading_known",
+    "lat_wind": "lat_wind_ms",
+    "drift": "drift_rad",
+    "track": "track_rad",
+    "heading_diff": "heading_diff_rad",
 }
 
 
@@ -119,7 +135,7 @@ class TrajectoryLayer(nn.Module):
         _x = {k: v.clone() for k, v in x.items()}
 
         # Sanitize key inputs
-        for col_key in ["tas", "gamma", "alt", "wind"]:
+        for col_key in ["tas", "gamma", "alt", "wind", "u_wind", "v_wind", "heading"]:
             col_name = c.get(col_key, "")
             if col_name in _x:
                 _x[col_name] = torch.nan_to_num(_x[col_name], nan=0.0, posinf=1e6, neginf=-1e6)
@@ -136,10 +152,54 @@ class TrajectoryLayer(nn.Module):
         output[c["g_sin_gamma"]] = G * torch.sin(gamma)
         output[c["cos_gamma"]] = torch.cos(gamma)
 
-        # Ground speed (TAS minus longitudinal wind)
+        # ------------------------------------------------------------------
+        # Lateral channel — recompute drift / track / 2D ground speed and
+        # heading_diff from the live state at every solver step.
+        #
+        # Falls back to the longitudinal-only formula
+        # ``gs = tas - long_wind`` when no heading/wind vector is provided
+        # (e.g. opensky_2025 architecture, which does not wire the lateral
+        # canonical keys).  In that case the lateral E1 features are not
+        # published either.
+        # ------------------------------------------------------------------
         wind_col = c.get("wind", "")
         long_wind = _x.get(wind_col, torch.zeros_like(tas)) if wind_col else torch.zeros_like(tas)
-        output[c["gs"]] = tas - long_wind
+
+        u_col = c.get("u_wind", "")
+        v_col = c.get("v_wind", "")
+        h_col = c.get("heading", "")
+        has_lateral = u_col in _x and v_col in _x and h_col in _x
+
+        if has_lateral:
+            u = _x[u_col]
+            v = _x[v_col]
+            heading = _x[h_col]
+            sin_h = torch.sin(heading)
+            cos_h = torch.cos(heading)
+            # Wind decomposition in the heading frame.  Convention:
+            # ``along`` is the wind component pushing along the heading
+            # vector, ``lat`` is the perpendicular (right-positive) component.
+            along_wind = u * sin_h + v * cos_h
+            lat_wind = u * cos_h - v * sin_h
+
+            # Drift = atan2(cross-wind, ground vector along heading).
+            drift = torch.atan2(lat_wind, tas + along_wind)
+            track = torch.remainder(heading + drift, 2.0 * math.pi)
+
+            # 2D ground speed: vector sum of (TAS along heading) + wind.
+            # ``gs`` is an E1 feature only — never compared to a target —
+            # so upgrading from the longitudinal scalar to the true 2D
+            # norm cannot regress training of the long channel.
+            gs_x = tas * sin_h + u
+            gs_y = tas * cos_h + v
+            gs = torch.sqrt(torch.clamp(gs_x * gs_x + gs_y * gs_y, min=1e-12))
+            output[c["gs"]] = gs
+
+            output[c["lat_wind"]] = lat_wind
+            output[c["drift"]] = drift
+            output[c["track"]] = track
+        else:
+            output[c["gs"]] = tas - long_wind
 
         # Speed of sound from real ERA5 temperature when available, else ISA.
         # Mirrors `tas_to_cas_real` in the data pipeline so the predicted CAS
@@ -236,5 +296,32 @@ class TrajectoryLayer(nn.Module):
         gamma_known_col = c.get("gamma_known", "")
         if gamma_known_col and gamma_known_col in x:
             output[gamma_known_col] = x[gamma_known_col]
+
+        # ------------------------------------------------------------------
+        # Lateral channel — heading_diff signal and pass-through flags.
+        # ``heading_diff = known * signed_wrap(target - heading)`` keeps the
+        # NN's residual in [-π, π] regardless of how far the integrated
+        # heading state has drifted from its initial branch.
+        # ------------------------------------------------------------------
+        heading_target_col = c.get("heading_target", "")
+        if has_lateral and heading_target_col and heading_target_col in x:
+            target = torch.nan_to_num(x[heading_target_col], nan=0.0)
+            heading = _x[c["heading"]]
+            two_pi = 2.0 * math.pi
+            raw_diff = target - heading
+            wrapped = ((raw_diff + math.pi) % two_pi) - math.pi
+            tk_col = c.get("heading_target_known", "")
+            if tk_col and tk_col in x:
+                known = torch.nan_to_num(x[tk_col], nan=0.0)
+                heading_diff = known * wrapped
+            else:
+                heading_diff = wrapped
+            output[c["heading_diff"]] = heading_diff
+
+        # Pass through heading-related flags for the StructuredLayer
+        for flag_key in ["heading_target_known", "heading_known"]:
+            flag_col = c.get(flag_key, "")
+            if flag_col and flag_col in x:
+                output[flag_col] = x[flag_col]
 
         return output

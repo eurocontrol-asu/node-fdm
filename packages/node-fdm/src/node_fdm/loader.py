@@ -112,7 +112,14 @@ def _load_and_window(
             end = start + seq_len
 
             # Check for NaN / inf (u_arr excluded: gamma_target NaN
-            # is expected and handled by TrajectoryLayer)
+            # is expected and handled by TrajectoryLayer).
+            # Lateral channel (Phase 2B): ``fdm_heading_rad`` is in X_COLS
+            # and is NaN where ``fdm_heading_known=False`` (no BDS source +
+            # unreliable wind triangle).  Such windows are dropped silently
+            # here — same mechanism the longitudinal channel relies on for
+            # ``fdm_gamma_rad``.  We deliberately do NOT fill NaN→0 on x:
+            # injecting a false zero heading would corrupt the integrated
+            # state without any way to recover the true value.
             slices = [
                 x_arr[start:end],
                 e_arr[start:end],

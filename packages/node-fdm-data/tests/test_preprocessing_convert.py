@@ -256,6 +256,9 @@ class TestComputeDerivatives:
                 "raw_alt_m": [0.0, 100.0, 300.0, 1000.0, 1200.0, 1500.0],
                 "fdm_gamma_rad": [0.0, 0.01, 0.03, 0.1, 0.12, 0.15],
                 "era_tas_ms": [100.0, 110.0, 130.0, 200.0, 210.0, 230.0],
+                # Lateral channel (Phase 2B): heading values stay in [0, 2π)
+                # so the wrap-aware ``compute_derivatives`` branch is exercised.
+                "fdm_heading_rad": [0.0, 0.05, 0.10, 1.0, 1.05, 1.10],
             }
         )
 

@@ -23,6 +23,8 @@ EXPECTED_SUFFIXES: dict[str, str] = {
     "fdm_d_alt_ms": "_ms",
     "fdm_d_gamma_rads": "_rads",
     "fdm_d_tas_ms2": "_ms2",
+    # Phase 2B — lateral channel.
+    "fdm_d_heading_rads": "_rads",
 }
 
 

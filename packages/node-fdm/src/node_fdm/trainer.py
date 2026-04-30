@@ -9,6 +9,7 @@ from __future__ import annotations
 
 import csv
 import json
+import math
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
@@ -179,6 +180,13 @@ class ODETrainer:
         # Precompute normalization vectors for ODE rollout loss
         self._norm_mean, self._norm_std = self._build_norm_vectors()
         self._alpha_weights = self._build_alpha_weights()
+
+        # Index of the heading state (lateral channel) — used by the
+        # rollout loss to apply signed_wrap on the residual instead of the
+        # raw difference.  ``None`` if the architecture has no heading.
+        self._heading_idx: int | None = None
+        if "fdm_heading_rad" in self.spec.x_cols:
+            self._heading_idx = self.spec.x_cols.index("fdm_heading_rad")
 
         self.save_meta()
 
@@ -438,15 +446,36 @@ class ODETrainer:
         pred = x_pred[:, 1:, :]
         true = x_seq[:, 1:, :]
 
-        # Normalize in loss space (scale-invariant across variables)
+        # Wrap-aware residual for the heading state (lateral channel).
+        # The heading is integrated freely (no x_bounds clamp) and can
+        # drift past 2π over long rollouts; without signed_wrap, a
+        # physically correct prediction one full turn ahead would yield
+        # a catastrophic MSE of ~(2π)² ≈ 39.5.  See
+        # ``scripts/debug/validate_lateral_wrap.py`` for the numerical
+        # validation.  Mean cancels in (pred - true) so we work directly
+        # with the residual and skip the per-column mean step that the
+        # symmetric MSE would otherwise apply.
+        residual = pred - true
+        if self._heading_idx is not None:
+            two_pi = 2.0 * math.pi
+            raw = residual[..., self._heading_idx]
+            wrapped = ((raw + math.pi) % two_pi) - math.pi
+            residual = residual.clone()
+            residual[..., self._heading_idx] = wrapped
+
+        residual_norm = residual / self._norm_std
+        residual_weighted = residual_norm * self._alpha_weights
+
+        # Kept for the debug log below — defined before the conditional so
+        # the magnitude trace can recover the un-wrapped form for parity
+        # checks if needed.
         pred_norm = (pred - self._norm_mean) / self._norm_std
         true_norm = (true - self._norm_mean) / self._norm_std
 
-        # Apply per-variable alpha weights
-        pred_weighted = pred_norm * self._alpha_weights
-        true_weighted = true_norm * self._alpha_weights
-
-        loss: torch.Tensor = self.loss_fn(pred_weighted, true_weighted)
+        loss: torch.Tensor = self.loss_fn(
+            residual_weighted,
+            torch.zeros_like(residual_weighted),
+        )
 
         # --- Tracking loss on autopilot targets ---
         # Compares predicted states with target consignes from U_COLS.

@@ -59,6 +59,10 @@ SI_DERIVATIVES: list[tuple[str, str]] = [
     ("raw_alt_m", "fdm_d_alt_ms"),
     ("fdm_gamma_rad", "fdm_d_gamma_rads"),
     ("era_tas_ms", "fdm_d_tas_ms2"),
+    # Lateral channel: ground-truth d_heading from the cleaned heading.
+    # Computed below in compute_derivatives, then unwrapped/clipped to
+    # avoid 2π jumps poisoning the finite-difference signal.
+    ("fdm_heading_rad", "fdm_d_heading_rads"),
 ]
 
 # Delta diffs: (target_col, source_col, output_col)
@@ -73,6 +77,11 @@ DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
     "fdm_d_alt_ms": (-75.0, 75.0),
     "fdm_d_gamma_rads": (-0.025, 0.025),
     "fdm_d_tas_ms2": (-12.5, 12.5),
+    # Rate-2 turn (6 deg/s = 0.1 rad/s) bounds the physical envelope; we
+    # widen slightly to absorb the per-step finite-difference noise (the
+    # heading state itself is ``[0, 2π)`` wrapped, which can produce a
+    # spurious ±2π/dt spike at every wrap if not handled — see below).
+    "fdm_d_heading_rads": (-0.15, 0.15),
 }
 
 
@@ -174,9 +183,19 @@ def compute_derivatives(
     if not entries:
         return df
 
+    two_pi = 2.0 * np.pi
     deriv_exprs = []
     for src, tgt in entries:
-        expr = (pl.col(src).diff() / dt).backward_fill().fill_null(0.0)
+        if src == "fdm_heading_rad":
+            # Heading is unsigned-wrapped to [0, 2π); raw diff() produces
+            # ~±2π spikes at every wrap.  Shift each diff to its principal
+            # branch via signed_wrap before dividing by dt, so the rate is
+            # the physical d_heading/dt regardless of where the wrap fell.
+            raw_diff = pl.col(src).diff()
+            shifted = ((raw_diff + np.pi) % two_pi) - np.pi
+            expr = (shifted / dt).backward_fill().fill_null(0.0)
+        else:
+            expr = (pl.col(src).diff() / dt).backward_fill().fill_null(0.0)
         if tgt in DERIVATIVE_BOUNDS:
             lo, hi = DERIVATIVE_BOUNDS[tgt]
             expr = expr.clip(lo, hi)
