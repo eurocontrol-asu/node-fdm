@@ -139,9 +139,9 @@ class TestTasTargetNoNan:
         mach_sel = result["fdm_mach_sel"].to_numpy()
         cas_sel = result["fdm_cas_sel_kt"].to_numpy()
         coverage = ~np.isnan(mach_sel) | ~np.isnan(cas_sel)
-        assert np.all(
-            ~np.isnan(target[coverage])
-        ), "fdm_tas_target_kt must be non-NaN wherever a Mach or CAS segment exists"
+        assert np.all(~np.isnan(target[coverage])), (
+            "fdm_tas_target_kt must be non-NaN wherever a Mach or CAS segment exists"
+        )
 
     def test_tas_target_known_mask_matches_target(self) -> None:
         df = _make_flight()

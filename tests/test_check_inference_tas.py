@@ -145,7 +145,7 @@ class TestSubplotStructure:
             "era_tas_ms": ("True Airspeed", "m/s"),
         }
         assert "era_tas_ms" in labels
-        label, unit = labels["era_tas_ms"]
+        _label, unit = labels["era_tas_ms"]
         assert unit == "m/s"
 
 
