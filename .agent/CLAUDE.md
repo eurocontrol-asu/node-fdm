@@ -10,7 +10,7 @@ This is a **uv workspace** (`[tool.uv.workspace]`, `members = ["packages/*"]`) w
 
 | Package | Depends on | Responsibility |
 |---|---|---|
-| `node-fdm-data` | — | Polars-first data layer: conversions, physics (ISA), meteo, lateral, schemas (`opensky`, `opensky_v2`, `qar`), preprocessing + `FlightProcessor`, flags, split |
+| `node-fdm-data` | — | Polars-first data layer: `conversions`, `physics/` (ISA), `meteo`, `lateral`, `schemas/` (`opensky`, `opensky_v2`, `qar`), `preprocessing/` + `FlightProcessor`, `segments`, `split`, Delta Lake I/O (`delta.py`) |
 | `node-fdm` | `node-fdm-data` | PyTorch Neural ODE: typed architecture registry, MLP/engine/trajectory layers, `FDM`/`BatchNeuralODE` models, `ODETrainer` + `TrainingConfig` (Pydantic), `NodeFDMPredictor`, `FlightDataset` |
 | `node-fdm-bada` | — | BADA 4.2 physical baseline (no PyTorch); pyBADA TCL wrapper + 68-type ICAO→BADA mapping |
 | `node-fdm-pipeline` | all three | `fdm` CLI commands, `PipelineConfig` (Pydantic/YAML), architecture resolver |
@@ -42,15 +42,25 @@ uv run pytest packages/node-fdm-data/tests/test_conversions.py::test_ft_to_m -q
 
 ## `fdm` CLI Pipeline
 
-Driven by a single `config.yaml` (`PipelineConfig` Pydantic model). Canonical order — all steps take `--config config.yaml`:
+Driven by a single `config.yaml` (`PipelineConfig` Pydantic model). Canonical data-prep order (pipeline v3) — all steps take `--config config.yaml`:
 
 ```
-aircraft-list → download → preprocess → identify → flag
-  → process --arch {opensky|opensky_v2|qar|adsb} → split
-  → train → predict / predict-bada → evaluate → visualize
+aircraft-list → download → identify → preprocess → flag
+  → enrich → clean-speeds → derive → segments → convert → split
 ```
 
-The `Makefile` also exposes each step as a target (`make aircraft`, `make download`, … `make split`) and a `make pipeline` that runs the full chain after `make clean-data`. Override `CONFIG=`, `SAMPLE_SIZE=`, `START_DATE=`, `END_DATE=` on the make command line.
+Then training / inference (consume `--arch {opensky|opensky_v2|qar|adsb}`):
+
+```
+train → predict / predict-bada → evaluate → visualize
+```
+
+Notes:
+- `identify` runs **before** `preprocess`. `preprocess` overwrites the Delta Table (row count changes), so every downstream step (`flag → split`) must be rerun after it.
+- `clean-speeds` runs Hampel/V-shape/zigzag cleaning on BDS speeds and depends on ERA5 (so must come after `enrich`); `segments` consumes the resulting `*_clean` columns.
+- `make pipeline` chains `aircraft → download → identify → preprocess → flag → enrich → derive → segments → convert → split` and **skips `clean-speeds`** — invoke it manually between `enrich` and `derive` if the run needs cleaned speeds. See [scripts/pipeline.md](scripts/pipeline.md) for the per-step reference.
+
+The `Makefile` also exposes each step as a target (`make aircraft`, `make download`, …, `make split`) and a `make pipeline` that runs the full chain after `make clean-data`. Override `CONFIG=`, `SAMPLE_SIZE=`, `START_DATE=`, `END_DATE=` on the make command line.
 
 Copy `config.example.yaml` → `config.yaml` and set `paths.data_dir` (absolute) and `bada.bada_4_2_dir` before running anything.
 
