@@ -15,7 +15,7 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
-from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, T0, R
+from node_fdm_data.physics.constants import A0, GAMMA_AIR, P0, T0, G, R
 
 __all__ = [
     "TrajectoryLayer",
@@ -39,6 +39,10 @@ DEFAULT_COL_MAP: dict[str, str] = {
     "mach": "mach",
     "cas": "cas_ms",
     "alt_diff": "alt_diff_m",
+    "g_sin_gamma": "fdm_g_sin_gamma_ms2",
+    "cos_gamma": "fdm_cos_gamma",
+    "q": "q_pa",
+    "g_over_v": "g_over_v",
 }
 
 
@@ -128,6 +132,10 @@ class TrajectoryLayer(nn.Module):
         # Vertical speed
         output[c["vz"]] = tas * torch.sin(gamma)
 
+        # Kinematic gravity-compensation features (inductive bias for the NN)
+        output[c["g_sin_gamma"]] = G * torch.sin(gamma)
+        output[c["cos_gamma"]] = torch.cos(gamma)
+
         # Ground speed (TAS minus longitudinal wind)
         wind_col = c.get("wind", "")
         long_wind = _x.get(wind_col, torch.zeros_like(tas)) if wind_col else torch.zeros_like(tas)
@@ -149,8 +157,21 @@ class TrajectoryLayer(nn.Module):
         mach = tas / torch.clamp(a, min=1e-6, max=1e8)
         output[c["mach"]] = mach
 
-        # CAS from compressible flow
+        # Aerodynamic kinematic features (dynamic pressure and g/V ratio)
+        # rho from ideal-gas law: rho = p / (R * temp)
+        # Both p (ISA) and temp (ERA5 or ISA) are now available.
         p = _isa_pressure_torch(alt)
+        rho = p / (R * temp)
+        # q = 0.5 * rho * V^2  (dynamic pressure in Pa)
+        output[c["q"]] = 0.5 * rho * tas**2
+        # g/V feature for the d_gamma equation: (g/V)*(n_z - cos gamma).
+        # Clamp at 1.0 m/s (not the 50 m/s physics clamp) so the feature
+        # stays informative at low TAS in edge data without ever being
+        # infinite.  Training data never has TAS < ~30 m/s; 1 m/s only
+        # guards against a pathological ODE substep.
+        output[c["g_over_v"]] = G / torch.clamp(tas, min=1.0)
+
+        # CAS from compressible flow
         pt_over_p = torch.pow(
             torch.clamp(1 + (GAMMA_AIR - 1) / 2 * mach**2, min=1e-6, max=1e6),
             GAMMA_AIR / (GAMMA_AIR - 1),
@@ -159,9 +180,13 @@ class TrajectoryLayer(nn.Module):
         qc_p0 = torch.clamp(qc_p0, min=-0.999, max=1e6)
 
         cas_term = torch.clamp(qc_p0 + 1.0, min=1e-8, max=1e6)
-        cas = A0 * torch.sqrt(
-            (2.0 / (GAMMA_AIR - 1.0)) * (cas_term ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0)
-        )
+        # ``+ 1e-8`` inside sqrt() so the backward derivative
+        # ``1/(2 sqrt(.))`` stays finite when mach ≈ 0 (the analytical
+        # CAS expression goes to 0 there). Without this, an intermediate
+        # ODE substep with TAS ≈ 0 produces sqrt(0) whose gradient is
+        # +inf and poisons the entire backward pass with NaN.
+        cas_inner = (2.0 / (GAMMA_AIR - 1.0)) * (cas_term ** ((GAMMA_AIR - 1.0) / GAMMA_AIR) - 1.0)
+        cas = A0 * torch.sqrt(torch.clamp(cas_inner, min=0.0) + 1e-8)
         cas = torch.nan_to_num(cas, nan=0.0, posinf=1e4, neginf=0.0)
         output[c["cas"]] = cas
 

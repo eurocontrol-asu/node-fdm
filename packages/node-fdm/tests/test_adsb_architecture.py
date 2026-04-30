@@ -39,12 +39,28 @@ class TestNodeAdsbV1Architecture:
         assert "raw_gs_ms" not in dx_names
         assert len(spec.dx_cols) == 3
 
-    def test_two_layers(self) -> None:
-        """Architecture has trajectory + data_ode layers."""
+    def test_three_layers(self) -> None:
+        """Architecture has trajectory + data_ode + physics layers."""
         spec = get("node_adsb_v1")
-        assert len(spec.layers) == 2
+        assert len(spec.layers) == 3
         assert spec.layers[0].name == "trajectory"
         assert spec.layers[1].name == "data_ode"
+        assert spec.layers[2].name == "physics"
+
+    def test_data_ode_outputs_aero_quantities(self) -> None:
+        """data_ode (NN) outputs (a_spec, n_z_residual); gravity is applied by PhysicsLayer."""
+        spec = get("node_adsb_v1")
+        assert spec.layers[1].output_cols == ["fdm_a_spec_ms2", "fdm_n_z_residual"]
+
+    def test_physics_outputs_dx(self) -> None:
+        """PhysicsLayer outputs the ODE derivatives consumed by dx_cols."""
+        spec = get("node_adsb_v1")
+        assert spec.layers[2].output_cols == [
+            "fdm_d_tas_ms2",
+            "fdm_d_gamma_rads",
+            "fdm_n_z",
+        ]
+        assert spec.layers[2].trainable is False
 
     def test_col_map_alt_sel(self) -> None:
         """TrajectoryLayer col_map uses fdm_alt_target_m for alt_sel."""
@@ -79,6 +95,26 @@ class TestAdsbStructuredInputCols:
             + ["fdm_gamma_target_known", "fdm_tas_target_known"]
         )
         assert spec.layers[1].input_cols == expected
+
+    def test_data_ode_input_has_g_sin_gamma(self) -> None:
+        """data_ode input_cols contains fdm_g_sin_gamma_ms2 (via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_g_sin_gamma_ms2" in spec.layers[1].input_cols
+
+    def test_data_ode_input_has_cos_gamma(self) -> None:
+        """data_ode input_cols contains fdm_cos_gamma (via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_cos_gamma" in spec.layers[1].input_cols
+
+    def test_data_ode_input_has_q_pa(self) -> None:
+        """data_ode input_cols contains fdm_q_pa (dynamic pressure, via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_q_pa" in spec.layers[1].input_cols
+
+    def test_data_ode_input_has_g_over_v(self) -> None:
+        """data_ode input_cols contains fdm_g_over_v (g/V ratio, via E1_COLS)."""
+        spec = get("node_adsb_v1")
+        assert "fdm_g_over_v" in spec.layers[1].input_cols
 
 
 class TestAdsbColMapV2:

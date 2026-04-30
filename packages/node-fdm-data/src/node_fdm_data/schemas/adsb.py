@@ -72,6 +72,10 @@ E1_COLS: list[str] = [
     "fdm_alt_diff_m",
     "fdm_tas_diff_ms",
     "fdm_gamma_diff_rad",
+    "fdm_g_sin_gamma_ms2",
+    "fdm_cos_gamma",
+    "fdm_q_pa",
+    "fdm_g_over_v",
 ]
 
 # ---------------------------------------------------------------------------

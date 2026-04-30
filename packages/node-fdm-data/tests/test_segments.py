@@ -671,9 +671,9 @@ class TestTasSelected:
         assert "fdm_tas_sel_kt" in result.columns
         # Inside the Mach plateau (rows 50-149), TAS should be NaN (masked)
         mach_zone = result["fdm_tas_sel_kt"][50:150]
-        assert mach_zone.is_nan().sum() == len(
-            mach_zone
-        ), "TAS segments must not be detected inside Mach-constant zones"
+        assert mach_zone.is_nan().sum() == len(mach_zone), (
+            "TAS segments must not be detected inside Mach-constant zones"
+        )
 
     def test_tas_sel_masks_cas_zones(self) -> None:
         """TAS segments are NOT detected inside CAS-constant regions."""
@@ -713,9 +713,9 @@ class TestTasSelected:
         assert "fdm_tas_sel_kt" in result.columns
         # Inside the CAS plateau (rows 0-99), TAS should be NaN (masked)
         cas_zone = result["fdm_tas_sel_kt"][:100]
-        assert cas_zone.is_nan().sum() == len(
-            cas_zone
-        ), "TAS segments must not be detected inside CAS-constant zones"
+        assert cas_zone.is_nan().sum() == len(cas_zone), (
+            "TAS segments must not be detected inside CAS-constant zones"
+        )
 
     def test_tas_sel_no_config(self) -> None:
         """Without 'tas' key in config, fdm_tas_sel_kt is not created (backward compat)."""

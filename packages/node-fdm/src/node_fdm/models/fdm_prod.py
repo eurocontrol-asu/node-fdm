@@ -139,16 +139,35 @@ class FlightDynamicsModelProd(nn.Module):
             col: self.stats_dict[col]["max"] for col in output_cols if col in self.stats_dict
         }
 
-        # Scaled denormalization: use p999 as scale, dx_bounds as cap
+        # Scaled denormalization: use p999 as scale, dx_bounds as cap.
+        # ``scale_overrides`` / ``cap_overrides`` (set by the architecture
+        # spec) take priority over stats-derived values: required for
+        # output columns that are not in ``dx_cols`` and therefore have no
+        # auto-computed p999 (e.g. PhysicsLayer-feeding heads like
+        # ``fdm_a_spec_ms2`` / ``fdm_n_z_residual``).
         raw_modes = layer_spec.config.get("denormalize_modes", {})
         denormalize_modes: dict[str, str] = dict(raw_modes) if isinstance(raw_modes, dict) else {}
+        raw_scale_overrides = layer_spec.config.get("scale_overrides", {})
+        scale_overrides: dict[str, float] = (
+            dict(raw_scale_overrides) if isinstance(raw_scale_overrides, dict) else {}
+        )
+        raw_cap_overrides = layer_spec.config.get("cap_overrides", {})
+        cap_overrides: dict[str, float] = (
+            dict(raw_cap_overrides) if isinstance(raw_cap_overrides, dict) else {}
+        )
         scale_dict: dict[str, float] = {}
         cap_dict: dict[str, float] = {}
         for col, mode in denormalize_modes.items():
-            if mode == "scaled" and col in self.stats_dict:
+            if mode != "scaled":
+                continue
+            if col in scale_overrides:
+                scale_dict[col] = scale_overrides[col]
+            elif col in self.stats_dict:
                 scale_dict[col] = self.stats_dict[col].get("p999", self.stats_dict[col]["std"])
-                if col in self.spec.dx_bounds:
-                    cap_dict[col] = max(abs(v) for v in self.spec.dx_bounds[col])
+            if col in cap_overrides:
+                cap_dict[col] = cap_overrides[col]
+            elif col in self.spec.dx_bounds:
+                cap_dict[col] = max(abs(v) for v in self.spec.dx_bounds[col])
 
         return layer_cls(
             input_cols=input_cols,
