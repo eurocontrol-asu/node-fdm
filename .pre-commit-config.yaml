@@ -9,7 +9,7 @@ repos:
       - id: check-toml
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.8.0
+    rev: v0.15.12
     hooks:
       - id: ruff
         args: [--fix]
@@ -25,7 +25,7 @@ repos:
         language: system
         types: [python]
         require_serial: true
-        exclude: ^scripts/
+        exclude: ^(scripts/|tests/|packages/[^/]+/tests/)
 
   - repo: https://github.com/compilerla/conventional-pre-commit
     rev: v3.6.0
