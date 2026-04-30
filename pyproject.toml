@@ -19,6 +19,7 @@ dependencies = [
     "node-fdm-pipeline",
     "matplotlib>=3.10.8",
     "traffic>=2.10",
+    "pygeomag>=1.1.0",
 ]
 
 [project.urls]
