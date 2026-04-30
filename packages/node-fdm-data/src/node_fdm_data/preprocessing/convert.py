@@ -97,6 +97,25 @@ def convert_si(df: pl.DataFrame) -> pl.DataFrame:
     if exprs:
         df = df.with_columns(exprs)
 
+    # Lateral channel: heading wrapped to [0, 2π); heading_target signed-wrapped
+    # to [-π, π] (the model loss is wrap-aware on the unsigned heading state but
+    # the *target* is consumed directly as a residual, so it must be in the
+    # principal branch).
+    two_pi = 2.0 * np.pi
+    lateral_exprs: list[pl.Expr] = []
+    if "fdm_heading_deg" in df.columns:
+        lateral_exprs.append(
+            (pl.col("fdm_heading_deg").radians() % two_pi).alias("fdm_heading_rad")
+        )
+    if "fdm_heading_target_deg" in df.columns:
+        lateral_exprs.append(
+            (((pl.col("fdm_heading_target_deg").radians() + np.pi) % two_pi) - np.pi).alias(
+                "fdm_heading_target_rad"
+            )
+        )
+    if lateral_exprs:
+        df = df.with_columns(lateral_exprs)
+
     # Compute CAS from TAS + altitude (fdm_cas_ms — always available,
     # unlike bds_ias_ms which has ~40% NaN from Mode-S gaps).
     # Uses real ERA5 temperature when available so the round-trip closes:

@@ -20,6 +20,7 @@ dependencies = [
     "scipy>=1.13",
     "deltalake>=0.18",
     "pydantic>=2.0",
+    "pygeomag>=1.1.0",
 ]
 
 [project.urls]
