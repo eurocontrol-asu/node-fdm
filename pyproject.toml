@@ -40,6 +40,7 @@ node-fdm-pipeline = { workspace = true }
 [dependency-groups]
 dev = [
     "pre-commit>=4.0",
+    "mypy>=1.13",
 ]
 
 [tool.ruff]
