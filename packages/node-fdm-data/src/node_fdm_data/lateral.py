@@ -1,22 +1,27 @@
 """Lateral trajectory computations for Neural ODE control inputs.
 
-Detects straight-line segments between turning points, then computes
-orthodromic (great-circle) and loxodromic (rhumb-line) reference tracks
-for each segment.  These serve as **lateral control inputs** for the
-flight dynamics model: the Neural ODE learns aircraft response to
-these navigation commands, analogous to how ``fdm_mach_sel`` / ``fdm_vz_sel_ftmin``
-serve as longitudinal commands.
+Detects start-of-turn points via smoothed angular rate + peak detection
+with backtrack, then computes a great-circle reference track from each
+point to the end of its straight segment.  This serves as the **lateral
+control input** for the flight dynamics model -- the Neural ODE learns
+aircraft response to navigation commands, analogous to how
+``fdm_alt_target_m`` / ``fdm_tas_target_ms`` serve as longitudinal commands.
 
-Key outputs:
+Algorithm ported verbatim from the legacy production module
+``opensky_v2/src/node_fdm/data/lateral_computations.py``:
 
-- ``track_ortho`` -- great-circle bearing from segment start A to end B
-- ``track_loxo``  -- rhumb-line (constant heading) bearing A -> B
-- ``drift_angle``  -- heading - track (crosswind effect)
-- ``lat_wind``    -- lateral wind component: TAS x sin(drift_angle)
-- ``in_turn``     -- boolean mask for turning vs straight flight
+1. Savitzky-Golay smoothing of the track signal.
+2. ``scipy.signal.find_peaks`` on absolute rotation rate.
+3. Backtrack from each peak until rotation rate falls below a noise
+   floor -- locates the **start** of every turn.
+4. ``searchsorted`` to assign each sample to its enclosing straight
+   segment ``[A, B)`` and read endpoint coordinates.
+5. Great-circle bearing from current position C to segment end B
+   gives ``track_ortho`` (the FMS-equivalent lateral target).
 
-Ports and improves logic from the legacy ``opensky_v2`` branch:
-``lateral_computations.py`` and ``15_curvature.py``.
+The reference track is naturally NaN before the first detected turn and
+after the last (no enclosing segment).  Inside turns it is also set to
+NaN -- the FMS target is undefined while transitioning between legs.
 
 Example::
 
@@ -32,27 +37,28 @@ from typing import Any
 import numpy as np
 import numpy.typing as npt
 import polars as pl
+from scipy.signal import find_peaks, savgol_filter
 
 __all__ = [
     "augment_lateral",
-    "detect_turning_points",
+    "detect_turning_starts",
     "orthodromic_bearing",
-    "rhumb_bearing",
 ]
-
-# ---------------------------------------------------------------------------
-# Constants
-# ---------------------------------------------------------------------------
 
 R_EARTH_M: float = 6_371_000.0
 """Mean Earth radius in metres."""
 
-_MIN_POINTS: int = 4
-"""Minimum points needed for turn detection (diff(4) needs at least 5)."""
+_SAVGOL_WINDOW: int = 9
+_SAVGOL_POLY: int = 3
+_PEAK_DISTANCE: int = 10
+_DEFAULT_THRESHOLD: float = 0.05
+_DEFAULT_NOISE_FLOOR: float = 0.005
+_HALF_TURN_DEG: float = 180.0
+_FULL_TURN_DEG: float = 360.0
 
 
 # ---------------------------------------------------------------------------
-# Low-level geometry (vectorised, radians in / radians out)
+# Low-level geometry
 # ---------------------------------------------------------------------------
 
 
@@ -62,9 +68,9 @@ def orthodromic_bearing(
     phi2: npt.ArrayLike,
     lam2: npt.ArrayLike,
 ) -> np.ndarray:
-    """Initial great-circle bearing from (φ₁, λ₁) to (φ₂, λ₂).
+    """Initial great-circle bearing from (phi1, lam1) to (phi2, lam2).
 
-    All inputs and output in **radians**.  Result is in ``[0, 2pi)``.
+    All inputs and output in **radians**.  Result is in ``[0, 2 pi)``.
     """
     phi1, lam1 = np.asarray(phi1), np.asarray(lam1)
     phi2, lam2 = np.asarray(phi2), np.asarray(lam2)
@@ -75,108 +81,91 @@ def orthodromic_bearing(
     return np.asarray((bearing + 2 * np.pi) % (2 * np.pi))
 
 
-def rhumb_bearing(
-    phi1: npt.ArrayLike,
-    lam1: npt.ArrayLike,
-    phi2: npt.ArrayLike,
-    lam2: npt.ArrayLike,
-) -> np.ndarray:
-    """Rhumb-line (loxodromic) bearing from (ph1, la1) to (ph2, la2).
-
-    All inputs and output in **radians**.  Result is in ``[0, 2pi)``.
-    Handles degenerate cases (same latitude, same point).
-    """
-    eps = 1e-12
-    phi1, lam1 = np.asarray(phi1), np.asarray(lam1)
-    phi2, lam2 = np.asarray(phi2), np.asarray(lam2)
-
-    d_lam = lam2 - lam1
-    d_psi = np.log(
-        np.maximum(np.tan(phi2 / 2 + np.pi / 4), eps)
-        / np.maximum(np.tan(phi1 / 2 + np.pi / 4), eps)
-    )
-
-    bearing = np.arctan2(d_lam, d_psi)
-
-    # Degenerate: Δψ ≈ 0 (same latitude)
-    degen_psi = np.abs(d_psi) < eps
-    degen_both = degen_psi & (np.abs(d_lam) < eps)
-    ew = np.where(d_lam > 0, np.pi / 2, -np.pi / 2)
-
-    bearing = np.where(degen_both, np.nan, bearing)
-    bearing = np.where(degen_psi & ~degen_both, ew, bearing)
-
-    return (bearing + 2 * np.pi) % (2 * np.pi)
-
-
 # ---------------------------------------------------------------------------
-# Turn detection (from legacy 15_curvature.py — smoothed angular rate)
+# Turn detection (Savgol + find_peaks + backtrack, legacy production algo)
 # ---------------------------------------------------------------------------
 
 
-def detect_turning_points(
+def detect_turning_starts(
     track_deg: npt.NDArray[np.floating[Any]],
     *,
-    diff_n: int = 4,
     dt: float = 4.0,
-    threshold_deg_per_sec: float = 0.05,
-    min_straight_len: int = 10,
-) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.bool_]]:
-    """Detect turns using smoothed angular rate thresholding.
+    threshold_deg_per_sec: float = _DEFAULT_THRESHOLD,
+    noise_threshold_deg_per_sec: float = _DEFAULT_NOISE_FLOOR,
+) -> npt.NDArray[np.intp]:
+    """Detect the **start index** of every turn in a track signal.
 
-    Uses ``|track.diff(n) / (n x dt)| >= threshold`` to identify
-    turning points.  This is the robust approach from the legacy
-    ``15_curvature.py`` script.
+    Mirrors ``detect_start_of_turning_points`` from the legacy production
+    module.  Smooths the track with Savitzky-Golay, computes rotation
+    rate, picks peaks above ``threshold_deg_per_sec`` then walks
+    backwards from each peak until the rate falls below
+    ``noise_threshold_deg_per_sec``.
 
     Args:
         track_deg: Track angle in degrees (may wrap at 0/360).
-        diff_n: Number of points for finite differencing.
-        dt: Sampling interval in seconds.
-        threshold_deg_per_sec: Turn rate threshold (°/s).
-        min_straight_len: Minimum length to keep a straight segment.
+        dt: Sampling interval in seconds (constant grid).
+        threshold_deg_per_sec: Peak height for ``find_peaks``.
+        noise_threshold_deg_per_sec: Backtrack stops when rate drops
+            below this -- defines the practical "start of turn".
 
     Returns:
-        ``(segment_indices, in_turn)`` where *segment_indices* are
-        the start-of-segment indices and *in_turn* is a boolean mask.
+        Sorted unique array of indices marking turn-starts.  Empty if
+        the signal is shorter than the Savgol window or contains no
+        peaks.
     """
     n = len(track_deg)
-    if n < _MIN_POINTS + 1:
-        return np.array([0], dtype=np.intp), np.zeros(n, dtype=np.bool_)
+    if n < _SAVGOL_WINDOW:
+        return np.empty(0, dtype=np.intp)
 
-    # Unwrap to avoid 0/360 jumps
-    track_uw = np.degrees(np.unwrap(np.radians(track_deg)))
+    # Savgol does not tolerate NaN/inf; forward-fill then back-fill so the
+    # filter sees a finite signal.  The Savgol window is short (9 samples)
+    # so isolated gaps get a near-constant local fill -- detected rotation
+    # rate at those points is ~0, which is exactly what we want (no spurious
+    # turn detection on missing data).
+    track_filled = np.asarray(track_deg, dtype=np.float64).copy()
+    if not np.all(np.isfinite(track_filled)):
+        bad = ~np.isfinite(track_filled)
+        good_idx = np.flatnonzero(~bad)
+        if good_idx.size == 0:
+            return np.empty(0, dtype=np.intp)
+        # forward-fill
+        last = track_filled[good_idx[0]]
+        for i in range(n):
+            if bad[i]:
+                track_filled[i] = last
+            else:
+                last = track_filled[i]
 
-    # Smoothed angular rate (°/s): |Δtrack / Δt|
-    d_track = np.abs(np.diff(track_uw, n=diff_n, prepend=[track_uw[0]] * diff_n))
-    rate = d_track / (diff_n * dt)
+    smoothed = savgol_filter(track_filled, _SAVGOL_WINDOW, _SAVGOL_POLY)
 
-    in_turn = rate >= threshold_deg_per_sec
-    _fill_short_straight_gaps(in_turn, min_straight_len)
-    boundaries = _segment_boundaries(in_turn)
+    d_track = np.diff(smoothed, prepend=smoothed[0])
+    # Wrap protection: large jumps come from 0/360 boundary, not real rotation.
+    d_track = np.where(d_track > _HALF_TURN_DEG, d_track - _FULL_TURN_DEG, d_track)
+    d_track = np.where(d_track < -_HALF_TURN_DEG, d_track + _FULL_TURN_DEG, d_track)
 
-    return boundaries, in_turn
+    abs_rate = np.abs(d_track / dt)
 
+    peaks, _ = find_peaks(
+        abs_rate,
+        height=threshold_deg_per_sec,
+        distance=_PEAK_DISTANCE,
+    )
 
-def _fill_short_straight_gaps(in_turn: npt.NDArray[np.bool_], min_len: int) -> None:
-    """Mark short straight runs (< ``min_len``) as turning, in-place.
+    starts: list[int] = []
+    for peak in peaks:
+        i = int(peak)
+        while i > 0:
+            i -= 1
+            if abs_rate[i] < noise_threshold_deg_per_sec:
+                starts.append(i + 1)
+                break
+            if i == 0:
+                starts.append(0)
+                break
 
-    Matches the legacy behavior: a gap is filled only when entering a turn,
-    i.e. it must be bounded by turns on both sides.
-    """
-    straight = ~in_turn
-    edges = np.diff(straight.astype(np.int8), prepend=0, append=0)
-    starts = np.flatnonzero(edges == 1)
-    ends = np.flatnonzero(edges == -1)
-    n = in_turn.size
-    fillable = (ends - starts < min_len) & (starts > 0) & (ends < n)
-    for s, e in zip(starts[fillable], ends[fillable], strict=True):
-        in_turn[s:e] = True
-
-
-def _segment_boundaries(in_turn: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
-    """Indices of turn→straight transitions, prefixed with 0."""
-    transitions = np.flatnonzero(in_turn[:-1] & ~in_turn[1:]) + 1
-    return np.concatenate(([0], transitions)).astype(np.intp)
+    if not starts:
+        return np.empty(0, dtype=np.intp)
+    return np.unique(np.asarray(starts, dtype=np.intp))
 
 
 # ---------------------------------------------------------------------------
@@ -184,32 +173,65 @@ def _segment_boundaries(in_turn: npt.NDArray[np.bool_]) -> npt.NDArray[np.intp]:
 # ---------------------------------------------------------------------------
 
 
-def _assign_segment_endpoints(
-    lat: np.ndarray,
-    lon: np.ndarray,
-    seg_indices: np.ndarray,
-    in_turn: np.ndarray,
+def _segment_bounds(
+    turning_starts: npt.NDArray[np.intp],
     n: int,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Map each point to its segment's start (A) and end (B) coords."""
-    lat_a = np.full(n, np.nan)
-    lon_a = np.full(n, np.nan)
-    lat_b = np.full(n, np.nan)
-    lon_b = np.full(n, np.nan)
+) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
+    """Compute per-sample ``(A_idx, B_idx)`` -- enclosing segment bounds.
 
-    for k in range(len(seg_indices)):
-        start = seg_indices[k]
-        end = seg_indices[k + 1] - 1 if k + 1 < len(seg_indices) else n - 1
+    For each sample ``i``, finds the nearest turning-start at or before
+    ``i`` (= ``A``, segment start) and the nearest turning-start strictly
+    after ``i`` (= ``B``, segment end).  When ``i`` is before the first
+    turn, ``A = 0``; after the last turn, ``B = n - 1``.
 
-        # Only assign for straight segments
-        for i in range(start, end + 1):
-            if not in_turn[i]:
-                lat_a[i] = lat[start]
-                lon_a[i] = lon[start]
-                lat_b[i] = lat[end]
-                lon_b[i] = lon[end]
+    Returns parallel arrays of length ``n``.
+    """
+    if turning_starts.size == 0:
+        a = np.zeros(n, dtype=np.intp)
+        b = np.full(n, n - 1, dtype=np.intp)
+        return a, b
 
-    return lat_a, lon_a, lat_b, lon_b
+    pivots = np.arange(n, dtype=np.intp)
+    idx_end = np.searchsorted(turning_starts, pivots, side="right")
+    idx_start = idx_end - 1
+
+    a = np.where(
+        idx_start < 0,
+        np.intp(0),
+        turning_starts[np.clip(idx_start, 0, len(turning_starts) - 1)],
+    ).astype(np.intp)
+    b = np.where(
+        idx_end >= len(turning_starts),
+        np.intp(n - 1),
+        turning_starts[np.clip(idx_end, 0, len(turning_starts) - 1)],
+    ).astype(np.intp)
+    return a, b
+
+
+def _build_in_turn_mask(
+    turning_starts: npt.NDArray[np.intp],
+    a_idx: npt.NDArray[np.intp],
+    b_idx: npt.NDArray[np.intp],
+    n: int,
+) -> npt.NDArray[np.bool_]:
+    """Mark samples that sit before the first turn or after the last as
+    "outside any segment" -- treated like in_turn for masking purposes.
+
+    Within identified segments, samples are straight by construction
+    (turns are point-events in this algorithm, not intervals).  The
+    ``in_turn`` flag we expose is therefore "no valid enclosing segment":
+    True for the head and tail of the flight where ortho is undefined.
+    """
+    in_turn = np.zeros(n, dtype=np.bool_)
+    if turning_starts.size == 0:
+        in_turn[:] = True
+        return in_turn
+    in_turn[: turning_starts[0]] = True
+    last_start = int(turning_starts[-1])
+    in_turn[last_start:] = True
+    # Also mask samples whose A == B (degenerate, segment of length 0)
+    in_turn |= a_idx == b_idx
+    return in_turn
 
 
 # ---------------------------------------------------------------------------
@@ -221,97 +243,67 @@ def augment_lateral(
     df: pl.DataFrame,
     *,
     dt: float = 4.0,
-    threshold_deg_per_sec: float = 0.05,
-    min_straight_len: int = 10,
+    threshold_deg_per_sec: float = _DEFAULT_THRESHOLD,
+    noise_threshold_deg_per_sec: float = _DEFAULT_NOISE_FLOOR,
 ) -> pl.DataFrame:
-    """Augment a flight DataFrame with lateral reference tracks.
+    """Augment a flight DataFrame with a lateral reference track.
 
-    Adds the following columns:
+    Adds three columns:
 
-    - ``in_turn`` — bool, ``True`` during turns
-    - ``track_ortho`` — orthodromic reference track (deg), NaN in turns
-    - ``track_loxo`` — loxodromic reference track (deg), NaN in turns
-    - ``drift_angle`` -- heading - track (deg, signed [-180, 180])
-    - ``lat_wind`` -- lateral wind component (kt, positive = from left)
+    - ``in_turn`` (bool) -- True when the sample has no enclosing
+      straight segment (head/tail of flight, or degenerate cases).
+    - ``track_ortho`` (deg) -- great-circle bearing from the current
+      position to the segment end ``B``.  This is the FMS-equivalent
+      lateral target.  NaN inside ``in_turn``.
+    - ``track_sel_known`` (bool) -- True iff ``track_ortho`` is finite
+      (analogous to ``fdm_tas_target_known``).
 
     Args:
         df: Single-flight eager DataFrame with ``latitude``,
-            ``longitude``, ``track``, and optionally ``heading``
-            and a TAS column (``era_tas_kt`` or ``TAS``).
-        dt: Sampling interval (seconds).
-        threshold_deg_per_sec: Turn detection threshold (°/s).
-        min_straight_len: Minimum straight segment length (points).
+            ``longitude``, and ``track`` columns (degrees).  Sampling is
+            assumed uniform at ``dt`` seconds.
+        dt: Sampling interval in seconds.
+        threshold_deg_per_sec: Peak detection threshold.
+        noise_threshold_deg_per_sec: Backtrack stops below this rate.
 
     Returns:
-        DataFrame with lateral columns added.
+        DataFrame with the three lateral columns appended.
     """
-    n = len(df)
-    if n < _MIN_POINTS + 1:
+    n = df.height
+    if n < _SAVGOL_WINDOW:
         return df.with_columns(
-            pl.lit(False).alias("in_turn"),
+            pl.lit(True).alias("in_turn"),
             pl.lit(None, dtype=pl.Float64).alias("track_ortho"),
-            pl.lit(None, dtype=pl.Float64).alias("track_loxo"),
-            pl.lit(None, dtype=pl.Float64).alias("drift_angle"),
-            pl.lit(None, dtype=pl.Float64).alias("lat_wind"),
+            pl.lit(False).alias("track_sel_known"),
         )
 
-    # --- Turn detection ---
     track_raw = df["track"].to_numpy().astype(np.float64)
-    seg_indices, in_turn = detect_turning_points(
+    lat = df["latitude"].to_numpy().astype(np.float64)
+    lon = df["longitude"].to_numpy().astype(np.float64)
+
+    turning_starts = detect_turning_starts(
         track_raw,
         dt=dt,
         threshold_deg_per_sec=threshold_deg_per_sec,
-        min_straight_len=min_straight_len,
+        noise_threshold_deg_per_sec=noise_threshold_deg_per_sec,
     )
 
-    # --- Segment endpoints ---
-    lat = df["latitude"].to_numpy()
-    lon = df["longitude"].to_numpy()
-    lat_a, lon_a, lat_b, lon_b = _assign_segment_endpoints(
-        lat,
-        lon,
-        seg_indices,
-        in_turn,
-        n,
-    )
+    a_idx, b_idx = _segment_bounds(turning_starts, n)
+    in_turn = _build_in_turn_mask(turning_starts, a_idx, b_idx, n)
 
-    # Convert to radians for bearing computation
-    phi_a, lam_a = np.radians(lat_a), np.radians(lon_a)
-    phi_b, lam_b = np.radians(lat_b), np.radians(lon_b)
+    phi_c = np.radians(lat)
+    lam_c = np.radians(lon)
+    phi_b = np.radians(lat[b_idx])
+    lam_b = np.radians(lon[b_idx])
 
-    # --- Orthodromic bearing (great circle) A → B ---
-    # Compute from current position to B for evolving reference
-    phi_cur = np.radians(lat)
-    lam_cur = np.radians(lon)
-    ortho_rad = orthodromic_bearing(phi_cur, lam_cur, phi_b, lam_b)
+    ortho_rad = orthodromic_bearing(phi_c, lam_c, phi_b, lam_b)
     ortho_deg = np.degrees(ortho_rad)
-    ortho_deg[in_turn] = np.nan  # No reference during turns
+    ortho_deg[in_turn] = np.nan
 
-    # --- Loxodromic bearing (rhumb line) A → B ---
-    loxo_rad = rhumb_bearing(phi_a, lam_a, phi_b, lam_b)
-    loxo_deg = np.degrees(loxo_rad)
-    loxo_deg[in_turn] = np.nan
-
-    # --- Drift angle and lateral wind ---
-    hdg_col = "heading" if "heading" in df.columns else None
-    tas_col = next(
-        (c for c in ("era_tas_kt", "TAS") if c in df.columns),
-        None,
-    )
-
-    if hdg_col is not None and tas_col is not None:
-        hdg = df[hdg_col].to_numpy().astype(np.float64)
-        tas = df[tas_col].to_numpy().astype(np.float64)
-        drift = (hdg - track_raw + 180) % 360 - 180
-        lat_wind = tas * np.sin(np.radians(drift))
-    else:
-        drift = np.full(n, np.nan)
-        lat_wind = np.full(n, np.nan)
+    known = ~in_turn & ~np.isnan(ortho_deg)
 
     return df.with_columns(
         pl.Series("in_turn", in_turn),
         pl.Series("track_ortho", ortho_deg),
-        pl.Series("track_loxo", loxo_deg),
-        pl.Series("drift_angle", drift),
-        pl.Series("lat_wind", lat_wind),
+        pl.Series("track_sel_known", known),
     )
