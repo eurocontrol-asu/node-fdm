@@ -20,9 +20,16 @@ class TestResolveArchitecture:
         assert info.preprocessing_fn is None
         assert info.architecture_import == "node_fdm.architectures.qar"
 
-    def test_resolve_unknown_raises(self) -> None:
-        """Unknown architecture name raises ValueError."""
-        with pytest.raises(ValueError, match="Unknown architecture"):
+    @pytest.mark.parametrize(
+        "match",
+        [
+            pytest.param("Unknown architecture", id="error_prefix"),
+            pytest.param("adsb", id="lists_supported"),
+        ],
+    )
+    def test_resolve_unknown_raises(self, match: str) -> None:
+        """Unknown architecture raises ValueError mentioning prefix and supported names."""
+        with pytest.raises(ValueError, match=match):
             resolve_architecture("unknown")
 
     def test_architecture_info_frozen(self) -> None:
@@ -53,8 +60,3 @@ class TestResolveArchitecture:
         assert info.architecture_import == "node_fdm.architectures.adsb"
         assert info.segment_filter_fn is None
         assert info.preprocessing_fn is None
-
-    def test_resolve_unknown_mentions_adsb(self) -> None:
-        """Unknown architecture error message includes 'adsb' in supported list."""
-        with pytest.raises(ValueError, match="adsb"):
-            resolve_architecture("unknown")
