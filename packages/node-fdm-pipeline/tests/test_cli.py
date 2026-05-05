@@ -145,59 +145,26 @@ class TestCLIDataDryRun:
         config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
         return Path(config)
 
-    def test_download_dry_run_cli(self, tmp_path: Path) -> None:
-        """``fdm download --dry-run`` exits 0."""
+    @pytest.mark.parametrize(
+        "subcommand, extra_args",
+        [
+            ("download", ["--start-date", "2025-01-01", "--end-date", "2025-01-02"]),
+            ("preprocess", []),
+            ("convert", []),
+        ],
+    )
+    def test_dry_run_cli(self, tmp_path: Path, subcommand: str, extra_args: list[str]) -> None:
+        """``fdm <subcommand> --dry-run`` exits 0."""
         config = self._write_config(tmp_path)
         result = subprocess.run(
             [
                 sys.executable,
                 "-m",
                 "node_fdm_pipeline",
-                "download",
+                subcommand,
                 "--config",
                 str(config),
-                "--start-date",
-                "2025-01-01",
-                "--end-date",
-                "2025-01-02",
-                "--dry-run",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert result.returncode == 0
-
-    def test_preprocess_dry_run_cli(self, tmp_path: Path) -> None:
-        """``fdm preprocess --dry-run`` exits 0."""
-        config = self._write_config(tmp_path)
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "node_fdm_pipeline",
-                "preprocess",
-                "--config",
-                str(config),
-                "--dry-run",
-            ],
-            capture_output=True,
-            text=True,
-            timeout=30,
-        )
-        assert result.returncode == 0
-
-    def test_convert_dry_run_cli(self, tmp_path: Path) -> None:
-        """``fdm convert --dry-run`` exits 0."""
-        config = self._write_config(tmp_path)
-        result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "node_fdm_pipeline",
-                "convert",
-                "--config",
-                str(config),
+                *extra_args,
                 "--dry-run",
             ],
             capture_output=True,
