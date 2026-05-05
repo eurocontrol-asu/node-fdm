@@ -124,14 +124,16 @@ class TestRoundtripCas:
 class TestEdgeCases:
     """Boundary / degenerate inputs."""
 
-    def test_nan_mach(self) -> None:
-        """mach=NaN, alt=10 000 → returns NaN."""
-        result = mach_to_tas(float("nan"), 10_000.0)
-        assert math.isnan(float(result))
-
-    def test_nan_altitude(self) -> None:
-        """mach=0.8, alt=NaN → returns NaN."""
-        result = mach_to_tas(0.8, float("nan"))
+    @pytest.mark.parametrize(
+        ("mach", "alt"),
+        [
+            pytest.param(float("nan"), 10_000.0, id="nan_mach"),
+            pytest.param(0.8, float("nan"), id="nan_altitude"),
+        ],
+    )
+    def test_nan_input_yields_nan(self, mach: float, alt: float) -> None:
+        """NaN in either mach or altitude propagates to NaN TAS."""
+        result = mach_to_tas(mach, alt)
         assert math.isnan(float(result))
 
     def test_zero_altitude(self) -> None:
