@@ -524,19 +524,20 @@ def _optimize_transition_cas(
 
     tas_mach_ms = np.asarray(mach_to_tas_real(mach_const, t), dtype=np.float64)
 
-    def cost(cas_kt: float) -> float:
-        tas_cas_ms = np.asarray(cas_to_tas_real(cas_kt * _KT_TO_MS, h, t), dtype=np.float64)
-        env = np.minimum(tas_mach_ms, tas_cas_ms)
-        diff = env - tas_real_ms
-        return float(np.nansum(diff * diff))
+    def grid_cost(grid_kt: np.ndarray) -> np.ndarray:
+        cas_ms = grid_kt[:, None] * _KT_TO_MS
+        tas_cas_ms = np.asarray(cas_to_tas_real(cas_ms, h[None, :], t[None, :]), dtype=np.float64)
+        env = np.minimum(tas_mach_ms[None, :], tas_cas_ms)
+        diff = env - tas_real_ms[None, :]
+        return np.asarray(np.nansum(diff * diff, axis=1), dtype=np.float64)
 
     coarse = np.arange(200.0, 351.0, 1.0)
-    coarse_costs = np.array([cost(c) for c in coarse])
+    coarse_costs = grid_cost(coarse)
     if not np.any(np.isfinite(coarse_costs)):
         return float("nan")
     best = float(coarse[int(np.argmin(coarse_costs))])
     fine = np.arange(best - 2.0, best + 2.0 + 0.05, 0.1)
-    fine_costs = np.array([cost(c) for c in fine])
+    fine_costs = grid_cost(fine)
     return float(fine[int(np.argmin(fine_costs))])
 
 
