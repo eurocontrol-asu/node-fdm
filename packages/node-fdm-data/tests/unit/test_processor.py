@@ -34,7 +34,7 @@ class TestFlightProcessor:
         """Two transforms (rename + filter) applied in order."""
 
         def rename_step(lf: pl.LazyFrame) -> pl.LazyFrame:
-            return lf.rename({"altitude_ft": "alt_ft"})
+            return lf.with_columns(pl.col("altitude_ft").alias("alt_ft")).drop("altitude_ft")
 
         def filter_step(lf: pl.LazyFrame) -> pl.LazyFrame:
             return lf.filter(pl.col("alt_ft") > 150.0)
