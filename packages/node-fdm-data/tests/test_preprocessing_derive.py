@@ -53,11 +53,17 @@ class TestDeriveGamma:
         assert abs(gamma) <= np.pi / 2 + 1e-6
 
 
-class TestDeriveLongWind:
-    """fdm_long_wind_kt = fdm_tas_from_cas_kt - raw_gs_kt."""
+class TestDeriveScalarSignals:
+    """Scalar derived signals from raw inputs (TAS=250, GS=240, alt=35000, sel=36000)."""
 
-    def test_derive_long_wind(self) -> None:
-        """TAS=250kt, GS=240kt → fdm_long_wind_kt = 10.0."""
+    @pytest.mark.parametrize(
+        ("column", "expected"),
+        [
+            pytest.param("fdm_long_wind_kt", 10.0, id="long_wind=tas-gs"),
+            pytest.param("fdm_alt_diff_ft", 1000.0, id="alt_diff=sel-alt"),
+        ],
+    )
+    def test_derive_scalar_signal(self, column: str, expected: float) -> None:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0],
@@ -71,27 +77,7 @@ class TestDeriveLongWind:
             }
         )
         result = derive_columns(df)
-        assert result["fdm_long_wind_kt"][0] == pytest.approx(10.0)
-
-
-class TestDeriveAltDiff:
-    """fdm_alt_diff_ft = bds_mcp_alt_sel_ft - raw_alt_ft."""
-
-    def test_derive_alt_diff(self) -> None:
-        df = pl.DataFrame(
-            {
-                "raw_vz_ftmin": [0.0],
-                "fdm_tas_from_cas_kt": [250.0],
-                "raw_gs_kt": [240.0],
-                "raw_alt_ft": [35000.0],
-                "bds_mcp_alt_sel_ft": [36000.0],
-                "raw_lat_deg": [48.0],
-                "raw_lon_deg": [2.0],
-                "meta_flight_id": ["F001"],
-            }
-        )
-        result = derive_columns(df)
-        assert result["fdm_alt_diff_ft"][0] == pytest.approx(1000.0)
+        assert result[column][0] == pytest.approx(expected)
 
 
 class TestDeriveDistanceCum:
