@@ -44,8 +44,11 @@ class TestQarSchema:
             assert callable(fn)
             assert isinstance(target, str)
 
-    def test_conversion_fn_returns_expr(self) -> None:
-        """Each conversion function returns a pl.Expr."""
+    def test_conversion_fn_evaluates_to_finite_float(self) -> None:
+        """Each conversion expression evaluates to a finite float column."""
+        df = pl.DataFrame({"x": [1.0, 2.0, 3.0]})
         for _key, (fn, _target) in qar.CONVERSIONS.items():
-            result = fn("test_col")
-            assert isinstance(result, pl.Expr)
+            out = df.select(fn("x").alias("y"))["y"]
+            assert out.dtype.is_float()
+            assert out.is_finite().all()
+            assert out.len() == 3
