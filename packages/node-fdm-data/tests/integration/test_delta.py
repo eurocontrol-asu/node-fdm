@@ -7,8 +7,10 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+pytestmark = pytest.mark.integration
+
 # ---------------------------------------------------------------------------
-# Unit Tests — write_columns
+# Integration Tests — write_columns
 # ---------------------------------------------------------------------------
 
 
