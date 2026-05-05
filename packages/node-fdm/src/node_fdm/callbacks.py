@@ -37,6 +37,7 @@ class TrainingCallback(Protocol):
         val_loss: float,
         *,
         is_best: bool = False,
+        lr: float | None = None,
     ) -> None:
         """Called at the end of each epoch.
 
@@ -46,6 +47,7 @@ class TrainingCallback(Protocol):
             train_loss: Average training loss for the epoch.
             val_loss: Average validation loss for the epoch.
             is_best: Whether this epoch achieved a new best validation loss.
+            lr: Current learning rate after any scheduler step.
         """
         ...
 
@@ -80,6 +82,7 @@ class ConsoleCallback:
         val_loss: float,
         *,
         is_best: bool = False,
+        lr: float | None = None,
     ) -> None:
         """Log epoch metrics."""
         self._log.info(
@@ -89,6 +92,7 @@ class ConsoleCallback:
             train_loss=round(train_loss, 6),
             val_loss=round(val_loss, 6),
             is_best=is_best,
+            lr=lr,
         )
 
     def on_train_end(self, best_val_loss: float) -> None:

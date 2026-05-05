@@ -93,6 +93,13 @@ def _build_training_config(meta: Any, model_name: str, ov: _Overrides) -> Any:
         method=ov.method or meta.method,
         num_workers=4,
         lambda_tracking=ov.lambda_tracking or 0.0,
+        alpha_dict={"fdm_heading_rad": 1.0},
+        huber_beta_per_col={
+            "raw_alt_m": 5.18e-2,
+            "fdm_gamma_rad": 2.09e-1,
+            "era_tas_ms": 1.02e-1,
+        },
+        eta_min=1e-5,
     )
 
 

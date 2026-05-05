@@ -65,6 +65,9 @@ class TrainingConfig(BaseModel):
         grad_clip_norm: Max gradient norm for clipping.
         alpha_dict: Per-variable loss weighting for ``x_cols``.
             Defaults to ``1.0`` for all variables when ``None``.
+        eta_min: Minimum learning rate for ``CosineAnnealingLR``. When
+            ``None`` (default) no scheduler is used and the lr stays at
+            ``lr`` for the whole run.
     """
 
     architecture_name: str
@@ -84,6 +87,8 @@ class TrainingConfig(BaseModel):
     grad_clip_norm: float = Field(default=10.0, gt=0)
     alpha_dict: dict[str, float] | None = None
     lambda_tracking: float = Field(default=0.0, ge=0)
+    huber_beta_per_col: dict[str, float] | None = None
+    eta_min: float | None = None
 
 
 def _collate_flight_samples(
@@ -174,12 +179,23 @@ class ODETrainer:
             lr=config.lr,
             weight_decay=config.weight_decay,
         )
+        if config.eta_min is not None:
+            self.scheduler: torch.optim.lr_scheduler.CosineAnnealingLR | None = (
+                torch.optim.lr_scheduler.CosineAnnealingLR(
+                    self.optimizer,
+                    T_max=config.epochs,
+                    eta_min=config.eta_min,
+                )
+            )
+        else:
+            self.scheduler = None
         self.best_val_loss = float("inf")
         self.loss_fn: nn.Module = get_loss(config.loss_name)
 
         # Precompute normalization vectors for ODE rollout loss
         self._norm_mean, self._norm_std = self._build_norm_vectors()
         self._alpha_weights = self._build_alpha_weights()
+        self._huber_beta_per_col = self._build_huber_betas()
 
         # Index of the heading state (lateral channel) — used by the
         # rollout loss to apply signed_wrap on the residual instead of the
@@ -344,6 +360,16 @@ class ODETrainer:
                     weights[i] = self.config.alpha_dict[col]
         return weights
 
+    def _build_huber_betas(self) -> torch.Tensor | None:
+        if self.config.huber_beta_per_col is None:
+            return None
+        n_x = len(self.spec.x_cols)
+        betas = torch.full((n_x,), float("nan"), device=self.device)
+        for i, col in enumerate(self.spec.x_cols):
+            if col in self.config.huber_beta_per_col:
+                betas[i] = float(self.config.huber_beta_per_col[col])
+        return betas
+
     @staticmethod
     def _resolve_bounds(
         named_bounds: dict[str, tuple[float, float]],
@@ -472,10 +498,29 @@ class ODETrainer:
         pred_norm = (pred - self._norm_mean) / self._norm_std
         true_norm = (true - self._norm_mean) / self._norm_std
 
-        loss: torch.Tensor = self.loss_fn(
-            residual_weighted,
-            torch.zeros_like(residual_weighted),
-        )
+        if self._huber_beta_per_col is None:
+            loss: torch.Tensor = self.loss_fn(
+                residual_weighted,
+                torch.zeros_like(residual_weighted),
+            )
+        else:
+            # Per-column SmoothL1 with calibrated betas where provided;
+            # MSE on columns with NaN beta (no override). Result averaged
+            # across all elements to match the previous reduction='mean'.
+            target_zero = torch.zeros_like(residual_weighted)
+            per_col_means = []
+            for i in range(residual_weighted.shape[-1]):
+                col_res = residual_weighted[..., i]
+                col_zero = target_zero[..., i]
+                beta = self._huber_beta_per_col[i]
+                if torch.isnan(beta):
+                    col_loss = torch.nn.functional.mse_loss(col_res, col_zero, reduction="mean")
+                else:
+                    col_loss = torch.nn.functional.smooth_l1_loss(
+                        col_res, col_zero, reduction="mean", beta=beta.item()
+                    )
+                per_col_means.append(col_loss)
+            loss = torch.stack(per_col_means).mean()
 
         # --- Tracking loss on autopilot targets ---
         # Compares predicted states with target consignes from U_COLS.
@@ -615,6 +660,10 @@ class ODETrainer:
                 self.best_val_loss = avg_val
                 self.save_model(epoch)
 
+            if self.scheduler is not None:
+                self.scheduler.step()
+
+            current_lr = self.optimizer.param_groups[0]["lr"]
             record = {
                 "epoch": float(epoch),
                 "train_loss": avg_train,
@@ -629,6 +678,7 @@ class ODETrainer:
                     avg_train,
                     avg_val,
                     is_best=is_best,
+                    lr=current_lr,
                 )
 
         # Write loss CSV (no pandas)

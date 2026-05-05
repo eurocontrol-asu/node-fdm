@@ -79,6 +79,13 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
         num_workers=4,
         lambda_tracking=ov.lambda_tracking or 0.0,
         grad_clip_norm=10.0,
+        alpha_dict={"fdm_heading_rad": 1.0},
+        huber_beta_per_col={
+            "raw_alt_m": 5.18e-2,
+            "fdm_gamma_rad": 2.09e-1,
+            "era_tas_ms": 1.02e-1,
+        },
+        eta_min=1e-5,
     )
 
 
@@ -163,7 +170,7 @@ def run_training(
     """Train Neural ODE models for one or all typecodes.
 
     Args:
-        arch: Architecture identifier (``"opensky"`` or ``"qar"``).
+        arch: Architecture identifier (``"qar"`` or ``"adsb"``).
         config: Path to YAML pipeline config.
         typecode: Single typecode to train (default: all from config).
         epochs: Override number of training epochs.
