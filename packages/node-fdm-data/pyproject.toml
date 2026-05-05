@@ -114,6 +114,10 @@ disallow_untyped_decorators = false
 module = ["scipy.*", "polars.*", "pandas.*", "traffic", "traffic.*"]
 ignore_missing_imports = true
 
+[[tool.mypy.overrides]]
+module = ["node_fdm_data.lateral"]
+warn_return_any = false
+
 [tool.coverage.run]
 source_pkgs = ["node_fdm_data"]
 branch = true

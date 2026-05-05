@@ -73,43 +73,11 @@ show_missing = true
 fail_under = 80
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
 
+# mypy is configured per-package under packages/*/pyproject.toml.
+# This root config only covers scripts/ (one-off diagnostic utilities,
+# exempted from strict typing per CLAUDE.md).
 [tool.mypy]
 python_version = "3.12"
-strict = true
-warn_unused_configs = true
-warn_unused_ignores = true
-show_error_codes = true
-
-[[tool.mypy.overrides]]
-module = ["tests.*", "conftest"]
-disallow_untyped_defs = false
-disallow_untyped_decorators = false
-
-[[tool.mypy.overrides]]
-module = [
-    "torch.*", "torchdiffeq.*", "scipy.*", "polars.*", "yaml.*",
-    "cyclopts.*", "structlog.*", "traffic.*", "pandas.*",
-    "pyBADA.*", "joblib.*", "fastmeteo.*", "altair.*",
-]
+files = ["scripts"]
 ignore_missing_imports = true
-
-[[tool.mypy.overrides]]
-module = ["node_fdm_pipeline.commands.data"]
-disallow_untyped_calls = false
-
-[[tool.mypy.overrides]]
-module = ["node_fdm_pipeline.cli"]
-disallow_untyped_decorators = false
-
-[[tool.mypy.overrides]]
-module = ["scripts.*"]
-ignore_missing_imports = true
-disallow_untyped_defs = false
-disallow_untyped_decorators = false
-
-[[tool.mypy.overrides]]
-module = [
-    "node_fdm_data.lateral",
-    "node_fdm_pipeline.commands.visualize",
-]
-warn_return_any = false
+ignore_errors = true

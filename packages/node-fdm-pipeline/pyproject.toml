@@ -114,12 +114,16 @@ module = ["node_fdm_pipeline.cli"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["torch.*", "torchdiffeq.*", "polars.*", "yaml.*", "cyclopts.*", "structlog.*", "traffic.*", "pandas.*", "fastmeteo.*", "numpy.*", "altair.*"]
+module = ["torchdiffeq.*", "polars.*", "yaml.*", "cyclopts.*", "structlog.*", "traffic.*", "pandas.*", "fastmeteo.*", "numpy.*", "altair.*", "pyBADA.*", "joblib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
 module = ["node_fdm_pipeline.commands.data"]
 disallow_untyped_calls = false
+
+[[tool.mypy.overrides]]
+module = ["node_fdm_pipeline.commands.visualize"]
+warn_return_any = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]

@@ -57,3 +57,22 @@ addopts = [
     "--cov-fail-under=0",
 ]
 filterwarnings = ["error"]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+pretty = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_configs = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["torchdiffeq.*"]
+ignore_missing_imports = true
