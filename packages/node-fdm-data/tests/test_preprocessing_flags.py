@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import polars as pl
+import pytest
 
 from node_fdm_data.preprocessing.flags import compute_flags
 
@@ -31,17 +32,18 @@ def _make_flight(
 class TestFlagMinPoints:
     """fdm_flag_min_points: segment has >= N points."""
 
-    def test_flag_min_points(self) -> None:
-        """Segment of 10 points with threshold=40 → flag is false."""
-        df = _make_flight("f1", 10)
+    @pytest.mark.parametrize(
+        ("n", "expected"),
+        [
+            pytest.param(10, False, id="below_threshold"),
+            pytest.param(50, True, id="above_threshold"),
+        ],
+    )
+    def test_flag_min_points_threshold(self, n: int, expected: bool) -> None:
+        """Segment flag reflects whether point count meets threshold."""
+        df = _make_flight("f1", n)
         result = compute_flags(df, min_points=40)
-        assert result["fdm_flag_min_points"].all() is False
-
-    def test_flag_min_points_above_threshold(self) -> None:
-        """Segment with enough points → flag is true."""
-        df = _make_flight("f1", 50)
-        result = compute_flags(df, min_points=40)
-        assert result["fdm_flag_min_points"].all() is True
+        assert result["fdm_flag_min_points"].all() is expected
 
     def test_flag_min_points_per_flight(self) -> None:
         """Each flight is evaluated independently."""
