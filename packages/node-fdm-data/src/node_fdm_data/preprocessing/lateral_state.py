@@ -5,10 +5,11 @@ Helpers used by the data pipeline to build the lateral channel inputs:
 - :func:`clean_track_with_medfilt` — median-filter + Savgol smooth on raw GPS track
   (kills isolated spikes <= 2 samples before they leak into Savgol output).
 - :func:`compute_drift_from_wind` — signed drift from the ERA5 wind triangle.
-- :func:`compute_wind_std` — rolling std of wind magnitude (gate for fallback
-  reliability — high std means ERA5 vertical interpolation is unstable).
+- :func:`compute_wind_std` — rolling std of wind magnitude (diagnostic only,
+  exposed via ``fdm_wind_std_ms``).
 - :func:`coalesce_heading` — primary BDS heading + declination, fallback to
-  ``track - drift`` when BDS missing and wind is stable.
+  ``track_clean - drift`` (drift computed from track as a heading proxy)
+  whenever BDS is missing.
 """
 
 from __future__ import annotations
@@ -126,9 +127,10 @@ def compute_wind_std(
 ) -> npt.NDArray[np.float64]:
     """Rolling standard deviation of wind magnitude.
 
-    Used as a gate for fallback heading reliability: when ERA5 vertical
-    interpolation is unstable (typically off-cruise), the wind triangle
-    drift estimate becomes noisy and this rolling std flags it.
+    Diagnostic of ERA5 vertical-interpolation stability — high std means
+    the ambient wind estimate is jittery (typically off-cruise).  Exposed
+    via ``fdm_wind_std_ms`` for downstream analysis.  No longer used as a
+    gate inside :func:`coalesce_heading`.
 
     Default window is 8 samples = 32 s at 4 s sampling.  Returned series
     has the same length as the input; NaN samples count as zero deviation
@@ -160,64 +162,53 @@ def compute_wind_std(
     return out
 
 
-def coalesce_heading(  # noqa: PLR0913 — five primary signals + threshold kwarg
+def coalesce_heading(  # noqa: PLR0913 — six primary signals, all required
     bds_hdg_deg: npt.NDArray[np.floating],
     declination_deg: npt.NDArray[np.floating],
     track_clean_deg: npt.NDArray[np.floating],
-    drift_deg: npt.NDArray[np.floating],
-    wind_std_ms: npt.NDArray[np.floating],
-    *,
-    wind_std_threshold: float = 5.0,
+    tas_ms: npt.NDArray[np.floating],
+    u_wind_ms: npt.NDArray[np.floating],
+    v_wind_ms: npt.NDArray[np.floating],
 ) -> tuple[npt.NDArray[np.float64], npt.NDArray[np.bool_]]:
     """Build the final heading signal and known-flag.
 
     Coalesce strategy:
 
-    1. **Primary**: ``bds_hdg + declination`` (true heading) when BDS is
-       finite.
-    2. **Fallback**: ``track_clean - drift`` when BDS is missing **and**
-       ``wind_std <= threshold`` (ERA5 fallback reliable).
-    3. ``known = False`` when both sources are unavailable, including when
-       ``wind_std > threshold`` knocks out the fallback.
+    1. **Primary**: ``bds_hdg + declination`` (true heading) wherever BDS
+       and declination are finite.
+    2. **Fallback**: ``track_clean - drift_from_track``, where
+       ``drift_from_track`` is the wind-triangle drift computed by feeding
+       the cleaned GPS track to :func:`compute_drift_from_wind` as a
+       heading proxy.  Substituting ``track`` for the unknown true heading
+       in the drift formula is a second-order error (a few 0.1° at typical
+       cruise drift of 3-5°), well below the heading noise floor.
+    3. ``heading_known = isfinite(heading)``.
 
     Args:
         bds_hdg_deg: BDS magnetic heading in degrees.  May be NaN.
         declination_deg: Magnetic declination in degrees (added to
             magnetic heading to get true heading).
         track_clean_deg: Cleaned GPS track in degrees.
-        drift_deg: Wind-triangle drift in degrees (signed).
-        wind_std_ms: Rolling std of wind magnitude.  Samples above
-            ``wind_std_threshold`` are deemed unreliable for fallback.
-        wind_std_threshold: Gate threshold in m/s.
+        tas_ms: True airspeed in m/s.
+        u_wind_ms: East-wind component in m/s.
+        v_wind_ms: North-wind component in m/s.
 
     Returns:
         Tuple ``(heading_deg, heading_known)``:
 
         - ``heading_deg``: shape ``(n,)``, wrapped to ``[0, 360)``.  NaN
-          where neither source is available.
-        - ``heading_known``: shape ``(n,)``, bool.
+          where neither the primary nor the fallback can be evaluated.
+        - ``heading_known``: shape ``(n,)``, bool — finite-mask of
+          ``heading_deg``.
     """
     bds = np.asarray(bds_hdg_deg, dtype=np.float64)
     decl = np.asarray(declination_deg, dtype=np.float64)
     track = np.asarray(track_clean_deg, dtype=np.float64)
-    drift = np.asarray(drift_deg, dtype=np.float64)
-    wstd = np.asarray(wind_std_ms, dtype=np.float64)
 
     primary = _wrap_unsigned_deg(bds + decl)
-    fallback = _wrap_unsigned_deg(track - drift)
+    drift_from_track = compute_drift_from_wind(track, tas_ms, u_wind_ms, v_wind_ms)
+    fallback = _wrap_unsigned_deg(track - drift_from_track)
 
-    bds_ok = np.isfinite(bds) & np.isfinite(decl)
-    fb_ok = (
-        ~bds_ok
-        & np.isfinite(track)
-        & np.isfinite(drift)
-        & np.isfinite(wstd)
-        & (wstd <= wind_std_threshold)
-    )
-
-    heading = np.full_like(primary, np.nan)
-    heading[bds_ok] = primary[bds_ok]
-    heading[fb_ok] = fallback[fb_ok]
-
-    known = bds_ok | fb_ok
+    heading = np.where(np.isfinite(primary), primary, fallback)
+    known = np.isfinite(heading)
     return heading, known

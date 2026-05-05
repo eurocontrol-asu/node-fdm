@@ -251,24 +251,27 @@ def _lateral_columns_for_flight(flight: pl.DataFrame) -> pl.DataFrame:
     mid_ts = ts_series[ts_series.len() // 2]
     declination = magnetic_declination(lat, lon, alt_ft, mid_ts)
 
-    # 4. Wind-triangle drift (uses BDS magnetic heading; OK because drift
-    #    is small and depends on heading direction, not absolute frame).
+    # 4. Gather wind/TAS inputs for drift and heading coalescence.
     bds_hdg = flight["bds_hdg_deg"].to_numpy().astype(np.float64)
     tas_kt = flight["_lateral_tas_kt"].to_numpy().astype(np.float64)
     tas_ms = tas_kt * KT
     u_wind = flight["era_u_wind_ms"].to_numpy().astype(np.float64)
     v_wind = flight["era_v_wind_ms"].to_numpy().astype(np.float64)
-    drift = compute_drift_from_wind(bds_hdg, tas_ms, u_wind, v_wind)
 
-    # 5. Wind std (gate for fallback reliability).
-    wind_std = compute_wind_std(u_wind, v_wind)
-
-    # 6. Coalesce heading: BDS+declination primary, track-drift fallback.
+    # 5. Coalesce heading: BDS+declination primary, track-based drift fallback.
+    #    The fallback uses track_clean as a heading proxy inside the wind
+    #    triangle (second-order error, see coalesce_heading docstring).
     heading_deg, heading_known = coalesce_heading(
-        bds_hdg, declination, track_clean, drift, wind_std
+        bds_hdg, declination, track_clean, tas_ms, u_wind, v_wind
     )
 
-    # 7. Heading target = wrap(track_ortho - drift) — undefined where
+    # 6. Drift from the resolved heading — defined wherever heading is known.
+    drift = compute_drift_from_wind(heading_deg, tas_ms, u_wind, v_wind)
+
+    # 7. Wind std (diagnostic only, exposed via fdm_wind_std_ms).
+    wind_std = compute_wind_std(u_wind, v_wind)
+
+    # 8. Heading target = wrap(track_ortho - drift) — undefined where
     #    track_ortho is NaN (head/tail of flight, in-turn samples).
     heading_target_deg = (track_ortho - drift) % 360.0
 

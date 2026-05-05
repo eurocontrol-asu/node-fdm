@@ -131,60 +131,97 @@ def test_coalesce_uses_bds_when_available() -> None:
     bds = _const(90.0, n)
     decl = _const(2.0, n)
     track = _const(95.0, n)
-    drift = _const(3.0, n)
-    wstd = _const(0.5, n)
-    heading, known = coalesce_heading(bds, decl, track, drift, wstd)
+    tas = _const(200.0, n)
+    u = _const(0.0, n)
+    v = _const(0.0, n)
+    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
     assert known.all()
     # bds + decl = 92, modulo 360.
     assert np.allclose(heading, 92.0)
 
 
-def test_coalesce_fallback_when_bds_missing_and_wind_ok() -> None:
+def test_coalesce_fallback_when_bds_missing_zero_wind() -> None:
+    # Zero wind → drift_from_track = 0 → fallback heading == track_clean.
     n = 5
     bds = _const(np.nan, n)
     decl = _const(2.0, n)
     track = _const(100.0, n)
-    drift = _const(5.0, n)
-    wstd = _const(0.5, n)
-    heading, known = coalesce_heading(bds, decl, track, drift, wstd)
+    tas = _const(200.0, n)
+    u = _const(0.0, n)
+    v = _const(0.0, n)
+    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
     assert known.all()
-    assert np.allclose(heading, 95.0)  # 100 - 5
+    assert np.allclose(heading, 100.0)
 
 
-def test_coalesce_known_false_when_wind_unstable() -> None:
-    n = 5
+def test_coalesce_fallback_with_wind_uses_track_drift() -> None:
+    # Heading unknown (BDS NaN); track = 0° (north), 20 m/s east wind, TAS 200.
+    # drift_from_track at heading-proxy=0°: cross = u = 20, along = 0.
+    # drift = atan2(20, 200) ≈ 5.71°. Fallback heading = wrap(0 - 5.71) ≈ 354.29°.
+    n = 1
     bds = _const(np.nan, n)
-    decl = _const(2.0, n)
-    track = _const(100.0, n)
-    drift = _const(5.0, n)
-    wstd = _const(8.0, n)  # > threshold 5
-    heading, known = coalesce_heading(bds, decl, track, drift, wstd)
-    assert not known.any()
-    assert np.isnan(heading).all()
+    decl = _const(0.0, n)
+    track = _const(0.0, n)
+    tas = _const(200.0, n)
+    u = _const(20.0, n)
+    v = _const(0.0, n)
+    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
+    assert known.all()
+    expected = (0.0 - np.degrees(np.arctan2(20.0, 200.0))) % 360.0
+    assert abs(float(heading[0]) - expected) < 1e-6
 
 
-def test_coalesce_known_false_when_fallback_inputs_nan() -> None:
+def test_coalesce_known_false_when_track_nan_and_no_bds() -> None:
     n = 5
     bds = _const(np.nan, n)
     decl = _const(2.0, n)
     track = _const(np.nan, n)
-    drift = _const(5.0, n)
-    wstd = _const(0.5, n)
-    heading, known = coalesce_heading(bds, decl, track, drift, wstd)
+    tas = _const(200.0, n)
+    u = _const(0.0, n)
+    v = _const(0.0, n)
+    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
     assert not known.any()
     assert np.isnan(heading).all()
 
 
+def test_coalesce_known_false_when_tas_nan_and_no_bds() -> None:
+    # TAS NaN propagates through atan2 → fallback NaN.
+    n = 5
+    bds = _const(np.nan, n)
+    decl = _const(2.0, n)
+    track = _const(100.0, n)
+    tas = _const(np.nan, n)
+    u = _const(5.0, n)
+    v = _const(0.0, n)
+    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
+    assert not known.any()
+    assert np.isnan(heading).all()
+
+
+def test_coalesce_no_wind_std_gate() -> None:
+    # Even with strongly varying wind, fallback must activate (no gate).
+    bds = _const(np.nan, 5)
+    decl = _const(0.0, 5)
+    track = _const(100.0, 5)
+    tas = _const(200.0, 5)
+    u = np.array([0.0, 50.0, 0.0, 50.0, 0.0])  # wildly fluctuating
+    v = np.zeros(5)
+    _, known = coalesce_heading(bds, decl, track, tas, u, v)
+    assert known.all()
+
+
 def test_coalesce_mixed_sources_per_sample() -> None:
+    # Index 3 has track NaN and bds NaN → must remain unknown.
     bds = np.array([10.0, np.nan, 20.0, np.nan, np.nan])
     decl = np.array([1.0, 1.0, 1.0, 1.0, 1.0])
-    track = np.array([50.0, 50.0, 50.0, 50.0, 50.0])
-    drift = np.array([5.0, 5.0, 5.0, 5.0, 5.0])
-    wstd = np.array([0.1, 0.1, 0.1, 9.0, 0.1])
-    heading, known = coalesce_heading(bds, decl, track, drift, wstd)
+    track = np.array([50.0, 50.0, 50.0, np.nan, 50.0])
+    tas = np.full(5, 200.0)
+    u = np.zeros(5)
+    v = np.zeros(5)
+    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
     assert known.tolist() == [True, True, True, False, True]
     assert abs(heading[0] - 11.0) < 1e-9
-    assert abs(heading[1] - 45.0) < 1e-9  # fallback 50-5
+    assert abs(heading[1] - 50.0) < 1e-9  # fallback = track (zero wind)
     assert abs(heading[2] - 21.0) < 1e-9
     assert np.isnan(heading[3])
-    assert abs(heading[4] - 45.0) < 1e-9
+    assert abs(heading[4] - 50.0) < 1e-9
