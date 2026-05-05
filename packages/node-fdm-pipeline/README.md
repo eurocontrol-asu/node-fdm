@@ -2,6 +2,14 @@
 
 CLI pipeline for the **node-fdm** Neural ODE framework — typed commands for flight dynamics data processing, training, and evaluation.
 
+## Features
+
+- Typed CLI (cyclopts) for the full v3 data pipeline: download → identify → preprocess → flag → enrich → derive → segments → convert → split
+- Pydantic v2 `PipelineConfig` loaded from a single YAML
+- Architecture registry (currently `adsb`) wiring preprocessing/segmentation per spec
+- Training, resume, predict, evaluate, and visualization commands for Neural ODE models
+- BADA 4.2 baseline predictions (`fdm predict-bada`)
+
 ## Installation
 
 ```bash
@@ -51,3 +59,7 @@ uv run pytest packages/node-fdm-pipeline/ -q
 uv run ruff check packages/node-fdm-pipeline/
 uv run mypy packages/node-fdm-pipeline/src/
 ```
+
+## License
+
+Licensed under the European Union Public Licence v1.2 (EUPL-1.2).
