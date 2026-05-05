@@ -8,6 +8,8 @@ from polars.testing import assert_frame_equal
 
 from node_fdm_data.processor import FlightProcessor
 
+pytestmark = pytest.mark.integration
+
 
 class TestFlightProcessor:
     """FlightProcessor pipeline tests."""
