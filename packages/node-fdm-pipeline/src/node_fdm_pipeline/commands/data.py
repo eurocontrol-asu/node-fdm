@@ -920,9 +920,12 @@ def segments(
 
     df = read_delta_table(delta_table)
 
-    # Drop existing selected-parameter columns to allow re-segmentation
-    # Only fdm_*_sel* — preserve bds_*_sel_* input columns
-    sel_existing = [c for c in df.columns if c.startswith("fdm_") and "_sel" in c]
+    # Drop existing selected-parameter columns to allow re-segmentation.
+    # Only fdm_*_sel_<unit> — preserve bds_*_sel_* inputs and fdm_*_sel_known
+    # boolean flags emitted by derive (e.g. fdm_track_sel_known).
+    sel_existing = [
+        c for c in df.columns if c.startswith("fdm_") and "_sel_" in c and not c.endswith("_known")
+    ]
     if sel_existing:
         log.info("segments_drop_existing", columns=sel_existing)
         df = df.drop(sel_existing)

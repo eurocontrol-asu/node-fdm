@@ -186,9 +186,9 @@ def _augment_lateral_per_flight(df: pl.DataFrame) -> pl.DataFrame:
             pl.lit(None, dtype=pl.Float64).alias("fdm_heading_target_deg"),
             pl.lit(False).alias("fdm_heading_known"),
             pl.lit(False).alias("fdm_heading_target_known"),
-            pl.lit(True).alias("in_turn"),
-            pl.lit(None, dtype=pl.Float64).alias("track_ortho"),
-            pl.lit(False).alias("track_sel_known"),
+            pl.lit(True).alias("fdm_in_turn"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_track_ortho_deg"),
+            pl.lit(False).alias("fdm_track_sel_known"),
         )
 
     # Pick a TAS source consistent with the longitudinal channel:
@@ -235,9 +235,9 @@ def _lateral_columns_for_flight(flight: pl.DataFrame) -> pl.DataFrame:
         }
     )
     augmented = augment_lateral(renamed)
-    in_turn = augmented["in_turn"].to_numpy()
-    track_ortho = augmented["track_ortho"].to_numpy().astype(np.float64)
-    track_sel_known = augmented["track_sel_known"].to_numpy()
+    in_turn = augmented["fdm_in_turn"].to_numpy()
+    track_ortho = augmented["fdm_track_ortho_deg"].to_numpy().astype(np.float64)
+    track_sel_known = augmented["fdm_track_sel_known"].to_numpy()
 
     # 2. Track cleaning (median filter + Savgol).
     raw_track = flight["raw_track_deg"].to_numpy().astype(np.float64)
@@ -289,7 +289,7 @@ def _lateral_columns_for_flight(flight: pl.DataFrame) -> pl.DataFrame:
         pl.Series("fdm_heading_target_deg", heading_target_deg),
         pl.Series("fdm_heading_known", heading_known),
         pl.Series("fdm_heading_target_known", target_known),
-        pl.Series("in_turn", in_turn),
-        pl.Series("track_ortho", track_ortho),
-        pl.Series("track_sel_known", track_sel_known),
+        pl.Series("fdm_in_turn", in_turn),
+        pl.Series("fdm_track_ortho_deg", track_ortho),
+        pl.Series("fdm_track_sel_known", track_sel_known),
     )

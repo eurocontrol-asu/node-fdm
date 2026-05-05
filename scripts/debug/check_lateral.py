@@ -158,8 +158,8 @@ def plot_flight(df: pl.DataFrame, flight_id: str, out_dir: Path) -> Path | None:
     lon = flight["longitude"].to_numpy()
     track = flight["track"].to_numpy().astype(np.float64)
     heading = flight["heading"].to_numpy().astype(np.float64)
-    in_turn = flight["in_turn"].to_numpy().astype(bool)
-    track_ortho = flight["track_ortho"].to_numpy().astype(np.float64)
+    in_turn = flight["fdm_in_turn"].to_numpy().astype(bool)
+    track_ortho = flight["fdm_track_ortho_deg"].to_numpy().astype(np.float64)
 
     tas_ms = flight["TAS"].to_numpy().astype(np.float64) * KT_TO_MS
     u_wind = flight["era_u_wind_ms"].to_numpy().astype(np.float64)
@@ -202,7 +202,7 @@ def plot_flight(df: pl.DataFrame, flight_id: str, out_dir: Path) -> Path | None:
     ax = fig.add_subplot(gs[0])
     straight = ~in_turn
     ax.plot(lon[straight], lat[straight], ".", color="tab:blue", ms=2, label="straight")
-    ax.plot(lon[in_turn], lat[in_turn], ".", color="tab:orange", ms=2, label="in_turn")
+    ax.plot(lon[in_turn], lat[in_turn], ".", color="tab:orange", ms=2, label="fdm_in_turn")
     ax.plot(lon[0], lat[0], "g^", ms=10, label="start")
     ax.plot(lon[-1], lat[-1], "rv", ms=10, label="end")
     ax.set_xlabel("Longitude [deg]")

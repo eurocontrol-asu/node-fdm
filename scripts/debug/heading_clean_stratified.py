@@ -45,7 +45,7 @@ from check_lateral import (  # noqa: E402
 from node_fdm_data.lateral import augment_lateral  # noqa: E402
 
 PHASES = ["climb", "cruise", "descent", "approach"]
-TURN_STATES = ["straight", "in_turn"]
+TURN_STATES = ["straight", "fdm_in_turn"]
 OUTLIER_THRESHOLD_DEG = 5.0
 P95_VALIDATED_DEG = 3.0
 P95_DEGRADES_DEG = 5.0
@@ -100,7 +100,7 @@ def _process_flight(
     lon = flight["longitude"].to_numpy().astype(np.float64)
     track = flight["track"].to_numpy().astype(np.float64)
     heading = flight["heading"].to_numpy().astype(np.float64)
-    in_turn = flight["in_turn"].to_numpy().astype(bool)
+    in_turn = flight["fdm_in_turn"].to_numpy().astype(bool)
     alt_ft = flight["raw_alt_ft"].to_numpy().astype(np.float64)
     tas_kt = flight["TAS"].to_numpy().astype(np.float64)
     u_wind = flight["era_u_wind_ms"].to_numpy().astype(np.float64)
@@ -154,7 +154,7 @@ def _process_flight(
     return {
         "recon_diff": recon_diff,
         "phase": phase,
-        "in_turn": in_turn,
+        "fdm_in_turn": in_turn,
         "declination": declination,
         "lat": lat,
         "valid": valid,
@@ -252,13 +252,13 @@ def main() -> None:
             continue
         recon = out["recon_diff"]
         phase = out["phase"]
-        in_turn = out["in_turn"]
+        in_turn = out["fdm_in_turn"]
         decl = out["declination"]
         lat_arr = out["lat"]
 
         for ph in PHASES:
             for ts in TURN_STATES:
-                turn_mask = in_turn if ts == "in_turn" else ~in_turn
+                turn_mask = in_turn if ts == "fdm_in_turn" else ~in_turn
                 m = valid & (phase == ph) & turn_mask
                 if m.any():
                     bucket_recon[(ph, ts)].append(recon[m])
@@ -301,7 +301,7 @@ def main() -> None:
     # Total per phase (sanity)
     per_phase_total = {
         ph: cell_stats[(ph, "straight")]["n_samples"]
-        + cell_stats[(ph, "in_turn")]["n_samples"]
+        + cell_stats[(ph, "fdm_in_turn")]["n_samples"]
         for ph in PHASES
     }
     per_phase_total["other"] = other_n

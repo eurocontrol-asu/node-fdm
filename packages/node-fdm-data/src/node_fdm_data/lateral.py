@@ -272,9 +272,9 @@ def augment_lateral(
     n = df.height
     if n < _SAVGOL_WINDOW:
         return df.with_columns(
-            pl.lit(True).alias("in_turn"),
-            pl.lit(None, dtype=pl.Float64).alias("track_ortho"),
-            pl.lit(False).alias("track_sel_known"),
+            pl.lit(True).alias("fdm_in_turn"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_track_ortho_deg"),
+            pl.lit(False).alias("fdm_track_sel_known"),
         )
 
     track_raw = df["track"].to_numpy().astype(np.float64)
@@ -303,7 +303,7 @@ def augment_lateral(
     known = ~in_turn & ~np.isnan(ortho_deg)
 
     return df.with_columns(
-        pl.Series("in_turn", in_turn),
-        pl.Series("track_ortho", ortho_deg),
-        pl.Series("track_sel_known", known),
+        pl.Series("fdm_in_turn", in_turn),
+        pl.Series("fdm_track_ortho_deg", ortho_deg),
+        pl.Series("fdm_track_sel_known", known),
     )

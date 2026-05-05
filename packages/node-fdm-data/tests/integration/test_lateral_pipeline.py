@@ -57,9 +57,9 @@ def test_lateral_columns_present_after_derive() -> None:
         "fdm_heading_target_deg",
         "fdm_heading_known",
         "fdm_heading_target_known",
-        "in_turn",
-        "track_ortho",
-        "track_sel_known",
+        "fdm_in_turn",
+        "fdm_track_ortho_deg",
+        "fdm_track_sel_known",
     }
     assert expected <= set(out.columns), f"missing: {expected - set(out.columns)}"
 

@@ -1041,7 +1041,11 @@ typecodes:
         segments(config=config, dry_run=False)
         second = pl.read_delta(str(table_path))
 
-        sel_cols = [c for c in first.columns if c.startswith("fdm_") and "_sel" in c]
+        sel_cols = [
+            c
+            for c in first.columns
+            if c.startswith("fdm_") and "_sel_" in c and not c.endswith("_known")
+        ]
         assert len(sel_cols) > 0, "No sel columns produced"
         for col in sel_cols:
             # NaN-aware comparison: fill NaN with sentinel then compare

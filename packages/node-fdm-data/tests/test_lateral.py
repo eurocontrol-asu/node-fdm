@@ -246,18 +246,18 @@ class TestAugmentLateral:
     def test_output_columns(self, straight_flight_df: pl.DataFrame) -> None:
         """All required lateral columns present."""
         result = augment_lateral(straight_flight_df)
-        for col in ("in_turn", "track_ortho", "track_loxo", "drift_angle", "lat_wind"):
+        for col in ("fdm_in_turn", "fdm_track_ortho_deg", "track_loxo", "drift_angle", "lat_wind"):
             assert col in result.columns, f"Missing column: {col}"
 
     def test_straight_no_turns(self, straight_flight_df: pl.DataFrame) -> None:
         """Straight flight → no points in turn."""
         result = augment_lateral(straight_flight_df)
-        assert not result["in_turn"].to_numpy().any()
+        assert not result["fdm_in_turn"].to_numpy().any()
 
     def test_ortho_loxo_close_on_straight(self, straight_flight_df: pl.DataFrame) -> None:
         """On straight segment, ortho ≈ loxo (short distance)."""
         result = augment_lateral(straight_flight_df)
-        ortho = result["track_ortho"].to_numpy()
+        ortho = result["fdm_track_ortho_deg"].to_numpy()
         loxo = result["track_loxo"].to_numpy()
         valid = ~np.isnan(ortho) & ~np.isnan(loxo)
         if valid.any():
@@ -280,7 +280,7 @@ class TestAugmentLateral:
     def test_turns_detected(self, turning_flight_df: pl.DataFrame) -> None:
         """Flight with a turn → some in_turn points."""
         result = augment_lateral(turning_flight_df)
-        in_turn = result["in_turn"].to_numpy()
+        in_turn = result["fdm_in_turn"].to_numpy()
         assert in_turn.any(), "Should detect the turn"
         # Turn should be in middle section
         turn_center = np.median(np.where(in_turn)[0])
@@ -289,8 +289,8 @@ class TestAugmentLateral:
     def test_ortho_nan_during_turns(self, turning_flight_df: pl.DataFrame) -> None:
         """Reference tracks are NaN during turns."""
         result = augment_lateral(turning_flight_df)
-        in_turn = result["in_turn"].to_numpy()
-        ortho = result["track_ortho"].to_numpy()
+        in_turn = result["fdm_in_turn"].to_numpy()
+        ortho = result["fdm_track_ortho_deg"].to_numpy()
         if in_turn.any():
             assert np.all(np.isnan(ortho[in_turn])), "Ortho should be NaN during turns"
 
@@ -320,7 +320,7 @@ class TestEdgeCases:
             }
         )
         result = augment_lateral(df)
-        assert "track_ortho" in result.columns
+        assert "fdm_track_ortho_deg" in result.columns
         assert len(result) == 2
 
     def test_missing_heading_column(self) -> None:

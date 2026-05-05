@@ -99,7 +99,7 @@ def _compute_per_flight(  # noqa: C901
     lon = flight["longitude"].to_numpy().astype(np.float64)
     track = flight["track"].to_numpy().astype(np.float64)
     heading = flight["heading"].to_numpy().astype(np.float64)
-    in_turn = flight["in_turn"].to_numpy().astype(bool)
+    in_turn = flight["fdm_in_turn"].to_numpy().astype(bool)
     alt_ft = flight["raw_alt_ft"].to_numpy().astype(np.float64)
     tas_kt = flight["TAS"].to_numpy().astype(np.float64)
     u_wind = flight["era_u_wind_ms"].to_numpy().astype(np.float64)
@@ -162,7 +162,7 @@ def _compute_per_flight(  # noqa: C901
     return {
         "recon_diff": recon_diff,
         "phase": phase,
-        "in_turn": in_turn,
+        "fdm_in_turn": in_turn,
         "valid": valid,
         "tas_std": tas_std,
         "cross_wind": cross_wind,

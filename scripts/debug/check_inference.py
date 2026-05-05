@@ -186,7 +186,7 @@ extra_cols = [
     "era_temp_K",
 ]
 if HAS_LATERAL:
-    extra_cols += ["raw_lat_deg", "raw_lon_deg", "in_turn"]
+    extra_cols += ["raw_lat_deg", "raw_lon_deg", "fdm_in_turn"]
 extra = flight_df.select(extra_cols).to_numpy().astype(np.float32)[finite_mask]
 
 mach_true = extra[:, 0]
