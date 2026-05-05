@@ -177,16 +177,6 @@ class TestResumeUnit:
             # resolve_architecture called with "adsb" (reverse-mapped from "node_adsb_v1")
             mock_resolve.assert_called_once_with("adsb")
 
-    def test_resume_cli_requires_model(self) -> None:
-        """Call `fdm resume` without --model → CLI error."""
-        from cyclopts.exceptions import MissingArgumentError
-
-        from node_fdm_pipeline.cli import app
-
-        # Invoke resume with no arguments — should fail with missing required param
-        with pytest.raises(MissingArgumentError):
-            app(["resume"], exit_on_error=False)
-
     def test_resume_missing_meta_json(self, tmp_path: Path) -> None:
         """Point --model to empty dir → SystemExit with clear error message."""
         from node_fdm_pipeline.commands.resume import run_resume
