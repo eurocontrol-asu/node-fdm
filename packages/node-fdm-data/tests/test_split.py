@@ -40,19 +40,44 @@ class TestSplitByIcao:
             splits = result.filter(pl.col("raw_icao24") == icao24)["meta_split"].unique()
             assert len(splits) == 1, f"icao24 {icao24} has multiple splits: {splits.to_list()}"
 
-    def test_split_ratios(self) -> None:
-        """100 unique icao24s → ratios approximately 70/15/15."""
-        rows = [{"raw_icao24": f"icao{i:04d}"} for i in range(100)]
+    @pytest.mark.parametrize(
+        ("n_icao", "ratios", "expected_mins", "train_max"),
+        [
+            pytest.param(
+                100,
+                (0.7, 0.15, 0.15),
+                {"train": 60, "val": 5, "test": 5},
+                80,
+                id="default-70-15-15",
+            ),
+            pytest.param(
+                200,
+                (0.5, 0.25, 0.25),
+                {"train": 80, "val": 30, "test": 30},
+                None,
+                id="custom-50-25-25",
+            ),
+        ],
+    )
+    def test_split_ratios(
+        self,
+        n_icao: int,
+        ratios: tuple[float, float, float],
+        expected_mins: dict[str, int],
+        train_max: int | None,
+    ) -> None:
+        """Hash-based split honours requested ratios within tolerance."""
+        rows = [{"raw_icao24": f"icao{i:04d}"} for i in range(n_icao)]
         df = pl.DataFrame(rows)
-        result = split_by_icao(df, ratios=(0.7, 0.15, 0.15))
+        result = split_by_icao(df, ratios=ratios)
 
         counts = result.group_by("meta_split").len()
         split_map = dict(zip(counts["meta_split"].to_list(), counts["len"].to_list(), strict=True))
 
-        assert split_map.get("train", 0) >= 60
-        assert split_map.get("train", 0) <= 80
-        assert split_map.get("val", 0) >= 5
-        assert split_map.get("test", 0) >= 5
+        for split_name, min_count in expected_mins.items():
+            assert split_map.get(split_name, 0) >= min_count
+        if train_max is not None:
+            assert split_map.get("train", 0) <= train_max
 
     def test_split_column_added(self, delta_df: pl.DataFrame) -> None:
         """Result has meta_split column with valid values."""
@@ -75,20 +100,6 @@ class TestSplitByIcao:
         result = split_by_icao(df)
         assert len(result) == 0
         assert "meta_split" in result.columns
-
-    def test_split_custom_ratios(self) -> None:
-        """Custom ratios are respected."""
-        rows = [{"raw_icao24": f"icao{i:04d}"} for i in range(200)]
-        df = pl.DataFrame(rows)
-        result = split_by_icao(df, ratios=(0.5, 0.25, 0.25))
-
-        counts = result.group_by("meta_split").len()
-        split_map = dict(zip(counts["meta_split"].to_list(), counts["len"].to_list(), strict=True))
-
-        # With 200 unique icao24s and hash-based split, expect close to target
-        assert split_map.get("train", 0) >= 80
-        assert split_map.get("val", 0) >= 30
-        assert split_map.get("test", 0) >= 30
 
     def test_split_different_seed(self, delta_df: pl.DataFrame) -> None:
         """Different seeds may produce different assignments."""
