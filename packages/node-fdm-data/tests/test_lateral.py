@@ -1,8 +1,9 @@
 """Tests for node_fdm_data.lateral.
 
 Covers the public API (``orthodromic_bearing``, ``detect_turning_starts``,
-``augment_lateral``) plus the two private helpers ``_segment_bounds`` and
-``_build_in_turn_mask`` which carry the core segment-assignment logic.
+``augment_lateral``) plus the segment-assignment primitives
+``segment_bounds`` and ``build_in_turn_mask`` from
+``node_fdm_data.lateral_segments``.
 """
 
 from __future__ import annotations
@@ -12,12 +13,11 @@ import polars as pl
 import pytest
 
 from node_fdm_data.lateral import (
-    _build_in_turn_mask,
-    _segment_bounds,
     augment_lateral,
     detect_turning_starts,
     orthodromic_bearing,
 )
+from node_fdm_data.lateral_segments import build_in_turn_mask, segment_bounds
 
 # ---------------------------------------------------------------------------
 # orthodromic_bearing
@@ -177,7 +177,7 @@ class TestDetectTurningStarts:
 
 
 # ---------------------------------------------------------------------------
-# _segment_bounds
+# segment_bounds
 # ---------------------------------------------------------------------------
 
 
@@ -186,14 +186,14 @@ class TestSegmentBounds:
 
     def test_no_turns(self) -> None:
         """Empty turning_starts → A=0, B=n-1 for every sample."""
-        a, b = _segment_bounds(np.empty(0, dtype=np.intp), 10)
+        a, b = segment_bounds(np.empty(0, dtype=np.intp), 10)
         assert np.all(a == 0)
         assert np.all(b == 9)
 
     def test_one_turn_in_middle(self) -> None:
         """One turn at i=5 in n=10 → samples 0..4 have B=5, samples 5..9
         have A=5 and B=n-1=9."""
-        a, b = _segment_bounds(np.array([5], dtype=np.intp), 10)
+        a, b = segment_bounds(np.array([5], dtype=np.intp), 10)
         assert a[0] == 0 and b[0] == 5
         assert a[4] == 0 and b[4] == 5
         assert a[5] == 5 and b[5] == 9
@@ -202,7 +202,7 @@ class TestSegmentBounds:
     def test_multiple_turns(self) -> None:
         """Three turns → samples between turns enclosed by adjacent starts."""
         starts = np.array([3, 6, 9], dtype=np.intp)
-        a, b = _segment_bounds(starts, 12)
+        a, b = segment_bounds(starts, 12)
         # Sample 4 sits in [3, 6)
         assert a[4] == 3 and b[4] == 6
         # Sample 7 sits in [6, 9)
@@ -214,7 +214,7 @@ class TestSegmentBounds:
 
 
 # ---------------------------------------------------------------------------
-# _build_in_turn_mask
+# build_in_turn_mask
 # ---------------------------------------------------------------------------
 
 
@@ -225,14 +225,14 @@ class TestBuildInTurnMask:
         """No turns → every sample is "outside any segment"."""
         a = np.zeros(10, dtype=np.intp)
         b = np.full(10, 9, dtype=np.intp)
-        mask = _build_in_turn_mask(np.empty(0, dtype=np.intp), a, b, 10)
+        mask = build_in_turn_mask(np.empty(0, dtype=np.intp), a, b, 10)
         assert mask.all()
 
     def test_head_and_tail_masked(self) -> None:
         """Samples before the first turn and at/after the last are masked."""
         starts = np.array([3, 7], dtype=np.intp)
-        a, b = _segment_bounds(starts, 10)
-        mask = _build_in_turn_mask(starts, a, b, 10)
+        a, b = segment_bounds(starts, 10)
+        mask = build_in_turn_mask(starts, a, b, 10)
         # Head: 0..2 before first turn
         assert mask[0] and mask[1] and mask[2]
         # Body: 3..6 inside [3, 7) — straight, not masked
@@ -244,7 +244,7 @@ class TestBuildInTurnMask:
         """A == B (degenerate) → masked, even mid-flight."""
         a = np.array([0, 5, 5, 5, 9], dtype=np.intp)
         b = np.array([5, 5, 9, 9, 9], dtype=np.intp)
-        mask = _build_in_turn_mask(np.array([5, 9], dtype=np.intp), a, b, 5)
+        mask = build_in_turn_mask(np.array([5, 9], dtype=np.intp), a, b, 5)
         # Sample 1 has A == B == 5
         assert mask[1]
 
