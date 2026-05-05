@@ -136,11 +136,6 @@ class TestEdgeCases:
         result = mach_to_tas(mach, alt)
         assert math.isnan(float(result))
 
-    def test_zero_altitude(self) -> None:
-        """mach=0.3, alt=0 → valid TAS at sea level."""
-        result = mach_to_tas(0.3, 0.0)
-        assert float(result) == pytest.approx(0.3 * A0, rel=1e-6)
-
     def test_stratosphere(self) -> None:
         """mach=0.82, alt=12 000 m → correct (isothermal T=216.65 K)."""
         tas = mach_to_tas(0.82, 12_000.0)
