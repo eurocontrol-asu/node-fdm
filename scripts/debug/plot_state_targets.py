@@ -3,7 +3,7 @@
 For each flight, draws three panels stacked vertically:
 
 1. Altitude:    raw_alt_ft           vs fdm_alt_target_ft
-2. TAS:         bds_tas_from_cas_kt  vs fdm_tas_target_kt
+2. TAS:         fdm_tas_from_cas_kt  vs fdm_tas_target_kt
 3. Gamma:       fdm_gamma_rad        vs fdm_gamma_target_rad
 
 State is plotted in blue, target in red. Output: one PNG per flight under
@@ -33,7 +33,7 @@ DEFAULT_FLIGHTS = [
 
 PANELS: list[tuple[str, str, str, str]] = [
     ("Altitude [ft]", "raw_alt_ft", "fdm_alt_target_ft", "altitude"),
-    ("TAS [kt]", "bds_tas_from_cas_kt", "fdm_tas_target_kt", "tas"),
+    ("TAS [kt]", "fdm_tas_from_cas_kt", "fdm_tas_target_kt", "tas"),
     ("Gamma [rad]", "fdm_gamma_rad", "fdm_gamma_target_rad", "gamma"),
 ]
 

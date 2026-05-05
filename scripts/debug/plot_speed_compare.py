@@ -50,9 +50,9 @@ for fid in FLIGHTS:
     ax.plot(t, f["bds_tas_kt"], ".", ms=2, alpha=0.4, color="tab:gray", label="bds_tas_kt (raw)")
     ax.plot(t, f["era_tas_kt"], "-", lw=1, alpha=0.7, color="tab:orange", label="era_tas_kt")
     ax.plot(t, f["bds_tas_kt_clean"], ".", ms=2, color="tab:blue", label="bds_tas_kt_clean")
-    if "bds_tas_from_cas_kt" in f.columns:
-        ax.plot(t, f["bds_tas_from_cas_kt"], "-", lw=1, alpha=0.85, color="tab:green",
-                label="bds_tas_from_cas_kt (CAS→TAS via ERA T)")
+    if "fdm_tas_from_cas_kt" in f.columns:
+        ax.plot(t, f["fdm_tas_from_cas_kt"], "-", lw=1, alpha=0.85, color="tab:green",
+                label="fdm_tas_from_cas_kt (CAS→TAS via ERA T)")
     ax.set_ylabel("TAS [kt]")
     ax.set_xlabel("timestamp")
     ax.legend(loc="best", fontsize=8)

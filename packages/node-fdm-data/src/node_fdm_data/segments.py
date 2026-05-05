@@ -603,9 +603,9 @@ def _apply_transition_optimisation(
     if "fdm_cas_sel_kt" not in df.columns or not alt_segs or not mach_segs:
         return df
     n = len(df)
-    if n == 0 or "bds_tas_from_cas_kt" not in df.columns:
+    if n == 0 or "fdm_tas_from_cas_kt" not in df.columns:
         return df
-    tas_real = df["bds_tas_from_cas_kt"].to_numpy().astype(np.float64)
+    tas_real = df["fdm_tas_from_cas_kt"].to_numpy().astype(np.float64)
     if not np.any(~np.isnan(tas_real)):
         return df
     if cas_src_col not in df.columns:
@@ -718,7 +718,7 @@ def build_selected_params(
     """
     alt_col = _resolve_col(df, "raw_alt_ft", "altitude")
     alt_arr = df[alt_col].to_numpy()
-    tas_col = "bds_tas_from_cas_kt"
+    tas_col = "fdm_tas_from_cas_kt"
     cas_src_col = "bds_ias_kt_clean"
 
     # 1. Altitude plateaus FIRST — Mach detection is restricted to these rows.

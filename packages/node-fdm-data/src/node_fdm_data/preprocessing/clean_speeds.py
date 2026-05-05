@@ -5,7 +5,7 @@ and fills long Mode-S blackouts with cleaned ERA5 reanalysis values.
 
 The orchestrator :func:`clean_speeds` operates on 1-D NumPy arrays;
 :func:`clean_bds_speeds` is a Polars wrapper that produces ``bds_*_clean``
-columns and an optional ``bds_tas_from_cas_kt`` derived from cleaned IAS.
+columns and an optional ``fdm_tas_from_cas_kt`` derived from cleaned IAS.
 
 .. note::
 
@@ -426,11 +426,11 @@ def _derive_tas_from_cas(df: pl.DataFrame, ias_clean_kt: np.ndarray) -> np.ndarr
 
 
 def _drop_existing_clean_cols(df: pl.DataFrame) -> pl.DataFrame:
-    """Drop ``bds_*_clean`` and ``bds_tas_from_cas_kt`` from *df* if present."""
+    """Drop ``bds_*_clean`` and ``fdm_tas_from_cas_kt`` from *df* if present."""
     existing = [
         c
         for c in df.columns
-        if (c.endswith("_clean") and c.startswith("bds_")) or c == "bds_tas_from_cas_kt"
+        if (c.endswith("_clean") and c.startswith("bds_")) or c == "fdm_tas_from_cas_kt"
     ]
     return df.drop(existing) if existing else df
 
@@ -516,14 +516,14 @@ def _build_tas_from_cas_series(
     *,
     on_ground: np.ndarray | None,
 ) -> pl.Series | None:
-    """Build the ``bds_tas_from_cas_kt`` series, or ``None`` if not derivable."""
+    """Build the ``fdm_tas_from_cas_kt`` series, or ``None`` if not derivable."""
     if ias_clean is None:
         return None
     tas_from_cas = _derive_tas_from_cas(df, ias_clean)
     if tas_from_cas is None:
         return None
     tas_from_cas = _apply_on_ground(tas_from_cas, on_ground)
-    return pl.Series("bds_tas_from_cas_kt", tas_from_cas)
+    return pl.Series("fdm_tas_from_cas_kt", tas_from_cas)
 
 
 def clean_bds_speeds(  # noqa: PLR0913 — config-style entry point
@@ -547,7 +547,7 @@ def clean_bds_speeds(  # noqa: PLR0913 — config-style entry point
     on_ground_vz_threshold: float = 200.0,
     on_ground_alt_threshold: float = 1500.0,
 ) -> pl.DataFrame:
-    """Add ``bds_*_clean`` and ``bds_tas_from_cas_kt`` columns to *df*.
+    """Add ``bds_*_clean`` and ``fdm_tas_from_cas_kt`` columns to *df*.
 
     Per-channel behaviour:
 
@@ -558,10 +558,10 @@ def clean_bds_speeds(  # noqa: PLR0913 — config-style entry point
       differ upstream); on-ground mask still applied.
 
     When ``raw_alt_ft`` and ``era_temp_K`` are present, an extra column
-    ``bds_tas_from_cas_kt`` is appended, derived from ``bds_ias_kt_clean``
+    ``fdm_tas_from_cas_kt`` is appended, derived from ``bds_ias_kt_clean``
     via :func:`~node_fdm_data.physics.speed.cas_to_tas_real`.
 
-    Existing ``bds_*_clean`` and ``bds_tas_from_cas_kt`` columns are
+    Existing ``bds_*_clean`` and ``fdm_tas_from_cas_kt`` columns are
     dropped before recomputation, making the function idempotent.  Missing
     input columns are silently skipped.
 

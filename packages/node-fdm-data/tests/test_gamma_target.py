@@ -89,7 +89,7 @@ def _make_standard_flight(n: int = 300, *, seed: int = 42) -> pl.DataFrame:
         {
             "raw_alt_ft": alt,
             "raw_vz_ftmin": vz,
-            "bds_tas_from_cas_kt": tas_kt,
+            "fdm_tas_from_cas_kt": tas_kt,
             "fdm_gamma_rad": gamma,
         }
     )
@@ -138,7 +138,7 @@ class TestGammaTargetVzSource:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -172,7 +172,7 @@ class TestGammaTargetGammaSource:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": alt,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -212,7 +212,7 @@ class TestGammaTargetZeroTas:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -261,7 +261,7 @@ class TestGammaTargetKnownMask:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -313,7 +313,7 @@ class TestGammaTargetPriorityVzOverGamma:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -373,7 +373,7 @@ class TestGammaTargetPriorityGammaOverAlt:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -444,7 +444,7 @@ class TestGammaDiffNanFilledZero:
                 "fdm_gamma_rad": gamma_actual,
                 # convert_si also needs raw columns for SI conversions
                 "raw_alt_ft": np.linspace(10_000, 35_000, n),
-                "bds_tas_from_cas_kt": np.full(n, 400.0),
+                "fdm_tas_from_cas_kt": np.full(n, 400.0),
                 "raw_vz_ftmin": np.full(n, 0.0),
             }
         )
@@ -484,7 +484,7 @@ class TestGammaTargetAllUnknown:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -524,7 +524,7 @@ class TestGammaTargetOnlyAltSel:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )
@@ -603,7 +603,7 @@ class TestGammaTargetAltHoldSource:
             {
                 "raw_alt_ft": alt,
                 "raw_vz_ftmin": vz,
-                "bds_tas_from_cas_kt": tas_kt,
+                "fdm_tas_from_cas_kt": tas_kt,
                 "fdm_gamma_rad": gamma,
             }
         )

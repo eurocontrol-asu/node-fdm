@@ -56,16 +56,16 @@ def derive_columns(
         DataFrame with ``fdm_*`` derived columns added.
     """
     # --- Expression-based columns (vectorised, no grouping needed) ---
-    # TAS source = bds_tas_from_cas_kt (clean BDS-derived TAS) instead of raw
+    # TAS source = fdm_tas_from_cas_kt (clean BDS-derived TAS) instead of raw
     # era_tas_kt: keeps fdm_gamma_rad / fdm_long_wind_kt consistent with the
     # speeds produced by the clean-speeds stage.
     vz_ms = pl.col("raw_vz_ftmin") * FTMIN
-    tas_ms = pl.col("bds_tas_from_cas_kt") * KT
+    tas_ms = pl.col("fdm_tas_from_cas_kt") * KT
     ratio = (vz_ms / tas_ms.clip(lower_bound=1e-6)).clip(-1.0, 1.0)
 
     df = df.with_columns(
         ratio.arcsin().alias("fdm_gamma_rad"),
-        (pl.col("bds_tas_from_cas_kt") - pl.col("raw_gs_kt")).alias("fdm_long_wind_kt"),
+        (pl.col("fdm_tas_from_cas_kt") - pl.col("raw_gs_kt")).alias("fdm_long_wind_kt"),
         (pl.col("bds_mcp_sel_alt_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
     )
 
@@ -192,14 +192,14 @@ def _augment_lateral_per_flight(df: pl.DataFrame) -> pl.DataFrame:
         )
 
     # Pick a TAS source consistent with the longitudinal channel:
-    # bds_tas_from_cas_kt is the cleaned TAS used by clean-speeds; fallback
+    # fdm_tas_from_cas_kt is the cleaned TAS used by clean-speeds; fallback
     # to era_tas_kt where the cleaned value is missing.
     tas_kt: pl.Expr
-    if "bds_tas_from_cas_kt" in df.columns:
+    if "fdm_tas_from_cas_kt" in df.columns:
         if "era_tas_kt" in df.columns:
-            tas_kt = pl.col("bds_tas_from_cas_kt").fill_null(pl.col("era_tas_kt"))
+            tas_kt = pl.col("fdm_tas_from_cas_kt").fill_null(pl.col("era_tas_kt"))
         else:
-            tas_kt = pl.col("bds_tas_from_cas_kt")
+            tas_kt = pl.col("fdm_tas_from_cas_kt")
     elif "era_tas_kt" in df.columns:
         tas_kt = pl.col("era_tas_kt")
     else:

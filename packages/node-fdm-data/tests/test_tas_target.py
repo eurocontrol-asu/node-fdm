@@ -76,7 +76,7 @@ def _make_flight(  # noqa: PLR0913
                 np.linspace(tas_cruise_kt, 200, third),
             ]
         )
-        cols["bds_tas_from_cas_kt"] = tas
+        cols["fdm_tas_from_cas_kt"] = tas
 
     return pl.DataFrame(cols)
 
@@ -244,7 +244,7 @@ class TestNoSegmentsAtAll:
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.linspace(0, 10_000, n),
-                "bds_tas_from_cas_kt": rng.uniform(200, 400, n),
+                "fdm_tas_from_cas_kt": rng.uniform(200, 400, n),
             }
         )
         cfg: dict[str, dict[str, object]] = {}

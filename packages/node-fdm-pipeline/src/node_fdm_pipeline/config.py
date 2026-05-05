@@ -152,7 +152,7 @@ class CleanSpeedsConfig(BaseModel, frozen=True):
 
     Applied per flight by the ``clean-speeds`` stage between ``enrich``
     and ``derive``.  Produces ``bds_*_clean`` columns plus a derived
-    ``bds_tas_from_cas_kt`` (TAS recomputed from cleaned IAS via the
+    ``fdm_tas_from_cas_kt`` (TAS recomputed from cleaned IAS via the
     ERA5 static temperature).
 
     Defaults are calibrated against the visual validation in

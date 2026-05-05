@@ -774,9 +774,12 @@ def derive(
 
     df = read_delta_table(delta_table)
 
-    # Drop existing derived columns to allow re-derivation (preserve fdm_flag_*)
+    # Drop existing derived columns to allow re-derivation (preserve fdm_flag_*
+    # and fdm_tas_from_cas_kt which is an input produced by clean-speeds)
     derive_existing = [
-        c for c in df.columns if c.startswith("fdm_") and not c.startswith("fdm_flag_")
+        c
+        for c in df.columns
+        if c.startswith("fdm_") and not c.startswith("fdm_flag_") and c != "fdm_tas_from_cas_kt"
     ]
     if derive_existing:
         log.info("derive_drop_existing", columns=derive_existing)

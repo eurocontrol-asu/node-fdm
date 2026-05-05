@@ -86,9 +86,9 @@ def build_windows(df: pl.DataFrame, n_max: int = 30):
     windows = []
     flights = df.partition_by("meta_flight_id", maintain_order=True)
     for fdf in flights:
-        if "bds_tas_from_cas_kt" not in fdf.columns:
+        if "fdm_tas_from_cas_kt" not in fdf.columns:
             continue
-        tas = fdf["bds_tas_from_cas_kt"].to_numpy().astype(np.float64)
+        tas = fdf["fdm_tas_from_cas_kt"].to_numpy().astype(np.float64)
         alt_ft = fdf["raw_alt_ft"].to_numpy().astype(np.float64)
         if "era_temp_K" not in fdf.columns:
             continue

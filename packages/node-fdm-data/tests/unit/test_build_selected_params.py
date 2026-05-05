@@ -49,7 +49,7 @@ def _flight(  # noqa: PLR0913
         "raw_vz_ftmin": vz,
     }
     if tas_kt is not None:
-        cols["bds_tas_from_cas_kt"] = tas_kt
+        cols["fdm_tas_from_cas_kt"] = tas_kt
     if era_temp_K is not None:
         cols["era_temp_K"] = era_temp_K
     return pl.DataFrame(cols)

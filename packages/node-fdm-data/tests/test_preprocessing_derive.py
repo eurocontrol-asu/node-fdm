@@ -11,14 +11,14 @@ from node_fdm_data.preprocessing.derive import derive_columns
 
 
 class TestDeriveGamma:
-    """fdm_gamma_rad = arcsin(raw_vz_ftmin * FTMIN / (bds_tas_from_cas_kt * KT))."""
+    """fdm_gamma_rad = arcsin(raw_vz_ftmin * FTMIN / (fdm_tas_from_cas_kt * KT))."""
 
     def test_derive_gamma(self) -> None:
         """TAS=250kt, vz=1000ft/min → correct fdm_gamma_rad."""
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [1000.0],
-                "bds_tas_from_cas_kt": [250.0],
+                "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
                 "bds_mcp_sel_alt_ft": [36000.0],
@@ -37,7 +37,7 @@ class TestDeriveGamma:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [1000.0],
-                "bds_tas_from_cas_kt": [0.001],
+                "fdm_tas_from_cas_kt": [0.001],
                 "raw_gs_kt": [0.0],
                 "raw_alt_ft": [1000.0],
                 "bds_mcp_sel_alt_ft": [2000.0],
@@ -54,14 +54,14 @@ class TestDeriveGamma:
 
 
 class TestDeriveLongWind:
-    """fdm_long_wind_kt = bds_tas_from_cas_kt - raw_gs_kt."""
+    """fdm_long_wind_kt = fdm_tas_from_cas_kt - raw_gs_kt."""
 
     def test_derive_long_wind(self) -> None:
         """TAS=250kt, GS=240kt → fdm_long_wind_kt = 10.0."""
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0],
-                "bds_tas_from_cas_kt": [250.0],
+                "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
                 "bds_mcp_sel_alt_ft": [36000.0],
@@ -81,7 +81,7 @@ class TestDeriveAltDiff:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0],
-                "bds_tas_from_cas_kt": [250.0],
+                "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
                 "bds_mcp_sel_alt_ft": [36000.0],
@@ -106,7 +106,7 @@ class TestDeriveDistanceCum:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0] * 3,
-                "bds_tas_from_cas_kt": [250.0] * 3,
+                "fdm_tas_from_cas_kt": [250.0] * 3,
                 "raw_gs_kt": [240.0] * 3,
                 "raw_alt_ft": [35000.0] * 3,
                 "bds_mcp_sel_alt_ft": [36000.0] * 3,
@@ -141,7 +141,7 @@ class TestDeriveDistanceCum:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0] * 4,
-                "bds_tas_from_cas_kt": [250.0] * 4,
+                "fdm_tas_from_cas_kt": [250.0] * 4,
                 "raw_gs_kt": [240.0] * 4,
                 "raw_alt_ft": [35000.0] * 4,
                 "bds_mcp_sel_alt_ft": [36000.0] * 4,
@@ -168,7 +168,7 @@ class TestDeriveAirportDistances:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0],
-                "bds_tas_from_cas_kt": [250.0],
+                "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
                 "bds_mcp_sel_alt_ft": [36000.0],
@@ -197,7 +197,7 @@ class TestDeriveAirportDistances:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0],
-                "bds_tas_from_cas_kt": [250.0],
+                "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
                 "bds_mcp_sel_alt_ft": [36000.0],
@@ -217,7 +217,7 @@ class TestDeriveAirportDistances:
         df = pl.DataFrame(
             {
                 "raw_vz_ftmin": [0.0],
-                "bds_tas_from_cas_kt": [250.0],
+                "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
                 "bds_mcp_sel_alt_ft": [36000.0],

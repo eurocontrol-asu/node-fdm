@@ -32,7 +32,7 @@ GROUPS: list[tuple[str, str, list[tuple[str, str, dict[str, object]]]]] = [
             ("bds_tas_kt_clean", "BDS TAS clean", {"alpha": 0.7, "lw": 0.9}),
             ("era_tas_kt", "ERA5 TAS", {"alpha": 0.6, "lw": 1.0, "color": "tab:orange"}),
             (
-                "bds_tas_from_cas_kt",
+                "fdm_tas_from_cas_kt",
                 "TAS from CAS clean",
                 {"lw": 1.5, "color": "tab:green"},
             ),

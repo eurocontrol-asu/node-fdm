@@ -28,7 +28,7 @@ class TestConvertSI:
             {
                 "raw_alt_ft": [30000.0, 35000.0],
                 "bds_mcp_sel_alt_ft": [31000.0, 36000.0],
-                "bds_tas_from_cas_kt": [250.0, 450.0],
+                "fdm_tas_from_cas_kt": [250.0, 450.0],
                 "bds_ias_kt_clean": [200.0, 280.0],
                 "raw_gs_kt": [240.0, 430.0],
                 "fdm_long_wind_kt": [10.0, 20.0],
@@ -46,7 +46,7 @@ class TestConvertSI:
         assert result["raw_alt_m"][0] == pytest.approx(30000.0 * 0.3048)
 
     def test_convert_kt_to_ms(self, pipeline_df: pl.DataFrame) -> None:
-        """bds_tas_from_cas_kt -> era_tas_ms via kt_to_ms (x 0.514444)."""
+        """fdm_tas_from_cas_kt -> era_tas_ms via kt_to_ms (x 0.514444)."""
         result = convert_si(pipeline_df)
         assert "era_tas_ms" in result.columns
         assert result["era_tas_ms"][0] == pytest.approx(250.0 * 0.514444, rel=1e-4)

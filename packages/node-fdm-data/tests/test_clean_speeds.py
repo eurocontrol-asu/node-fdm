@@ -222,19 +222,19 @@ class TestCleanBdsSpeeds:
             assert result["bds_mach_clean"].null_count() == result.height
 
     def test_clean_bds_speeds_derives_tas_from_cas(self) -> None:
-        """``bds_tas_from_cas_kt`` is appended when alt+temp are present."""
+        """``fdm_tas_from_cas_kt`` is appended when alt+temp are present."""
         df = self._make_df()
         result = clean_bds_speeds(df)
-        assert "bds_tas_from_cas_kt" in result.columns
+        assert "fdm_tas_from_cas_kt" in result.columns
         # At FL350 with T=220K and CAS=250 kt, TAS should be ~410-450 kt.
-        tas = result["bds_tas_from_cas_kt"].to_numpy()
+        tas = result["fdm_tas_from_cas_kt"].to_numpy()
         finite = tas[~np.isnan(tas)]
         assert finite.size > 0
         assert finite.min() > 350.0
         assert finite.max() < 500.0
 
     def test_clean_bds_speeds_skips_tas_derivation_without_meteo(self) -> None:
-        """No ``bds_tas_from_cas_kt`` column when era_temp_K / raw_alt_ft missing."""
+        """No ``fdm_tas_from_cas_kt`` column when era_temp_K / raw_alt_ft missing."""
         n = 30
         df = pl.DataFrame(
             {
@@ -248,7 +248,7 @@ class TestCleanBdsSpeeds:
             }
         )
         result = clean_bds_speeds(df)
-        assert "bds_tas_from_cas_kt" not in result.columns
+        assert "fdm_tas_from_cas_kt" not in result.columns
 
 
 class TestPointJumps:

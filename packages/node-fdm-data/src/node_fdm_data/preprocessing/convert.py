@@ -41,7 +41,7 @@ __all__ = [
 SI_CONVERSIONS: list[tuple[str, Callable[[str], pl.Expr], str]] = [
     ("raw_alt_ft", ft_to_m, "raw_alt_m"),
     ("bds_mcp_sel_alt_ft", ft_to_m, "bds_mcp_sel_alt_m"),
-    ("bds_tas_from_cas_kt", kt_to_ms, "era_tas_ms"),
+    ("fdm_tas_from_cas_kt", kt_to_ms, "era_tas_ms"),
     ("bds_ias_kt_clean", kt_to_ms, "bds_ias_ms"),
     ("raw_gs_kt", kt_to_ms, "raw_gs_ms"),
     ("fdm_long_wind_kt", kt_to_ms, "fdm_long_wind_ms"),

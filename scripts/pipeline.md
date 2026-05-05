@@ -80,7 +80,7 @@ Nettoie les vitesses BDS (`bds_mach`, `bds_ias_kt`, `bds_tas_kt`) avec :
 frozen-run filter, Hampel (window=50, 3 passes), V-shape detector, zigzag-region
 detector, ERA fill des longs trous Mode-S, post-fill Hampel, interpolation des
 gaps courts, on-ground mask. Produit `bds_mach_clean`, `bds_ias_kt_clean`,
-`bds_tas_kt_clean` et la colonne derivee `bds_tas_from_cas_kt` (CAS_clean → TAS
+`bds_tas_kt_clean` et la colonne derivee `fdm_tas_from_cas_kt` (CAS_clean → TAS
 via ERA T).
 
 > Necessite ERA5 (etape 6 enrich) pour `era_temp_K` et le ERA fill.
@@ -105,7 +105,7 @@ uv run fdm derive --config config.yaml
 ## 9. segments
 
 Detecte les segments constants sur `bds_mach_clean`, `bds_ias_kt_clean`,
-`bds_tas_from_cas_kt` et construit les colonnes `fdm_*_sel` (mach, cas, vz, alt, gamma)
+`fdm_tas_from_cas_kt` et construit les colonnes `fdm_*_sel` (mach, cas, vz, alt, gamma)
 ainsi que `fdm_tas_target_kt` (cible TAS unifiee Mach→TAS / CAS→TAS / TAS_sel).
 
 ```bash

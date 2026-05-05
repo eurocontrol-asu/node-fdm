@@ -298,7 +298,7 @@ class TestBuildSelectedParams:
             {
                 "raw_alt_ft": alt,
                 "bds_mach_clean": mach_vals,
-                "bds_tas_from_cas_kt": np.full(n, 450.0),
+                "fdm_tas_from_cas_kt": np.full(n, 450.0),
                 "raw_gs_kt": np.full(n, 430.0),
                 "raw_vz_ftmin": np.full(n, 0.0),
                 "bds_ias_kt_clean": np.full(n, 280.0),
@@ -624,7 +624,7 @@ class TestTasSelected:
             {
                 "raw_alt_ft": alt,
                 "bds_mach_clean": mach,
-                "bds_tas_from_cas_kt": tas,
+                "fdm_tas_from_cas_kt": tas,
             }
         )
         config: dict[str, Any] = {
@@ -660,7 +660,7 @@ class TestTasSelected:
             {
                 "raw_alt_ft": alt,
                 "bds_mach_clean": mach,
-                "bds_tas_from_cas_kt": tas,
+                "fdm_tas_from_cas_kt": tas,
             }
         )
         config: dict[str, Any] = {
@@ -695,7 +695,7 @@ class TestTasSelected:
                 "raw_alt_ft": alt,
                 "bds_mach_clean": mach,
                 "bds_ias_kt_clean": cas,
-                "bds_tas_from_cas_kt": tas,
+                "fdm_tas_from_cas_kt": tas,
             }
         )
         config: dict[str, Any] = {
@@ -724,7 +724,7 @@ class TestTasSelected:
             {
                 "raw_alt_ft": np.full(n, 35000.0),
                 "bds_mach_clean": np.full(n, 0.78),
-                "bds_tas_from_cas_kt": np.full(n, 460.0),
+                "fdm_tas_from_cas_kt": np.full(n, 460.0),
             }
         )
         config: dict[str, Any] = {
@@ -740,7 +740,7 @@ class TestTasSelected:
             {
                 "raw_alt_ft": np.full(n, 35000.0),
                 "bds_mach_clean": np.full(n, 0.78),
-                "bds_tas_from_cas_kt": np.full(n, np.nan),
+                "fdm_tas_from_cas_kt": np.full(n, np.nan),
             }
         )
         config: dict[str, Any] = {
@@ -758,7 +758,7 @@ class TestTasSelected:
             {
                 "raw_alt_ft": np.full(n, 35000.0),
                 "bds_mach_clean": np.full(n, 0.78),
-                "bds_tas_from_cas_kt": np.full(n, 460.0),
+                "fdm_tas_from_cas_kt": np.full(n, 460.0),
             }
         )
         config: dict[str, Any] = {
