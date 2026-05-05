@@ -114,7 +114,7 @@ module = ["node_fdm_pipeline.cli"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["torchdiffeq.*", "yaml.*", "traffic.*", "fastmeteo.*", "altair.*", "pyBADA.*", "joblib.*"]
+module = ["torchdiffeq.*", "traffic.*", "fastmeteo.*", "altair.*", "pyBADA.*", "joblib.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
