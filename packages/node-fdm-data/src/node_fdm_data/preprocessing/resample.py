@@ -3,7 +3,7 @@
 Resamples each flight to a regular time grid (default 4 s), detecting
 sub-segments per column group and interpolating only within them.
 Gaps longer than ``max_gap_s`` are left null with explicit boolean
-flags ``pre_gap_position``, ``pre_gap_altitude``, ``pre_gap_bds``.
+flags ``fdm_flag_gap_position``, ``fdm_flag_gap_altitude``, ``fdm_flag_gap_bds``.
 """
 
 from __future__ import annotations
@@ -321,7 +321,7 @@ def _apply_column_group(
     group_name, interp_cols, ref_cols = group
     present_cols = [c for c in interp_cols if c in df.columns]
     if not present_cols:
-        return result.with_columns(pl.lit(True).alias(f"pre_gap_{group_name}"))
+        return result.with_columns(pl.lit(True).alias(f"fdm_flag_gap_{group_name}"))
 
     seg_ids = detect_subsegments(df, ref_cols, max_gap_s)
     col_values, gap_flag = interpolate_group_by_subsegments(
@@ -332,7 +332,7 @@ def _apply_column_group(
     )
     return result.with_columns(
         *[pl.Series(c, col_values[c]) for c in present_cols],
-        gap_flag.alias(f"pre_gap_{group_name}"),
+        gap_flag.alias(f"fdm_flag_gap_{group_name}"),
     )
 
 
@@ -348,7 +348,7 @@ def resample_flight(
     2. For each column group (position, altitude, BDS): detect sub-segments,
        interpolate within, leave null between.
     3. Optionally smooth position sub-segments with Savitzky-Golay.
-    4. Add gap flags: ``pre_gap_position``, ``pre_gap_altitude``, ``pre_gap_bds``.
+    4. Add gap flags: ``fdm_flag_gap_position``, ``fdm_flag_gap_altitude``, ``fdm_flag_gap_bds``.
 
     Args:
         df: Single-flight DataFrame, sorted by ``raw_timestamp``.

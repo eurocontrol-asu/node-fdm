@@ -44,7 +44,7 @@ uv run fdm identify --config config.yaml
 
 Resample et lisse les vols : detection des sous-segments par groupe de colonnes (position, altitude, BDS), interpolation lineaire par sous-segment, lissage Savitzky-Golay de la position, et resampling a grille reguliere 4s.
 
-Ajoute 3 flags de gap : `pre_gap_position`, `pre_gap_altitude`, `pre_gap_bds`.
+Ajoute 3 flags de gap : `fdm_flag_gap_position`, `fdm_flag_gap_altitude`, `fdm_flag_gap_bds`.
 
 > **Note** : cette etape fait un overwrite de la Delta Table (le nombre de rows change). Toutes les etapes suivantes (flag → split) doivent etre relancees.
 

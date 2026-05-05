@@ -170,7 +170,7 @@ class TestNoInterpolationAcrossGap:
     """Values between sub-segments must remain null with gap flag."""
 
     def test_null_and_flag_in_gap(self) -> None:
-        """Two sub-segments with 120s gap → null + pre_gap_position in between."""
+        """Two sub-segments with 120s gap → null + fdm_flag_gap_position in between."""
         ts_start = datetime(2025, 1, 1)
         part1 = _make_flight("f1", 30, _FlightSpec(ts_start=ts_start))
         part2 = _make_flight(
@@ -182,7 +182,7 @@ class TestNoInterpolationAcrossGap:
 
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
 
-        gap_rows = result.filter(pl.col("pre_gap_position"))
+        gap_rows = result.filter(pl.col("fdm_flag_gap_position"))
         assert len(gap_rows) > 0
         assert gap_rows["raw_lat_deg"].is_null().all()
 
@@ -253,8 +253,8 @@ class TestGapFlagsCorrect:
 
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
 
-        pos_gap_pct = result["pre_gap_position"].sum() / len(result)
-        alt_gap_pct = result["pre_gap_altitude"].sum() / len(result)
+        pos_gap_pct = result["fdm_flag_gap_position"].sum() / len(result)
+        alt_gap_pct = result["fdm_flag_gap_altitude"].sum() / len(result)
 
         # Position has big gap in the middle → mostly gap
         assert pos_gap_pct > 0.5
@@ -336,16 +336,16 @@ class TestResampleWithBDSColumns:
     """BDS columns are interpolated and get their own gap flag."""
 
     def test_bds_group_interpolated(self) -> None:
-        """Flight with BDS data → bds columns present, pre_gap_bds flag exists."""
+        """Flight with BDS data → bds columns present, fdm_flag_gap_bds flag exists."""
         df = _make_flight("f1", 600, _FlightSpec(with_bds=True))
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
-        assert "pre_gap_bds" in result.columns
+        assert "fdm_flag_gap_bds" in result.columns
         assert "bds_mach" in result.columns
         # BDS data is dense → almost no gap
-        assert result["pre_gap_bds"].sum() / len(result) < 0.05
+        assert result["fdm_flag_gap_bds"].sum() / len(result) < 0.05
 
     def test_bds_sparse_has_gaps(self) -> None:
-        """BDS data with big gap → pre_gap_bds True in the middle."""
+        """BDS data with big gap → fdm_flag_gap_bds True in the middle."""
         ts_start = datetime(2025, 1, 1)
         n = 600
         timestamps = [ts_start + timedelta(seconds=i) for i in range(n)]
@@ -373,8 +373,8 @@ class TestResampleWithBDSColumns:
             }
         )
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
-        # Big gap in the middle → pre_gap_bds should have True values
-        assert result["pre_gap_bds"].sum() > 0
+        # Big gap in the middle → fdm_flag_gap_bds should have True values
+        assert result["fdm_flag_gap_bds"].sum() > 0
 
 
 class TestResampleMetaColumnsCarried:
@@ -426,7 +426,7 @@ class TestEdgeCases:
     """Edge cases from the test specification."""
 
     def test_all_position_null(self) -> None:
-        """Flight with all lat/lon null → kept, pre_gap_position all True."""
+        """Flight with all lat/lon null → kept, fdm_flag_gap_position all True."""
         ts_start = datetime(2025, 1, 1)
         n = 600
         df = pl.DataFrame(
@@ -442,9 +442,9 @@ class TestEdgeCases:
             }
         )
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
-        assert result["pre_gap_position"].all()
+        assert result["fdm_flag_gap_position"].all()
         # Altitude should be mostly non-gap
-        assert not result["pre_gap_altitude"].all()
+        assert not result["fdm_flag_gap_altitude"].all()
 
     def test_already_on_grid(self) -> None:
         """Data already at 4s intervals → same grid, same count."""
@@ -478,7 +478,7 @@ class TestEdgeCases:
         )
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
         # Single point excluded → all position is gap
-        assert result["pre_gap_position"].all()
+        assert result["fdm_flag_gap_position"].all()
 
 
 class TestResamplePreservesStringIdentifiers:
