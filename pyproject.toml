@@ -61,7 +61,7 @@ ignore = ["S101"]
 known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada", "node_fdm_pipeline"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests", "packages/node-fdm-pipeline/tests", "tests"]
+testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests", "packages/node-fdm-pipeline/tests"]
 addopts = "-q --import-mode=importlib"
 
 [tool.coverage.run]
