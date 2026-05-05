@@ -89,9 +89,19 @@ class TestOrthodromicBearing:
 class TestDetectTurningStarts:
     """Turn-start detection via Savgol + find_peaks + backtrack."""
 
-    def test_straight_flight(self) -> None:
-        """Constant track → no turns."""
-        track = np.full(100, 90.0)
+    @pytest.mark.parametrize(
+        "track",
+        [
+            pytest.param(np.full(100, 90.0), id="straight_flight"),
+            pytest.param(
+                np.where(np.arange(100) == 50, np.nan, 90.0),
+                id="handles_nan_input",
+            ),
+            pytest.param(np.full(100, np.nan), id="all_nan"),
+        ],
+    )
+    def test_no_turns_detected(self, track: np.ndarray) -> None:
+        """Inputs without genuine turns yield empty starts."""
         starts = detect_turning_starts(track)
         assert starts.size == 0
 
@@ -144,20 +154,6 @@ class TestDetectTurningStarts:
         starts = detect_turning_starts(track)
         # Should detect the gentle turn, not double-trigger on the wrap.
         assert starts.size <= 2
-
-    def test_handles_nan_input(self) -> None:
-        """Isolated NaNs are forward-filled, not crashing the filter."""
-        track = np.full(100, 90.0)
-        track[50] = np.nan
-        starts = detect_turning_starts(track)
-        # Constant track with one NaN → no turn detection.
-        assert starts.size == 0
-
-    def test_all_nan(self) -> None:
-        """All-NaN input → empty result."""
-        track = np.full(100, np.nan)
-        starts = detect_turning_starts(track)
-        assert starts.size == 0
 
     def test_returns_intp_array(self) -> None:
         """Return dtype is np.intp (indexable)."""
