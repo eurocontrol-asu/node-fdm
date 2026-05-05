@@ -12,6 +12,7 @@ from collections import Counter
 from dataclasses import dataclass
 from datetime import timedelta
 
+import numpy as np
 import polars as pl
 
 __all__ = [
@@ -219,8 +220,11 @@ def _smooth_run(
     df: pl.DataFrame,
     mask: pl.Series,
     flight_cls: type,
-) -> tuple[list[int], list[tuple[float, float]]] | None:
-    """Smooth one contiguous run of valid positions; return (indices, lat/lon) or None."""
+) -> tuple[list[int], np.ndarray] | None:
+    """Smooth one contiguous run of valid positions; return (indices, arr) or None.
+
+    ``arr`` is a ``(n, 2)`` ndarray with columns ``[latitude, longitude]``.
+    """
     indices = mask.arg_true().to_list()
     if len(indices) < _MIN_RUN_LEN:
         return None
@@ -238,12 +242,8 @@ def _smooth_run(
     if smoothed is None or len(smoothed) != len(indices):
         return None
 
-    smooth_pd = smoothed.data[["latitude", "longitude"]]
-    pairs = [
-        (float(smooth_pd.iloc[i]["latitude"]), float(smooth_pd.iloc[i]["longitude"]))
-        for i in range(len(indices))
-    ]
-    return indices, pairs
+    arr = smoothed.data[["latitude", "longitude"]].to_numpy()
+    return indices, arr
 
 
 def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
@@ -274,17 +274,17 @@ def smooth_position_subsegments(df: pl.DataFrame) -> pl.DataFrame:
         return df
 
     run_ids = (has_pos != has_pos.shift()).cum_sum()
-    lats = df["raw_lat_deg"].to_list()
-    lons = df["raw_lon_deg"].to_list()
+    lats = df["raw_lat_deg"].to_numpy().copy()
+    lons = df["raw_lon_deg"].to_numpy().copy()
 
     for run_id in run_ids.filter(has_pos).unique().drop_nulls().sort().to_list():
         result = _smooth_run(df, (run_ids == run_id) & has_pos, Flight)
         if result is None:
             continue
-        indices, pairs = result
-        for idx, (lat, lon) in zip(indices, pairs, strict=True):
-            lats[idx] = lat
-            lons[idx] = lon
+        indices, arr = result
+        idx_arr = np.asarray(indices, dtype=np.int64)
+        lats[idx_arr] = arr[:, 0]
+        lons[idx_arr] = arr[:, 1]
 
     return df.with_columns(
         pl.Series("raw_lat_deg", lats, dtype=pl.Float64),
