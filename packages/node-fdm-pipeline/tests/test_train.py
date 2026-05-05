@@ -172,19 +172,30 @@ typecodes:
         # No trainer created for empty dataset
         mock_trainer_cls.assert_not_called()
 
+    @pytest.mark.parametrize(
+        "train_len, expected_epochs",
+        [
+            # batch_size=512, n_step=10, coeff=5.0, adjusted=4000
+            pytest.param(5120, 4000, id="default_coefficient"),
+            # batch_size=512, n_step=max(0,1)=1, coeff=min(50,10)=10, adjusted=8000
+            pytest.param(10, 8000, id="capped_at_10x"),
+        ],
+    )
     @patch("node_fdm.trainer.ODETrainer")
     @patch("node_fdm.loader.get_train_val_data")
-    def test_epoch_adjustment_default(
+    def test_epoch_adjustment(
         self,
         mock_get_data: MagicMock,
         mock_trainer_cls: MagicMock,
         tmp_path: Path,
+        train_len: int,
+        expected_epochs: int,
     ) -> None:
-        """Epochs adjusted by dataset-size coefficient when not overridden."""
+        """Epochs scale by dataset-size coefficient (capped at 10x for tiny datasets)."""
         config = self._make_config(tmp_path)
 
         mock_train_ds = MagicMock()
-        mock_train_ds.__len__ = MagicMock(return_value=5120)
+        mock_train_ds.__len__ = MagicMock(return_value=train_len)
         mock_get_data.return_value = (mock_train_ds, MagicMock())
         mock_trainer_cls.return_value = MagicMock()
 
@@ -196,37 +207,8 @@ typecodes:
                 device="cpu",
             )
 
-        # batch_size=512, n_step=10, coeff=5.0, adjusted=4000
         training_config = mock_trainer_cls.call_args.kwargs["config"]
-        assert training_config.epochs == 4000
-
-    @patch("node_fdm.trainer.ODETrainer")
-    @patch("node_fdm.loader.get_train_val_data")
-    def test_epoch_adjustment_capped(
-        self,
-        mock_get_data: MagicMock,
-        mock_trainer_cls: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Coefficient is capped at 10x for very small datasets."""
-        config = self._make_config(tmp_path)
-
-        mock_train_ds = MagicMock()
-        mock_train_ds.__len__ = MagicMock(return_value=10)
-        mock_get_data.return_value = (mock_train_ds, MagicMock())
-        mock_trainer_cls.return_value = MagicMock()
-
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            run_training(
-                arch="adsb",
-                config=config,
-                typecode="A320",
-                device="cpu",
-            )
-
-        # batch_size=512, len=10, n_step=max(0,1)=1, coeff=min(50,10)=10, adjusted=8000
-        training_config = mock_trainer_cls.call_args.kwargs["config"]
-        assert training_config.epochs == 8000
+        assert training_config.epochs == expected_epochs
 
     @patch("node_fdm.trainer.ODETrainer")
     @patch("node_fdm.loader.get_train_val_data")
