@@ -72,6 +72,7 @@ def _filter_nan_segments(
 
 
 def _resolve_model_path(*, info: object, acft: str, local_model: bool, models_dir: Path) -> Path:
+    """Resolve the model directory: local models_dir if local_model else packaged pretrained."""
     if local_model:
         return models_dir / f"{info.name}_{acft}"  # type: ignore[attr-defined]
     return Path(
@@ -84,6 +85,7 @@ def _resolve_model_path(*, info: object, acft: str, local_model: bool, models_di
 
 
 def _load_test_df(delta_table: Path) -> object:
+    """Read the Delta table and keep valid test-split rows, with sel_* columns NaN/null filled."""
     import polars as pl
     from node_fdm_data.delta import read_delta_table
 
@@ -103,6 +105,7 @@ def _predict_flight(
     output_dir: Path,
     nan_threshold: float,
 ) -> None:
+    """Run the predictor on one flight and write its predictions parquet to output_dir."""
     import numpy as np
     import polars as pl
 
@@ -143,6 +146,7 @@ def _predict_typecode(
     local_model: bool,
     nan_threshold: float,
 ) -> None:
+    """Load the typecode's model and predict every flight in its filtered test partition."""
     import polars as pl
     from node_fdm.predictor import NodeFDMPredictor
 

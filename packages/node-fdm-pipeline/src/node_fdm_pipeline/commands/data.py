@@ -191,6 +191,7 @@ def _rename_to_v3(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
 
 
 def _load_aircraft_db(cfg: PipelineConfig) -> tuple[pl.DataFrame, list[str]]:
+    """Load aircraft_db.csv and return the DataFrame plus its icao24 list."""
     import polars as pl
 
     aircraft_csv = cfg.paths.data_dir / "aircraft_db.csv"
@@ -207,6 +208,7 @@ def _build_window_df(
     history: object,
     extended: object,
 ) -> pl.DataFrame:
+    """Merge OpenSky history with decoded EHS extended data into a single Polars frame."""
     import polars as pl
     from traffic.core import Traffic
 
@@ -231,6 +233,7 @@ def _build_window_df(
 
 
 def _attach_typecode(df: pl.DataFrame, aircraft_db: pl.DataFrame) -> pl.DataFrame:
+    """Fill missing meta_aircraft_type from aircraft_db via icao24 lookup."""
     import polars as pl
 
     db_typecode = aircraft_db.select("icao24", "typecode").rename({"typecode": "_db_typecode"})
@@ -246,6 +249,7 @@ def _process_window(
     icao24_list: list[str],
     aircraft_db: pl.DataFrame,
 ) -> pl.DataFrame | None:
+    """Fetch and assemble one OpenSky day window into a v3-renamed DataFrame."""
     from traffic.data import opensky
 
     date_str = current.strftime("%Y%m%d")
@@ -381,6 +385,7 @@ _FL_META_COLS = ("meta_departure", "meta_arrival", "meta_aircraft_type")
 
 
 def _coerce_flightlist(flightlist: object) -> pl.DataFrame | None:
+    """Coerce an OpenSky flightlist to a normalized Polars frame, or None if unusable."""
     import polars as pl
 
     if flightlist is None:
@@ -397,6 +402,7 @@ def _coerce_flightlist(flightlist: object) -> pl.DataFrame | None:
 
 
 def _join_flight_meta(df: pl.DataFrame, fl: pl.DataFrame) -> pl.DataFrame:
+    """Left-join flightlist metadata (departure/arrival/typecode) onto df by (icao24, callsign)."""
     import polars as pl
 
     fl_cols = [c for c in ("departure", "arrival", "typecode") if c in fl.columns]
@@ -420,6 +426,7 @@ def _join_flight_meta(df: pl.DataFrame, fl: pl.DataFrame) -> pl.DataFrame:
 
 
 def _ensure_meta_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Add any missing flightlist meta_* columns as null Utf8 placeholders."""
     import polars as pl
 
     missing = [c for c in _FL_META_COLS if c not in df.columns]
@@ -511,6 +518,7 @@ def identify(
 
 
 def _ensure_identify_ran(df: pl.DataFrame) -> None:
+    """Exit if meta_flight_id is missing/null, signaling identify must run before preprocess."""
     if "meta_flight_id" in df.columns and not df["meta_flight_id"].is_null().all():
         return
     log.error("preprocess_missing_identify", msg="meta_flight_id is missing or all null")
@@ -523,6 +531,7 @@ def _ensure_identify_ran(df: pl.DataFrame) -> None:
 
 
 def _drop_pre_existing(df: pl.DataFrame) -> pl.DataFrame:
+    """Drop legacy pre_gap_* columns so preprocess can rewrite them cleanly."""
     pre_existing = [c for c in df.columns if c.startswith("pre_gap_")]
     if pre_existing:
         log.info("preprocess_drop_existing", columns=pre_existing)
@@ -531,6 +540,7 @@ def _drop_pre_existing(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _cast_null_columns(result: pl.DataFrame) -> pl.DataFrame:
+    """Cast all-null columns to Float64 so Delta schema-merge accepts them."""
     import polars as pl
 
     null_cols = [c for c in result.columns if result[c].dtype == pl.Null]
@@ -541,6 +551,7 @@ def _cast_null_columns(result: pl.DataFrame) -> pl.DataFrame:
 
 
 def _build_preprocess_write_options(result: pl.DataFrame, delta_table: Path) -> dict[str, object]:
+    """Build delta write_delta options with partitioning and predicate for incremental writes."""
     options: dict[str, object] = {"schema_mode": "merge"}
     if "meta_batch_date" not in result.columns:
         return options
@@ -988,6 +999,7 @@ segments.run = _segments_run  # type: ignore[attr-defined]
 
 
 def _drop_existing_convert_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Drop any pre-existing SI conversion / derivative output columns to allow recomputation."""
     from node_fdm_data.preprocessing.convert import SI_CONVERSIONS, SI_DERIVATIVES
 
     targets = {t for _, _, t in SI_CONVERSIONS} | {t for _, t in SI_DERIVATIVES}
@@ -999,6 +1011,7 @@ def _drop_existing_convert_columns(df: pl.DataFrame) -> pl.DataFrame:
 
 
 def _collect_convert_output_columns(df: pl.DataFrame) -> tuple[list[str], list[str]]:
+    """Return (SI columns, fdm_d_* derivative columns) produced by the convert step."""
     si_cols = [c for c in df.columns if c.endswith(("_m", "_ms"))]
     deriv_cols = [c for c in df.columns if c.startswith("fdm_d_")]
     return si_cols, deriv_cols

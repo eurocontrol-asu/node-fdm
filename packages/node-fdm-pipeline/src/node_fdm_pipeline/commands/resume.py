@@ -21,6 +21,8 @@ log = structlog.get_logger("node_fdm_pipeline.commands.resume")
 
 @dataclass(frozen=True)
 class _Overrides:
+    """CLI override values applied on top of the saved meta.json training config."""
+
     epochs: int | None = None
     batch_size: int | None = None
     lr: float | None = None
@@ -32,6 +34,7 @@ class _Overrides:
 
 
 def _load_meta(model: Path) -> Any:
+    """Load ModelMeta from the checkpoint's meta.json or exit with an error."""
     from node_fdm.predictor import ModelMeta
 
     meta_path = model / "meta.json"
@@ -43,6 +46,7 @@ def _load_meta(model: Path) -> Any:
 
 
 def _resolve_arch_info(architecture_name: str) -> Any:
+    """Map a meta.json architecture_name to its ArchitectureInfo and import its module."""
     arch_key = ARCH_BY_NAME.get(architecture_name)
     if arch_key is None:
         msg = (
@@ -56,6 +60,7 @@ def _resolve_arch_info(architecture_name: str) -> Any:
 
 
 def _load_data(delta_table: Path, typecode_suffix: str) -> pl.DataFrame:
+    """Read the Delta table, filter to valid rows of the given typecode, or exit if empty."""
     import polars as pl
 
     if not delta_table.exists():
@@ -75,6 +80,7 @@ def _load_data(delta_table: Path, typecode_suffix: str) -> pl.DataFrame:
 
 
 def _build_training_config(meta: Any, model_name: str, ov: _Overrides) -> Any:
+    """Build a TrainingConfig from saved meta values overlaid with CLI overrides."""
     from node_fdm.trainer import TrainingConfig
 
     effective_seq_len = ov.seq_len or meta.seq_len

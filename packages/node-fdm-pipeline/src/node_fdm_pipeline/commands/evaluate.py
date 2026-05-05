@@ -119,6 +119,7 @@ def _load_flight_frame(
     pred_path: Path,
     bada_path: Path,
 ) -> pl.DataFrame | None:
+    """Hstack node-fdm and BADA predictions onto a flight, filtered above the min altitude."""
     if not pred_path.exists() and not bada_path.exists():
         return None
     f = flight_df
@@ -137,6 +138,7 @@ def _collect_acft_frames(
     predict_dir: Path,
     bada_dir: Path,
 ) -> list[pl.DataFrame]:
+    """Build per-flight evaluation frames for a typecode, skipping flights that error out."""
     acft_frames: list[pl.DataFrame] = []
     for flight_df in flights:
         fid = flight_df["meta_flight_id"][0]
@@ -161,6 +163,10 @@ def _metrics_for_variable(
     label: str,
     prefix: str,
 ) -> pl.DataFrame | None:
+    """Compute per-phase error metrics for one (variable, model) pair.
+
+    Tagged with Aircraft/Variable/Model.
+    """
     pred_col = f"{prefix}{var}"
     if pred_col not in df_acft.columns or var not in df_acft.columns:
         return None

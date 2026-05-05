@@ -23,6 +23,8 @@ log = structlog.get_logger()
 
 @dataclass(frozen=True)
 class _TrainOverrides:
+    """CLI override values applied on top of the default training config."""
+
     epochs: int | None
     batch_size: int | None
     lr: float | None
@@ -35,6 +37,8 @@ class _TrainOverrides:
 
 @dataclass(frozen=True)
 class _TrainContext:
+    """Bundle of resolved inputs shared across per-typecode training calls."""
+
     info: Any
     full_df: pl.DataFrame
     dx_col_names: list[str]
@@ -44,6 +48,7 @@ class _TrainContext:
 
 
 def _load_delta_df(cfg: Any) -> tuple[Any, Path]:
+    """Read the valid-rows Delta table and return it alongside the resolved models_dir."""
     import polars as pl
 
     delta_table = cfg.paths.resolve("delta_table")
@@ -60,6 +65,7 @@ def _load_delta_df(cfg: Any) -> tuple[Any, Path]:
 
 
 def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
+    """Build the per-typecode TrainingConfig with overrides and tuned defaults."""
     from node_fdm.trainer import TrainingConfig
 
     ov = ctx.overrides
@@ -95,6 +101,7 @@ def _maybe_adjust_epochs(
     acft: str,
     epochs_override: int | None,
 ) -> Any:
+    """Scale epochs by dataset size when no explicit override is given."""
     if epochs_override is not None:
         return training_config
 
@@ -113,6 +120,7 @@ def _maybe_adjust_epochs(
 
 
 def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
+    """Train a Neural ODE model for one typecode end-to-end (data → config → fit)."""
     import polars as pl
     from node_fdm.loader import get_train_val_data
     from node_fdm.trainer import ODETrainer
