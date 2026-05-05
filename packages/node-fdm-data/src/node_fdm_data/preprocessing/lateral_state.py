@@ -32,11 +32,6 @@ _FULL_TURN_DEG: float = 360.0
 _MIN_STD_SAMPLES: int = 2
 
 
-def _wrap_signed_deg(x: npt.NDArray[np.floating]) -> npt.NDArray[np.float64]:
-    """Wrap to ``[-180, 180]``."""
-    return ((np.asarray(x, dtype=np.float64) + 180.0) % 360.0) - 180.0
-
-
 def _wrap_unsigned_deg(x: npt.NDArray[np.floating]) -> npt.NDArray[np.float64]:
     """Wrap to ``[0, 360)``."""
     return np.asarray(x, dtype=np.float64) % _FULL_TURN_DEG
