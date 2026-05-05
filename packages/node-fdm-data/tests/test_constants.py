@@ -28,26 +28,22 @@ from node_fdm_data.physics.constants import (
 class TestConstants:
     """Verify physical constants are reasonable."""
 
-    def test_sea_level_temperature(self) -> None:
-        assert T0 == pytest.approx(288.15)
-
-    def test_sea_level_pressure(self) -> None:
-        assert P0 == pytest.approx(101_325.0)
-
-    def test_gravity(self) -> None:
-        assert G == pytest.approx(9.80665)
-
-    def test_gas_constant(self) -> None:
-        assert R == pytest.approx(287.05)
-
-    def test_gamma(self) -> None:
-        assert GAMMA_AIR == pytest.approx(1.4)
-
-    def test_lapse_rate(self) -> None:
-        assert L == pytest.approx(0.0065)
-
-    def test_tropopause(self) -> None:
-        assert TROPOPAUSE_ALT_M == pytest.approx(11_000.0)
+    @pytest.mark.parametrize(
+        ("actual", "expected"),
+        [
+            pytest.param(T0, 288.15, id="sea_level_temperature"),
+            pytest.param(P0, 101_325.0, id="sea_level_pressure"),
+            pytest.param(G, 9.80665, id="gravity"),
+            pytest.param(R, 287.05, id="gas_constant"),
+            pytest.param(GAMMA_AIR, 1.4, id="gamma"),
+            pytest.param(L, 0.0065, id="lapse_rate"),
+            pytest.param(TROPOPAUSE_ALT_M, 11_000.0, id="tropopause"),
+            pytest.param(NM, 1852.0, id="nm"),
+            pytest.param(FT, 0.3048, id="ft"),
+        ],
+    )
+    def test_literal_constant(self, actual: float, expected: float) -> None:
+        assert actual == pytest.approx(expected)
 
     def test_speed_of_sound(self) -> None:
         expected = (GAMMA_AIR * R * T0) ** 0.5
@@ -56,12 +52,6 @@ class TestConstants:
     def test_density(self) -> None:
         expected = P0 / (R * T0)
         assert RHO0 == pytest.approx(expected)
-
-    def test_nm(self) -> None:
-        assert NM == pytest.approx(1852.0)
-
-    def test_ft(self) -> None:
-        assert FT == pytest.approx(0.3048)
 
     def test_kt(self) -> None:
         assert KT == pytest.approx(NM / 3600.0)
