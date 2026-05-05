@@ -8,6 +8,7 @@ from unittest.mock import MagicMock, patch
 
 import numpy as np
 import polars as pl
+import pytest
 
 from node_fdm_pipeline.commands.predict import run_predict, run_predict_bada
 
@@ -371,32 +372,35 @@ typecodes:
             architecture_import="node_fdm.architectures.adsb",
         )
 
+    @pytest.mark.parametrize(
+        "nan_fraction, expected_rows",
+        [
+            pytest.param(0.0, 100, id="clean_flight_all_rows"),
+            pytest.param(0.6, 40, id="filter_nan_rows"),
+            pytest.param(0.9, None, id="skip_above_threshold"),
+        ],
+    )
     @patch("node_fdm_data.delta.read_delta_table")
     @patch("node_fdm.predictor.NodeFDMPredictor")
     @patch("node_fdm_pipeline.resolver.resolve_architecture")
-    def test_predict_filters_nan_segments(
+    def test_predict_handles_nan_fraction(  # noqa: PLR0913
         self,
         mock_resolve: MagicMock,
         mock_predictor_cls: MagicMock,
         mock_read_delta: MagicMock,
         tmp_path: Path,
+        nan_fraction: float,
+        expected_rows: int | None,
     ) -> None:
-        """Flight with 60% NaN mach_sel → only ~40 finite rows predicted."""
+        """Predict either runs on finite rows or skips a flight depending on NaN fraction."""
         config = self._make_config(tmp_path)
-
-        mock_read_delta.return_value = self._make_nan_delta_df(nan_fraction=0.6)
+        mock_read_delta.return_value = self._make_nan_delta_df(nan_fraction=nan_fraction)
         mock_resolve.return_value = self._mock_architecture()
 
         mock_predictor = MagicMock()
-
-        def fake_predict(
-            _x_init: np.ndarray,
-            u_seq: np.ndarray,
-            _e_seq: np.ndarray,
-        ) -> dict[str, np.ndarray]:
-            return {"altitude_ft": np.zeros(len(u_seq))}
-
-        mock_predictor.predict_flight.side_effect = fake_predict
+        mock_predictor.predict_flight.side_effect = lambda _x, u_seq, _e: {
+            "altitude_ft": np.zeros(len(u_seq))
+        }
         mock_predictor_cls.return_value = mock_predictor
 
         run_predict(
@@ -407,84 +411,14 @@ typecodes:
             local_model=True,
         )
 
-        mock_predictor.predict_flight.assert_called_once()
-        call_args = mock_predictor.predict_flight.call_args
-        u_seq_arg = call_args[0][1]
-        assert len(u_seq_arg) == 40, f"Expected 40 finite rows, got {len(u_seq_arg)}"
-
-    @patch("node_fdm_data.delta.read_delta_table")
-    @patch("node_fdm.predictor.NodeFDMPredictor")
-    @patch("node_fdm_pipeline.resolver.resolve_architecture")
-    def test_predict_skips_flight_above_threshold(
-        self,
-        mock_resolve: MagicMock,
-        mock_predictor_cls: MagicMock,
-        mock_read_delta: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Flight with 90% NaN (>80% threshold) → skipped, not predicted."""
-        config = self._make_config(tmp_path)
-
-        mock_read_delta.return_value = self._make_nan_delta_df(nan_fraction=0.9)
-        mock_resolve.return_value = self._mock_architecture()
-
-        mock_predictor = MagicMock()
-        mock_predictor_cls.return_value = mock_predictor
-
-        run_predict(
-            arch="adsb",
-            config=config,
-            typecode="A320",
-            device="cpu",
-            local_model=True,
-        )
-
-        mock_predictor.predict_flight.assert_not_called()
-
-        # Output parquet should not exist
-        output_file = tmp_path / "data" / "predicted_flights" / "A320" / "F001.parquet"
-        assert not output_file.exists()
-
-    @patch("node_fdm_data.delta.read_delta_table")
-    @patch("node_fdm.predictor.NodeFDMPredictor")
-    @patch("node_fdm_pipeline.resolver.resolve_architecture")
-    def test_predict_clean_flight_unchanged(
-        self,
-        mock_resolve: MagicMock,
-        mock_predictor_cls: MagicMock,
-        mock_read_delta: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Flight with 0% NaN → all 100 timesteps predicted."""
-        config = self._make_config(tmp_path)
-
-        mock_read_delta.return_value = self._make_nan_delta_df(nan_fraction=0.0)
-        mock_resolve.return_value = self._mock_architecture()
-
-        mock_predictor = MagicMock()
-
-        def fake_predict(
-            _x_init: np.ndarray,
-            u_seq: np.ndarray,
-            _e_seq: np.ndarray,
-        ) -> dict[str, np.ndarray]:
-            return {"altitude_ft": np.zeros(len(u_seq))}
-
-        mock_predictor.predict_flight.side_effect = fake_predict
-        mock_predictor_cls.return_value = mock_predictor
-
-        run_predict(
-            arch="adsb",
-            config=config,
-            typecode="A320",
-            device="cpu",
-            local_model=True,
-        )
-
-        mock_predictor.predict_flight.assert_called_once()
-        call_args = mock_predictor.predict_flight.call_args
-        u_seq_arg = call_args[0][1]
-        assert len(u_seq_arg) == 100, f"Expected 100 rows, got {len(u_seq_arg)}"
+        if expected_rows is None:
+            mock_predictor.predict_flight.assert_not_called()
+            output_file = tmp_path / "data" / "predicted_flights" / "A320" / "F001.parquet"
+            assert not output_file.exists()
+        else:
+            mock_predictor.predict_flight.assert_called_once()
+            u_seq_arg = mock_predictor.predict_flight.call_args[0][1]
+            assert len(u_seq_arg) == expected_rows
 
 
 class TestPredictMissingSplit:
