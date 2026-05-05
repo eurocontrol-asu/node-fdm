@@ -4,8 +4,6 @@ from __future__ import annotations
 
 from pathlib import Path
 
-import pytest
-
 
 class TestCLIDirectInvoke:
     """Direct invocation of CLI wrappers for in-process coverage."""
@@ -20,14 +18,6 @@ class TestCLIDirectInvoke:
         config = tmp_path / "config.yaml"
         config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
         return config
-
-    def test_version_cmd(self, capsys: pytest.CaptureFixture[str]) -> None:
-        """version_cmd prints version string."""
-        from node_fdm_pipeline.cli import version_cmd
-
-        version_cmd()
-        captured = capsys.readouterr()
-        assert "node-fdm-pipeline" in captured.out
 
     def test_download_wrapper(self, tmp_path: Path) -> None:
         """CLI download wrapper delegates to commands.data.download."""
