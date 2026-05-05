@@ -54,6 +54,9 @@ data/
 # Machine-specific config (use config.example.yaml as template)
 config.yaml
 
+# Claude Code local settings
+.claude/
+
 # One-shot debug & exploration scripts (keep curated utilities tracked)
 scripts/debug/diag_*
 scripts/debug/bench_*
