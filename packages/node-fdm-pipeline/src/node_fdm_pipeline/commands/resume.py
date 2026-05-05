@@ -118,6 +118,7 @@ def run_resume(
     model_name: str | None = None,
     lambda_tracking: float | None = None,
     reset_loss: bool = False,
+    typecode: str | None = None,
 ) -> None:
     """Resume training from a saved model checkpoint."""
     from node_fdm.loader import get_train_val_data
@@ -129,7 +130,7 @@ def run_resume(
     info = _resolve_arch_info(meta.architecture_name)
 
     cfg = PipelineConfig.from_yaml(config)
-    typecode_suffix = model.name.removeprefix(f"{meta.architecture_name}_")
+    typecode_suffix = typecode or model.name.removeprefix(f"{meta.architecture_name}_")
     data_df = _load_data(cfg.paths.resolve("delta_table"), typecode_suffix)
 
     overrides = _Overrides(

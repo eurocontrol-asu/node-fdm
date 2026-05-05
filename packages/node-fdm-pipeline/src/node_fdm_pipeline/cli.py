@@ -179,6 +179,12 @@ def resume(
             help="Ignore saved best_val_loss and start fresh from inf",
         ),
     ] = False,
+    typecode: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            help="Aircraft typecode (overrides parsing from model dir name)",
+        ),
+    ] = None,
 ) -> None:
     """Resume training from an existing model checkpoint."""
     from node_fdm_pipeline.commands.resume import run_resume
@@ -197,6 +203,7 @@ def resume(
         model_name=model_name,
         lambda_tracking=lambda_tracking,
         reset_loss=reset_loss,
+        typecode=typecode,
     )
 
 
