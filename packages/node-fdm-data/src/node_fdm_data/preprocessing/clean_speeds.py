@@ -206,6 +206,27 @@ def _on_ground_mask(
     return (alt < alt_threshold) & (abs_vz < vz_threshold)
 
 
+def _find_next_nan_run(isnan: np.ndarray, start: int) -> tuple[int, int]:
+    """Return ``(run_start, run_end_exclusive)`` for the next NaN run from *start*."""
+    n = len(isnan)
+    i = start
+    while i < n and not isnan[i]:
+        i += 1
+    j = i
+    while j < n and isnan[j]:
+        j += 1
+    return i, j
+
+
+def _linear_fill(out: np.ndarray, lo_idx: int, hi_idx_exclusive: int) -> None:
+    """Fill ``out[lo_idx:hi_idx_exclusive]`` linearly between the two anchors."""
+    lo = float(out[lo_idx - 1])
+    hi = float(out[hi_idx_exclusive])
+    gap_len = hi_idx_exclusive - lo_idx
+    for p in range(lo_idx, hi_idx_exclusive):
+        out[p] = lo + (hi - lo) * (p - lo_idx + 1) / (gap_len + 1)
+
+
 def _interpolate_short_gaps(x: np.ndarray, *, max_gap: int) -> np.ndarray:
     """Linearly interpolate NaN runs of length ``<= max_gap`` between anchors.
 
@@ -217,17 +238,12 @@ def _interpolate_short_gaps(x: np.ndarray, *, max_gap: int) -> np.ndarray:
     isnan = np.isnan(out)
     i = 0
     while i < n:
-        if not isnan[i]:
-            i += 1
-            continue
-        j = i
-        while j < n and isnan[j]:
-            j += 1
+        i, j = _find_next_nan_run(isnan, i)
+        if i >= n:
+            break
         gap_len = j - i
-        if gap_len <= max_gap and i > 0 and j < n and not isnan[i - 1] and not isnan[j]:
-            lo, hi = float(out[i - 1]), float(out[j])
-            for p in range(i, j):
-                out[p] = lo + (hi - lo) * (p - i + 1) / (gap_len + 1)
+        if gap_len <= max_gap and i > 0 and j < n:
+            _linear_fill(out, i, j)
         i = j
     return out
 
