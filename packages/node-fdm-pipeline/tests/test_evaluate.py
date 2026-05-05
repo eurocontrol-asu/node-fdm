@@ -135,12 +135,12 @@ class TestComputeErrorsByPhase:
 
 
 # ---------------------------------------------------------------------------
-# Tests for _evaluate_typecode (new Delta Table signature)
+# Tests for evaluate_typecode (new Delta Table signature)
 # ---------------------------------------------------------------------------
 
 
 class TestEvaluateTypecode:
-    """Tests for ``_evaluate_typecode``."""
+    """Tests for ``evaluate_typecode``."""
 
     @staticmethod
     def _make_bada_parquet(path: Path, n: int = 50) -> None:
@@ -170,10 +170,10 @@ class TestEvaluateTypecode:
 
     def test_skip_no_predictions(self, tmp_path: Path) -> None:
         """Returns empty list when neither bada nor pred dirs exist."""
-        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+        from node_fdm_pipeline.commands.evaluate import evaluate_typecode
 
         acft_df = _make_gt_df()
-        result = _evaluate_typecode(
+        result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
             predict_dir=tmp_path / "predict",
@@ -184,7 +184,7 @@ class TestEvaluateTypecode:
 
     def test_evaluate_with_predictions(self, tmp_path: Path) -> None:
         """Returns metrics DataFrames for a typecode with predictions."""
-        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+        from node_fdm_pipeline.commands.evaluate import evaluate_typecode
 
         bada_dir = tmp_path / "bada"
         predict_dir = tmp_path / "predict"
@@ -194,7 +194,7 @@ class TestEvaluateTypecode:
         self._make_nodfdm_parquet(predict_dir / "A320" / "F001.parquet")
 
         variables = {"raw_alt_m": "Altitude [m]", "era_tas_ms": "TAS [m/s]"}
-        result = _evaluate_typecode(
+        result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
             predict_dir=predict_dir,
@@ -210,7 +210,7 @@ class TestEvaluateTypecode:
 
     def test_evaluate_file_error_continues(self, tmp_path: Path) -> None:
         """Evaluation continues when a single flight file fails."""
-        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+        from node_fdm_pipeline.commands.evaluate import evaluate_typecode
 
         bada_dir = tmp_path / "bada"
         predict_dir = tmp_path / "predict"
@@ -228,7 +228,7 @@ class TestEvaluateTypecode:
         bad_path.write_bytes(b"not a parquet")
 
         variables = {"raw_alt_m": "Altitude [m]"}
-        result = _evaluate_typecode(
+        result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
             predict_dir=predict_dir,
@@ -241,14 +241,14 @@ class TestEvaluateTypecode:
 
     def test_skip_no_parquet_files(self, tmp_path: Path) -> None:
         """Returns empty list when prediction dir exists but has no parquets."""
-        from node_fdm_pipeline.commands.evaluate import _evaluate_typecode
+        from node_fdm_pipeline.commands.evaluate import evaluate_typecode
 
         bada_dir = tmp_path / "bada"
         (bada_dir / "A320").mkdir(parents=True)
         # Dir exists, but no .parquet files
 
         acft_df = _make_gt_df()
-        result = _evaluate_typecode(
+        result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
             predict_dir=tmp_path / "predict",

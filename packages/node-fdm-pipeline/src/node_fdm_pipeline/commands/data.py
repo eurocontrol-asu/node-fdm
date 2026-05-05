@@ -166,7 +166,7 @@ def aircraft_list(
 # ---------------------------------------------------------------------------
 
 
-def _rename_to_v3(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
+def normalize_schema(df: pl.DataFrame, *, batch_date: str) -> pl.DataFrame:
     """Rename raw OpenSky columns to v3 ``raw_*`` / ``bds_*`` convention.
 
     Args:
@@ -262,10 +262,10 @@ def _process_window(
 
     extended = opensky.extended(current, next_day, icao24=icao24_list)
     df = _build_window_df(history, extended)
-    df = _rename_to_v3(df, batch_date=date_str)
+    df = normalize_schema(df, batch_date=date_str)
 
     flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
-    df = _join_flightlist_inline(df, flightlist)
+    df = join_flightlist_inline(df, flightlist)
     df = _attach_typecode(df, aircraft_db)
 
     log.info("download_processed", date=date_str, rows=len(df))
@@ -435,7 +435,7 @@ def _ensure_meta_columns(df: pl.DataFrame) -> pl.DataFrame:
     return df.with_columns([pl.lit(None).cast(pl.Utf8).alias(c) for c in missing])
 
 
-def _join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFrame:
+def join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFrame:
     """Join flightlist metadata directly onto a download batch.
 
     Called during ``download`` to integrate departure, arrival, and typecode

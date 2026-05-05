@@ -185,7 +185,7 @@ def _metrics_for_variable(
     )
 
 
-def _evaluate_typecode(
+def evaluate_typecode(
     acft: str,
     *,
     acft_df: pl.DataFrame,
@@ -263,7 +263,7 @@ def run_evaluate(
 
     for acft in cfg.typecodes:
         acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
-        results = _evaluate_typecode(
+        results = evaluate_typecode(
             acft,
             acft_df=acft_df,
             predict_dir=predict_dir,

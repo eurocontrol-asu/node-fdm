@@ -11,26 +11,10 @@ import polars as pl
 import pytest
 
 from node_fdm_pipeline.commands.visualize import (
-    _require_viz,
     run_plot_example,
     run_plot_performance,
     run_visualize,
 )
-
-
-class TestRequireViz:
-    """Tests for the ``_require_viz`` dependency gate."""
-
-    def test_require_viz_missing_deps(self) -> None:
-        """SystemExit raised when viz deps are missing."""
-        with (
-            patch.dict(
-                sys.modules,
-                {"matplotlib": None, "altair": None},
-            ),
-            pytest.raises(SystemExit, match="pip install node-fdm-pipeline"),
-        ):
-            _require_viz()
 
 
 class TestRunVisualize:

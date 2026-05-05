@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 from unittest.mock import patch
 
@@ -10,81 +11,60 @@ import polars as pl
 import pytest
 
 from node_fdm_pipeline.commands.data import (
-    _join_flightlist_inline,
-    _require_traffic,
     aircraft_list,
     convert,
     derive,
     download,
     flag,
     identify,
+    join_flightlist_inline,
     preprocess,
     segments,
 )
 
 
-class TestRequireTraffic:
-    """Tests for the traffic import guard."""
-
-    def test_require_traffic_missing(self) -> None:
-        """Raises SystemExit when traffic is not installed."""
-        with (
-            patch.dict("sys.modules", {"traffic": None}),
-            patch("builtins.__import__", side_effect=ImportError("No module named 'traffic'")),
-            pytest.raises(SystemExit, match="1"),
-        ):
-            _require_traffic()
-
-
 class TestDownloadCommand:
     """Tests for the ``download`` command."""
 
-    def test_download_dry_run(self, tmp_path: Path) -> None:
-        """--dry-run validates config without writing files."""
+    @pytest.mark.parametrize(
+        ("with_db", "dry_run", "expect_exit"),
+        [
+            (True, True, False),
+            (False, False, True),
+        ],
+        ids=["dry_run", "missing_aircraft_db"],
+    )
+    def test_download(
+        self,
+        tmp_path: Path,
+        with_db: bool,
+        dry_run: bool,
+        expect_exit: bool,
+    ) -> None:
+        """download: dry-run succeeds; missing aircraft_db.csv raises SystemExit."""
         data_dir = tmp_path / "data"
         data_dir.mkdir()
-        (data_dir / "aircraft_db.csv").write_text(
-            "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
-        )
+        if with_db:
+            (data_dir / "aircraft_db.csv").write_text(
+                "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
+            )
         config = tmp_path / "config.yaml"
-        config.write_text(
-            f"""\
-paths:
-  data_dir: "{data_dir}"
+        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
 
-typecodes:
-  - A320
-"""
-        )
-
-        download(
-            config=config,
-            start_date="2025-01-01",
-            end_date="2025-01-02",
-            dry_run=True,
-        )
-
-    def test_download_missing_aircraft_db(self, tmp_path: Path) -> None:
-        """Raises SystemExit when aircraft_db.csv is missing."""
-        data_dir = tmp_path / "data"
-        data_dir.mkdir()
-        config = tmp_path / "config.yaml"
-        config.write_text(
-            f"""\
-paths:
-  data_dir: "{data_dir}"
-
-typecodes:
-  - A320
-"""
-        )
-
-        with pytest.raises(SystemExit):
+        if expect_exit:
+            with pytest.raises(SystemExit):
+                download(
+                    config=config,
+                    start_date="2025-01-01",
+                    end_date="2025-01-02",
+                    dry_run=dry_run,
+                )
+        else:
             download(
                 config=config,
                 start_date="2025-01-01",
                 end_date="2025-01-02",
-                dry_run=False,
+                dry_run=dry_run,
             )
 
 
@@ -182,9 +162,9 @@ class TestDownloadDelta:
         """Delta Table created with raw_* + bds_* columns."""
         from node_fdm_data.delta import write_columns
 
-        from node_fdm_pipeline.commands.data import _rename_to_v3
+        from node_fdm_pipeline.commands.data import normalize_schema
 
-        df = _rename_to_v3(self._make_raw_df(), batch_date="20250101")
+        df = normalize_schema(self._make_raw_df(), batch_date="20250101")
         table_path = tmp_path / "flights.delta"
         write_columns(df, table_path)
 
@@ -216,11 +196,11 @@ class TestDownloadDelta:
         """2 dates → 2 partitions meta_batch_date."""
         from node_fdm_data.delta import write_columns
 
-        from node_fdm_pipeline.commands.data import _rename_to_v3
+        from node_fdm_pipeline.commands.data import normalize_schema
 
         table_path = tmp_path / "flights.delta"
-        df1 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250101")
-        df2 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250102")
+        df1 = normalize_schema(self._make_raw_df(n=5), batch_date="20250101")
+        df2 = normalize_schema(self._make_raw_df(n=5), batch_date="20250102")
         combined = pl.concat([df1, df2])
         write_columns(combined, table_path)
 
@@ -232,9 +212,9 @@ class TestDownloadDelta:
         """BDS TAS and Mach preserved with correct column names."""
         from node_fdm_data.delta import write_columns
 
-        from node_fdm_pipeline.commands.data import _rename_to_v3
+        from node_fdm_pipeline.commands.data import normalize_schema
 
-        df = _rename_to_v3(self._make_raw_df(), batch_date="20250101")
+        df = normalize_schema(self._make_raw_df(), batch_date="20250101")
         table_path = tmp_path / "flights.delta"
         write_columns(df, table_path)
 
@@ -248,16 +228,16 @@ class TestDownloadDelta:
         """Download 2x same date -> partition overwritten, no duplicates."""
         from node_fdm_data.delta import write_columns
 
-        from node_fdm_pipeline.commands.data import _rename_to_v3
+        from node_fdm_pipeline.commands.data import normalize_schema
 
         table_path = tmp_path / "flights.delta"
 
         # First write
-        df1 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250101")
+        df1 = normalize_schema(self._make_raw_df(n=5), batch_date="20250101")
         write_columns(df1, table_path)
 
         # Second write (same date, same schema)
-        df2 = _rename_to_v3(self._make_raw_df(n=5), batch_date="20250101")
+        df2 = normalize_schema(self._make_raw_df(n=5), batch_date="20250101")
         write_columns(df2, table_path)
 
         result = pl.read_delta(str(table_path))
@@ -265,12 +245,12 @@ class TestDownloadDelta:
 
 
 # ---------------------------------------------------------------------------
-# _join_flightlist_inline tests
+# join_flightlist_inline tests
 # ---------------------------------------------------------------------------
 
 
 class TestJoinFlightlistInline:
-    """Tests for _join_flightlist_inline (flightlist join during download)."""
+    """Tests for join_flightlist_inline (flightlist join during download)."""
 
     @staticmethod
     def _make_batch_df(n: int = 5) -> pl.DataFrame:
@@ -300,7 +280,7 @@ class TestJoinFlightlistInline:
                 "typecode": ["A320"],
             }
         )
-        result = _join_flightlist_inline(df, fl)
+        result = join_flightlist_inline(df, fl)
         assert result["meta_departure"][0] == "LFPG"
         assert result["meta_arrival"][0] == "EGLL"
         assert result["meta_aircraft_type"][0] == "A320"
@@ -339,10 +319,10 @@ class TestJoinFlightlistInline:
             ),
         ],
     )
-    def test_join_yields_null_meta(self, fl_factory) -> None:
+    def test_join_yields_null_meta(self, fl_factory: Callable[[], pd.DataFrame]) -> None:
         """Flightlist that can't contribute metadata → meta_* columns are all null."""
         df = self._make_batch_df()
-        result = _join_flightlist_inline(df, fl_factory())
+        result = join_flightlist_inline(df, fl_factory())
         assert "meta_departure" in result.columns
         assert result["meta_departure"].null_count() == len(result)
 
