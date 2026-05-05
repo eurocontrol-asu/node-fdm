@@ -125,6 +125,10 @@ disallow_untyped_calls = false
 testpaths = ["tests"]
 pythonpath = ["src"]
 python_files = "test_*.py"
+markers = [
+    "integration: tests hitting real I/O (filesystem, DB, network)",
+    "e2e: subprocess/CLI black-box tests",
+]
 addopts = [
     "-v",
     "--strict-markers",
