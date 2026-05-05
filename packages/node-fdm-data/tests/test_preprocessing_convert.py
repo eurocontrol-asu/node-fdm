@@ -39,17 +39,28 @@ class TestConvertSI:
             }
         )
 
-    def test_convert_ft_to_m(self, pipeline_df: pl.DataFrame) -> None:
-        """raw_alt_ft -> raw_alt_m via ft_to_m (x 0.3048)."""
+    @pytest.mark.parametrize(
+        ("target_col", "row_idx", "expected", "rel"),
+        [
+            pytest.param("raw_alt_m", 0, 30000.0 * 0.3048, None, id="ft_to_m"),
+            pytest.param("era_tas_ms", 0, 250.0 * 0.514444, 1e-4, id="kt_to_ms"),
+            pytest.param("raw_vz_ms", 0, 1000.0 * 0.3048 / 60.0, 1e-4, id="ftmin_to_ms"),
+            pytest.param("fdm_adep_dist_m", 1, 50.0 * 1852.0, None, id="nm_to_m"),
+        ],
+    )
+    def test_convert_si_unit_target(
+        self,
+        pipeline_df: pl.DataFrame,
+        target_col: str,
+        row_idx: int,
+        expected: float,
+        rel: float | None,
+    ) -> None:
+        """convert_si produces SI target columns from each source unit family."""
         result = convert_si(pipeline_df)
-        assert "raw_alt_m" in result.columns
-        assert result["raw_alt_m"][0] == pytest.approx(30000.0 * 0.3048)
-
-    def test_convert_kt_to_ms(self, pipeline_df: pl.DataFrame) -> None:
-        """fdm_tas_from_cas_kt -> era_tas_ms via kt_to_ms (x 0.514444)."""
-        result = convert_si(pipeline_df)
-        assert "era_tas_ms" in result.columns
-        assert result["era_tas_ms"][0] == pytest.approx(250.0 * 0.514444, rel=1e-4)
+        assert target_col in result.columns
+        approx = pytest.approx(expected, rel=rel) if rel is not None else pytest.approx(expected)
+        assert result[target_col][row_idx] == approx
 
     def test_convert_preserves_source(self, pipeline_df: pl.DataFrame) -> None:
         """Source columns remain after conversion (additive, no replace)."""
@@ -65,18 +76,6 @@ class TestConvertSI:
         for src, _, tgt in SI_CONVERSIONS:
             if src in pipeline_df.columns:
                 assert tgt in result.columns, f"Missing target column: {tgt}"
-
-    def test_convert_ftmin_to_ms(self, pipeline_df: pl.DataFrame) -> None:
-        """raw_vz_ftmin -> raw_vz_ms via ftmin_to_ms (x 0.00508)."""
-        result = convert_si(pipeline_df)
-        assert "raw_vz_ms" in result.columns
-        assert result["raw_vz_ms"][0] == pytest.approx(1000.0 * 0.3048 / 60.0, rel=1e-4)
-
-    def test_convert_nm_to_m(self, pipeline_df: pl.DataFrame) -> None:
-        """fdm_adep_dist_nm -> fdm_adep_dist_m via nm_to_m (x 1852)."""
-        result = convert_si(pipeline_df)
-        assert "fdm_adep_dist_m" in result.columns
-        assert result["fdm_adep_dist_m"][1] == pytest.approx(50.0 * 1852.0)
 
     def test_convert_si_target_alt(self) -> None:
         """fdm_alt_target_ft -> fdm_alt_target_m via ft_to_m."""
