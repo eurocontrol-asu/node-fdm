@@ -9,9 +9,10 @@ columns and an optional ``bds_tas_from_cas_kt`` derived from cleaned IAS.
 
 .. note::
 
-   ``bds_tas_kt`` is mislabeled upstream — it actually contains TAS in
-   **m/s**.  Cleaning runs on the raw m/s values; ERA fill is therefore
-   disabled for the TAS channel here.
+   ERA fill is disabled for the TAS channel: ERA TAS is derived from
+   wind + groundspeed and does not coincide point-wise with the Mode-S
+   measured TAS, so filling Mode-S blackouts from ERA would inject a
+   different physical quantity into the same column.
 """
 
 from __future__ import annotations
@@ -32,7 +33,8 @@ _MS_TO_KT: float = 1.0 / _KT_TO_MS
 _FT_TO_M: float = 0.3048
 
 # (bds_col, era_col, use_era_fill, frozen_min_run_len)
-# tas: era_tas_kt is in kt while bds_tas_kt is m/s — disable ERA fill.
+# tas: ERA fill disabled — ERA TAS (derived from wind+GS) is not the same
+# physical quantity as Mode-S measured TAS.
 _BDS_SPEC: list[tuple[str, str, bool, int]] = [
     ("bds_mach", "era_mach", True, 20),
     ("bds_ias_kt", "era_cas_kt", True, 20),
