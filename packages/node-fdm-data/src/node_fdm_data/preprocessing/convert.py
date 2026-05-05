@@ -85,6 +85,63 @@ DERIVATIVE_BOUNDS: dict[str, tuple[float, float]] = {
 }
 
 
+def _apply_si_table(df: pl.DataFrame, cols: set[str]) -> pl.DataFrame:
+    exprs = [fn(src).alias(tgt) for src, fn, tgt in SI_CONVERSIONS if src in cols]
+    if exprs:
+        df = df.with_columns(exprs)
+    return df
+
+
+def _apply_lateral_wraps(df: pl.DataFrame) -> pl.DataFrame:
+    # Lateral channel: heading wrapped to [0, 2π); heading_target signed-wrapped
+    # to [-π, π] (the *target* is consumed as a residual, must be principal branch).
+    two_pi = 2.0 * np.pi
+    lateral_exprs: list[pl.Expr] = []
+    if "fdm_heading_deg" in df.columns:
+        lateral_exprs.append(
+            (pl.col("fdm_heading_deg").radians() % two_pi).alias("fdm_heading_rad")
+        )
+    if "fdm_heading_target_deg" in df.columns:
+        lateral_exprs.append(
+            (((pl.col("fdm_heading_target_deg").radians() + np.pi) % two_pi) - np.pi).alias(
+                "fdm_heading_target_rad"
+            )
+        )
+    if lateral_exprs:
+        df = df.with_columns(lateral_exprs)
+    return df
+
+
+def _compute_fdm_cas_ms(df: pl.DataFrame) -> pl.DataFrame:
+    # Uses real ERA5 temperature when available so the round-trip closes; ISA fallback otherwise.
+    if "era_tas_ms" not in df.columns or "raw_alt_m" not in df.columns:
+        return df
+    tas_arr = df["era_tas_ms"].to_numpy()
+    alt_arr = df["raw_alt_m"].to_numpy()
+    if "era_temp_K" in df.columns:
+        temp_arr = df["era_temp_K"].to_numpy()
+        cas_arr = np.asarray(tas_to_cas_real(tas_arr, alt_arr, temp_arr), dtype=np.float64)
+    else:
+        cas_arr = np.asarray(tas_to_cas(tas_arr, alt_arr), dtype=np.float64)
+    return df.with_columns(pl.Series("fdm_cas_ms", cas_arr))
+
+
+def _apply_delta_diffs(df: pl.DataFrame) -> pl.DataFrame:
+    # Where target is NaN, diff is 0 (NaN-preserving gamma target, AXM-809).
+    present = set(df.columns)
+    diff_exprs = [
+        pl.when(pl.col(tgt).is_nan() | pl.col(tgt).is_null())
+        .then(pl.lit(0.0))
+        .otherwise(pl.col(tgt) - pl.col(src))
+        .alias(out)
+        for tgt, src, out in DELTA_DIFFS
+        if tgt in present and src in present
+    ]
+    if diff_exprs:
+        df = df.with_columns(diff_exprs)
+    return df
+
+
 def convert_si(df: pl.DataFrame) -> pl.DataFrame:
     """Add SI-unit columns and delta diffs to the DataFrame (étape 6).
 
@@ -101,61 +158,10 @@ def convert_si(df: pl.DataFrame) -> pl.DataFrame:
     Returns:
         DataFrame with SI columns and delta diffs appended.
     """
-    cols = set(df.columns)
-    exprs = [fn(src).alias(tgt) for src, fn, tgt in SI_CONVERSIONS if src in cols]
-    if exprs:
-        df = df.with_columns(exprs)
-
-    # Lateral channel: heading wrapped to [0, 2π); heading_target signed-wrapped
-    # to [-π, π] (the model loss is wrap-aware on the unsigned heading state but
-    # the *target* is consumed directly as a residual, so it must be in the
-    # principal branch).
-    two_pi = 2.0 * np.pi
-    lateral_exprs: list[pl.Expr] = []
-    if "fdm_heading_deg" in df.columns:
-        lateral_exprs.append(
-            (pl.col("fdm_heading_deg").radians() % two_pi).alias("fdm_heading_rad")
-        )
-    if "fdm_heading_target_deg" in df.columns:
-        lateral_exprs.append(
-            (((pl.col("fdm_heading_target_deg").radians() + np.pi) % two_pi) - np.pi).alias(
-                "fdm_heading_target_rad"
-            )
-        )
-    if lateral_exprs:
-        df = df.with_columns(lateral_exprs)
-
-    # Compute CAS from TAS + altitude (fdm_cas_ms — always available,
-    # unlike bds_ias_ms which has ~40% NaN from Mode-S gaps).
-    # Uses real ERA5 temperature when available so the round-trip closes:
-    # era_tas_ms is itself derived upstream via cas_to_tas_real(·, alt, era_temp_K),
-    # so applying tas_to_cas_real here recovers bds_ias_ms exactly. Falls back
-    # to the ISA variant when era_temp_K is absent (back-compat path).
-    if "era_tas_ms" in df.columns and "raw_alt_m" in df.columns:
-        tas_arr = df["era_tas_ms"].to_numpy()
-        alt_arr = df["raw_alt_m"].to_numpy()
-        if "era_temp_K" in df.columns:
-            temp_arr = df["era_temp_K"].to_numpy()
-            cas_arr = np.asarray(tas_to_cas_real(tas_arr, alt_arr, temp_arr), dtype=np.float64)
-        else:
-            cas_arr = np.asarray(tas_to_cas(tas_arr, alt_arr), dtype=np.float64)
-        df = df.with_columns(pl.Series("fdm_cas_ms", cas_arr))
-
-    # Precompute delta columns when both operands are present.
-    # Where target is NaN, diff is 0 (NaN-preserving gamma target, AXM-809).
-    present = set(df.columns)
-    diff_exprs = [
-        pl.when(pl.col(tgt).is_nan() | pl.col(tgt).is_null())
-        .then(pl.lit(0.0))
-        .otherwise(pl.col(tgt) - pl.col(src))
-        .alias(out)
-        for tgt, src, out in DELTA_DIFFS
-        if tgt in present and src in present
-    ]
-    if diff_exprs:
-        df = df.with_columns(diff_exprs)
-
-    return df
+    df = _apply_si_table(df, set(df.columns))
+    df = _apply_lateral_wraps(df)
+    df = _compute_fdm_cas_ms(df)
+    return _apply_delta_diffs(df)
 
 
 def compute_derivatives(
