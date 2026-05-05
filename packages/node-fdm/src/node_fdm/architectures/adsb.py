@@ -1,7 +1,7 @@
 """ADS-B v1 architecture specification.
 
 Simplified two-layer architecture (trajectory + data_ode + physics) for
-ADS-B data.  Compared to ``opensky_2025``:
+ADS-B data.  Compared to legacy OpenSky architectures:
 
 * Smaller state vector (no cumulative distance).
 * Robust altitude control (``fdm_alt_target_m``, never NaN) kept in
@@ -21,7 +21,7 @@ Auto-registers at import time.
 from __future__ import annotations
 
 from node_fdm.architectures.registry import ArchitectureSpec, LayerSpec, register
-from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, U_ODE_COLS, X_COLS
+from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
 __all__ = [
     "NODE_ADSB_V1",
@@ -84,42 +84,101 @@ NODE_ADSB_V1 = ArchitectureSpec(
             },
         ),
         LayerSpec(
-            name="data_ode",
+            name="data_ode_long",
             layer_class="node_fdm.layers.structured.StructuredLayer",
-            input_cols=X_COLS
-            + U_ODE_COLS
-            + E0_COLS
-            + E1_COLS
-            + [
+            # Longitudinal backbone: long-pure inputs only (no heading state,
+            # no heading target, no wind-triangle lat features).
+            input_cols=[
+                # X (long)
+                "raw_alt_m",
+                "fdm_gamma_rad",
+                "era_tas_ms",
+                # U_ODE = []
+                # E0 (long)
+                "fdm_long_wind_ms",
+                "era_temp_K",
+                # E1 (long)
+                "fdm_d_alt_ms",
+                "era_mach",
+                "raw_gs_ms",
+                "fdm_cas_ms",
+                "fdm_alt_diff_m",
+                "fdm_tas_diff_ms",
+                "fdm_gamma_diff_rad",
+                "fdm_g_sin_gamma_ms2",
+                "fdm_cos_gamma",
+                "fdm_q_pa",
+                "fdm_g_over_v",
+                # flags long
                 "fdm_gamma_target_known",
                 "fdm_tas_target_known",
-                "fdm_heading_target_known",
-                "fdm_heading_known",
             ],
-            output_cols=["fdm_a_spec_ms2", "fdm_n_z_residual", "fdm_phi_bank_rad"],
+            output_cols=["fdm_a_spec_ms2", "fdm_n_z_residual"],
             trainable=True,
             config={
                 "denormalize_modes": {
                     "fdm_a_spec_ms2": "scaled",
                     "fdm_n_z_residual": "scaled",
-                    "fdm_phi_bank_rad": "scaled",
                 },
                 # Scales calibrated on real ADS-B distribution (p99.9):
                 #   a_spec      : std=0.6,  p99.9=2.6 m/s²
                 #   n_z_residual: std=0.022, p99.9=0.13
                 # cap = p99.9 (physical bound), scale = cap so denorm = cap*tanh(x).
+                "scale_overrides": {
+                    "fdm_a_spec_ms2": 2.5,
+                    "fdm_n_z_residual": 0.13,
+                },
+                "cap_overrides": {
+                    "fdm_a_spec_ms2": 2.5,
+                    "fdm_n_z_residual": 0.13,
+                },
+            },
+        ),
+        LayerSpec(
+            name="data_ode_lat",
+            layer_class="node_fdm.layers.structured.StructuredLayer",
+            # Lateral backbone: lat-pure cols + minimal physical coupling
+            # (Option C — era_tas_ms for the g/V gain, raw_alt_m for the
+            # flight regime, fdm_gamma_rad for the 1/cos(gamma) factor).
+            input_cols=[
+                # State / control / E1 lat-pures.
+                # fdm_heading_target_rad is intentionally NOT included: it
+                # carries NaN where target_known=False (sentinel from
+                # derive.py), and U columns are exempted from the loader's
+                # NaN-window filter on purpose (gamma/tas/heading targets
+                # are expected to be NaN). The signal is available via the
+                # already-sanitized fdm_heading_diff_rad (computed by
+                # TrajectoryLayer with nan_to_num). The known-flag
+                # fdm_heading_target_known lets the head learn when to
+                # ignore the diff.
+                "fdm_heading_rad",
+                "fdm_heading_target_known",
+                "fdm_heading_known",
+                "era_u_wind_ms",
+                "era_v_wind_ms",
+                "fdm_lat_wind_ms",
+                "fdm_drift_rad",
+                "fdm_track_rad",
+                "fdm_heading_diff_rad",
+                # Couplage physique 1er ordre (option C)
+                "era_tas_ms",
+                "raw_alt_m",
+                "fdm_gamma_rad",
+            ],
+            output_cols=["fdm_phi_bank_rad"],
+            trainable=True,
+            config={
+                "denormalize_modes": {
+                    "fdm_phi_bank_rad": "scaled",
+                },
                 # phi_bank: hard cap at 1.0 rad (Decision Q1 from briefing —
                 # ~5.5% of empirical samples saturate; tan(1.0)=1.557 keeps the
                 # ``g/V·tan`` term well-conditioned and the dx clamp ±0.1 rad/s
                 # then bounds the rate physically).
                 "scale_overrides": {
-                    "fdm_a_spec_ms2": 2.5,
-                    "fdm_n_z_residual": 0.13,
                     "fdm_phi_bank_rad": 1.0,
                 },
                 "cap_overrides": {
-                    "fdm_a_spec_ms2": 2.5,
-                    "fdm_n_z_residual": 0.13,
                     "fdm_phi_bank_rad": 1.0,
                 },
             },
