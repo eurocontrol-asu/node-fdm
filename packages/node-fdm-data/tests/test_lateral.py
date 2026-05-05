@@ -27,36 +27,50 @@ from node_fdm_data.lateral import (
 class TestOrthodromicBearing:
     """Great-circle initial bearing (radians in / radians out, [0, 2π))."""
 
-    def test_cdg_to_jfk(self) -> None:
-        """CDG (49.01°N, 2.55°E) → JFK (40.64°N, 73.78°W) ≈ 292°."""
-        phi1, lam1 = np.radians(49.01), np.radians(2.55)
-        phi2, lam2 = np.radians(40.64), np.radians(-73.78)
+    @pytest.mark.parametrize(
+        ("phi1", "lam1", "phi2", "lam2", "expected_deg", "tol"),
+        [
+            pytest.param(
+                np.radians(49.01),
+                np.radians(2.55),
+                np.radians(40.64),
+                np.radians(-73.78),
+                292.0,
+                1.5,
+                id="cdg_to_jfk",
+            ),
+            pytest.param(
+                np.float64(0.0),
+                np.float64(0.0),
+                np.float64(0.0),
+                np.radians(10.0),
+                90.0,
+                0.01,
+                id="due_east",
+            ),
+            pytest.param(
+                np.float64(0.0),
+                np.float64(0.0),
+                np.radians(10.0),
+                np.float64(0.0),
+                0.0,
+                0.01,
+                id="due_north",
+            ),
+        ],
+    )
+    def test_known_bearings(  # noqa: PLR0913
+        self,
+        phi1: np.float64,
+        lam1: np.float64,
+        phi2: np.float64,
+        lam2: np.float64,
+        expected_deg: float,
+        tol: float,
+    ) -> None:
+        """Known great-circle bearings match reference values."""
         bearing = np.degrees(orthodromic_bearing(phi1, lam1, phi2, lam2))
-        assert bearing == pytest.approx(292.0, abs=1.5)
-
-    def test_due_east(self) -> None:
-        """Equator, same lat, east → 90°."""
-        bearing = np.degrees(
-            orthodromic_bearing(
-                np.float64(0.0),
-                np.float64(0.0),
-                np.float64(0.0),
-                np.radians(10.0),
-            )
-        )
-        assert bearing == pytest.approx(90.0, abs=0.01)
-
-    def test_due_north(self) -> None:
-        """Same longitude, north → 0°."""
-        bearing = np.degrees(
-            orthodromic_bearing(
-                np.float64(0.0),
-                np.float64(0.0),
-                np.radians(10.0),
-                np.float64(0.0),
-            )
-        )
-        assert bearing == pytest.approx(0.0, abs=0.01)
+        assert bearing == pytest.approx(expected_deg, abs=tol)
 
     def test_range_unsigned(self) -> None:
         """Result always in [0, 2π)."""
