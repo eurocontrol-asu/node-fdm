@@ -74,6 +74,7 @@ dev = [
     "ruff==0.15.12",
     "mypy>=1.13",
     "pre-commit>=4.0",
+    "types-PyYAML>=6.0",
 ]
 
 [tool.ruff]
@@ -114,7 +115,7 @@ module = ["node_fdm_pipeline.cli"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["altair.*", "pyBADA.*", "joblib.*"]
+module = ["pyBADA.*", "joblib.*", "fastmeteo.*", "pandas"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
