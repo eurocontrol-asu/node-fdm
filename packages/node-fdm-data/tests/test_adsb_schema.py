@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import pytest
+
 from node_fdm_data.schemas import adsb
 
 
@@ -63,10 +65,6 @@ class TestUColsV2:
         """U_COLS contains fdm_gamma_target_rad as control input."""
         assert "fdm_gamma_target_rad" in adsb.U_COLS
 
-    def test_u_cols_no_vz_sel(self) -> None:
-        """U_COLS no longer contains fdm_vz_sel_ms."""
-        assert "fdm_vz_sel_ms" not in adsb.U_COLS
-
 
 class TestUOdeCols:
     """Tests for the U_ODE_COLS subset used by the ODE layer."""
@@ -99,9 +97,16 @@ class TestStructuredInputs:
 class TestUColsV3:
     """Tests for U_COLS after AXM-808 (fdm_gamma_sel_rad → fdm_gamma_target_rad)."""
 
-    def test_u_cols_no_gamma_sel(self) -> None:
-        """U_COLS no longer contains fdm_gamma_sel_rad."""
-        assert "fdm_gamma_sel_rad" not in adsb.U_COLS
+    @pytest.mark.parametrize(
+        "removed_col",
+        [
+            pytest.param("fdm_vz_sel_ms", id="axm_805_vz_sel"),
+            pytest.param("fdm_gamma_sel_rad", id="axm_808_gamma_sel"),
+        ],
+    )
+    def test_u_cols_removed_legacy_columns(self, removed_col: str) -> None:
+        """U_COLS no longer contains legacy raw-control columns."""
+        assert removed_col not in adsb.U_COLS
 
     def test_u_cols_all_target_convention(self) -> None:
         """All U_COLS entries use either ``_target_`` or ``_known`` naming.
