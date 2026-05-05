@@ -165,6 +165,11 @@ show_missing = true
 fail_under = 0
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
 
+[tool.axm-audit.mirror]
+# CLI command wrappers (cyclopts) — pure orchestration, exercised at integration level.
+# Logic lives in node_fdm_data / node_fdm libs (unit-tested there).
+exempt_paths = ["commands/*.py"]
+
 [tool.git-cliff.changelog]
 header = ""
 body = """
