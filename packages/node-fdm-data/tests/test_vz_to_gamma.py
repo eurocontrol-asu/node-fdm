@@ -22,21 +22,19 @@ class TestVzToGammaLevel:
         assert float(gamma) == pytest.approx(0.0, abs=1e-12)
 
 
-class TestVzToGammaClimb:
-    """Climbing: vz=10 m/s, tas=250 m/s → gamma ≈ arcsin(10/250) ≈ 0.04 rad."""
+class TestVzToGammaSigned:
+    """Climb (vz>0) and descent (vz<0): gamma ≈ arcsin(vz/tas)."""
 
-    def test_vz_to_gamma_climb(self) -> None:
-        gamma = vz_to_gamma(10.0, 250.0)
-        expected = math.asin(10.0 / 250.0)  # ≈ 0.04002
-        assert float(gamma) == pytest.approx(expected, rel=1e-6)
-
-
-class TestVzToGammaDescent:
-    """Descending: vz=-7.6 m/s (~1500 ft/min), tas=200 m/s → gamma ≈ -0.038 rad."""
-
-    def test_vz_to_gamma_descent(self) -> None:
-        gamma = vz_to_gamma(-7.6, 200.0)
-        expected = math.asin(-7.6 / 200.0)  # ≈ -0.03802
+    @pytest.mark.parametrize(
+        ("vz", "tas"),
+        [
+            pytest.param(10.0, 250.0, id="climb"),
+            pytest.param(-7.6, 200.0, id="descent"),
+        ],
+    )
+    def test_vz_to_gamma_signed(self, vz: float, tas: float) -> None:
+        gamma = vz_to_gamma(vz, tas)
+        expected = math.asin(vz / tas)
         assert float(gamma) == pytest.approx(expected, rel=1e-6)
 
 
