@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pytest
 
 from node_fdm_data.preprocessing.lateral_state import (
     clean_track_with_medfilt,
@@ -126,32 +127,26 @@ def _const(x: float, n: int) -> np.ndarray:
     return np.full(n, x, dtype=np.float64)
 
 
-def test_coalesce_uses_bds_when_available() -> None:
+@pytest.mark.parametrize(
+    ("bds_val", "track_val", "expected"),
+    [
+        pytest.param(90.0, 95.0, 92.0, id="bds_available_uses_bds_plus_decl"),
+        pytest.param(np.nan, 100.0, 100.0, id="bds_missing_zero_wind_falls_back_to_track"),
+    ],
+)
+def test_coalesce_heading_known_with_zero_wind(
+    bds_val: float, track_val: float, expected: float
+) -> None:
     n = 5
-    bds = _const(90.0, n)
+    bds = _const(bds_val, n)
     decl = _const(2.0, n)
-    track = _const(95.0, n)
+    track = _const(track_val, n)
     tas = _const(200.0, n)
     u = _const(0.0, n)
     v = _const(0.0, n)
     heading, known = coalesce_heading(bds, decl, track, tas, u, v)
     assert known.all()
-    # bds + decl = 92, modulo 360.
-    assert np.allclose(heading, 92.0)
-
-
-def test_coalesce_fallback_when_bds_missing_zero_wind() -> None:
-    # Zero wind → drift_from_track = 0 → fallback heading == track_clean.
-    n = 5
-    bds = _const(np.nan, n)
-    decl = _const(2.0, n)
-    track = _const(100.0, n)
-    tas = _const(200.0, n)
-    u = _const(0.0, n)
-    v = _const(0.0, n)
-    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
-    assert known.all()
-    assert np.allclose(heading, 100.0)
+    assert np.allclose(heading, expected)
 
 
 def test_coalesce_fallback_with_wind_uses_track_drift() -> None:
