@@ -166,27 +166,21 @@ def test_coalesce_fallback_with_wind_uses_track_drift() -> None:
     assert abs(float(heading[0]) - expected) < 1e-6
 
 
-def test_coalesce_known_false_when_track_nan_and_no_bds() -> None:
+@pytest.mark.parametrize(
+    ("track_val", "tas_val", "u_val"),
+    [
+        pytest.param(np.nan, 200.0, 0.0, id="track_nan"),
+        pytest.param(100.0, np.nan, 5.0, id="tas_nan"),
+    ],
+)
+def test_coalesce_known_false_when_no_bds(track_val: float, tas_val: float, u_val: float) -> None:
+    # When BDS is missing, NaN in track or TAS propagates through fallback.
     n = 5
     bds = _const(np.nan, n)
     decl = _const(2.0, n)
-    track = _const(np.nan, n)
-    tas = _const(200.0, n)
-    u = _const(0.0, n)
-    v = _const(0.0, n)
-    heading, known = coalesce_heading(bds, decl, track, tas, u, v)
-    assert not known.any()
-    assert np.isnan(heading).all()
-
-
-def test_coalesce_known_false_when_tas_nan_and_no_bds() -> None:
-    # TAS NaN propagates through atan2 → fallback NaN.
-    n = 5
-    bds = _const(np.nan, n)
-    decl = _const(2.0, n)
-    track = _const(100.0, n)
-    tas = _const(np.nan, n)
-    u = _const(5.0, n)
+    track = _const(track_val, n)
+    tas = _const(tas_val, n)
+    u = _const(u_val, n)
     v = _const(0.0, n)
     heading, known = coalesce_heading(bds, decl, track, tas, u, v)
     assert not known.any()
