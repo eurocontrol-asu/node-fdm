@@ -231,20 +231,16 @@ selected_params:
         assert cfg.selected_params.alt.min_abs_value == 25
         assert cfg.selected_params.gamma.tol == 0.002
 
-    def test_missing_section(self, tmp_config: Path) -> None:
-        """YAML with no selected_params → all defaults used, no error."""
-        cfg = PipelineConfig.from_yaml(tmp_config)
-        assert cfg.selected_params == SelectedParamConfig()
-
-    def test_empty_section(self, tmp_path: Path) -> None:
-        """selected_params: {} → all defaults used."""
+    @pytest.mark.parametrize(
+        "selected_params_block",
+        ["", "selected_params: {}\n"],
+        ids=["missing_section", "empty_section"],
+    )
+    def test_default_selected_params(self, tmp_path: Path, selected_params_block: str) -> None:
+        """No or empty selected_params section → all defaults used."""
         config = tmp_path / "config.yaml"
-        config.write_text("""\
-paths:
-  data_dir: "/tmp/data"
-typecodes:
-  - A320
-selected_params: {}
-""")
+        config.write_text(
+            'paths:\n  data_dir: "/tmp/data"\ntypecodes:\n  - A320\n' + selected_params_block
+        )
         cfg = PipelineConfig.from_yaml(config)
         assert cfg.selected_params == SelectedParamConfig()
