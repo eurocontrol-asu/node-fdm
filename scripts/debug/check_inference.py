@@ -1,16 +1,19 @@
 """Quick inference check: predict one flight and plot state variables.
 
 Loads a trained Neural-ODE model and a validation flight, runs forward
-prediction, and produces a 3-column figure:
+prediction, and produces a 4-column figure:
 
 * Column 1 (Alt): altitude + target overlay, then alt_diff below.
 * Column 2 (TAS): TAS + target overlay, then tas_diff below.
 * Column 3 (FPA): flight-path angle + gamma_target + GammaDefaultNet output,
   then gamma_diff below.
+* Column 4 (Heading): heading + heading_target overlay, then signed
+  heading_diff below.  Plotted only when the architecture exposes
+  ``fdm_heading_rad`` (lateral channel).
 * Row 3: Mach, CAS, VZ — true + predicted + sel target, with gray shading
   on rows where the target/segment is absent.
 
-Output: ``data/figures/inference_check.png``.
+Output: ``data/figures/inference_check_{flight_id}.png``.
 """
 
 from __future__ import annotations
@@ -18,6 +21,8 @@ from __future__ import annotations
 import sys
 from pathlib import Path
 
+import cartopy.crs as ccrs
+import cartopy.feature as cfeature
 import matplotlib.pyplot as plt
 import numpy as np
 import polars as pl
@@ -34,9 +39,13 @@ STEP_S = 4.0  # grid step in seconds
 info = resolve_architecture(ARCH)
 
 # --- Load model ---
-model_path = MODEL_DIR / f"{info.name}_A320"
+# Usage: python check_inference.py [flight_id] [model_name]
+# Default model_name = f"{info.name}_A320"
+cli_model_name = sys.argv[2] if len(sys.argv) > 2 else f"{info.name}_A320"
+model_path = MODEL_DIR / cli_model_name
 if not model_path.exists():
     raise SystemExit(f"Model not found at {model_path}")
+print(f"Model: {cli_model_name}")
 
 predictor = NodeFDMPredictor(model_path=model_path, device="cpu")
 
@@ -123,6 +132,22 @@ alt_pred = predictions["raw_alt_m"]
 tas_pred = predictions["era_tas_ms"]
 gamma_pred = predictions["fdm_gamma_rad"]
 
+# --- Lateral channel (Phase 2B): present when fdm_heading_rad is in x_cols ---
+HAS_LATERAL = "fdm_heading_rad" in info.x_cols
+heading_true: np.ndarray | None = None
+heading_pred: np.ndarray | None = None
+heading_target: np.ndarray | None = None
+heading_target_known: np.ndarray | None = None
+if HAS_LATERAL:
+    heading_idx = info.x_cols.index("fdm_heading_rad")
+    heading_true = x_arr[:, heading_idx]
+    heading_pred = predictions["fdm_heading_rad"]
+
+    h_target_idx = info.u_cols.index("fdm_heading_target_rad")
+    h_known_idx = info.u_cols.index("fdm_heading_target_known")
+    heading_target = u_arr[:, h_target_idx]
+    heading_target_known = u_arr[:, h_known_idx]
+
 # --- Extract targets from U_COLS ---
 alt_target_idx = info.u_cols.index("fdm_alt_target_m")
 tas_target_idx = info.u_cols.index("fdm_tas_target_ms")
@@ -139,6 +164,9 @@ n_pred = len(gamma_pred)
 # Stats for display
 pct_known = gamma_known.mean() * 100
 print(f"Gamma target: {pct_known:.0f}% known, {100 - pct_known:.0f}% unknown (gamma_diff=0)")
+if HAS_LATERAL and heading_target_known is not None:
+    pct_h = heading_target_known.mean() * 100
+    print(f"Heading target: {pct_h:.0f}% known, {100 - pct_h:.0f}% unknown")
 
 # --- Extract Mach / CAS / VZ (true + targets) from the raw flight DataFrame ---
 from node_fdm_data.physics.constants import GAMMA_AIR, R
@@ -157,6 +185,8 @@ extra_cols = [
     "fdm_tas_target_known",
     "era_temp_K",
 ]
+if HAS_LATERAL:
+    extra_cols += ["raw_lat_deg", "raw_lon_deg", "in_turn"]
 extra = flight_df.select(extra_cols).to_numpy().astype(np.float32)[finite_mask]
 
 mach_true = extra[:, 0]
@@ -167,6 +197,11 @@ vz_true = extra[:, 4]
 vz_sel = extra[:, 5]  # NaN outside detected segments
 tas_known = extra[:, 6]  # 1.0 where Mach/CAS envelope yields a target
 temp_true = extra[:, 7]  # ERA5 real temperature [K] — used for round-trip closure
+
+if HAS_LATERAL:
+    lat_arr = extra[:, 8]
+    lon_arr = extra[:, 9]
+    in_turn_arr = extra[:, 10].astype(bool)
 
 # Unknown masks for shading "target absent" regions in gray
 mach_unknown = np.isnan(mach_sel)
@@ -184,6 +219,35 @@ tas_unknown = tas_known == 0.0
 mach_pred = tas_pred / np.sqrt(GAMMA_AIR * R * temp_true)
 cas_pred = tas_to_cas_real(tas_pred, alt_pred, temp_true)
 vz_pred = tas_pred * np.sin(gamma_pred)
+
+# --- Predicted ground track (lat/lon) by Euler integration of the wind triangle ---
+# air_velocity = TAS_horiz * (sin(heading), cos(heading))   (east, north)
+# ground_velocity = air_velocity + wind                      (wind in (u,v) = (east,north))
+# Then integrate step-by-step from (lat0, lon0) ground truth.
+lat_pred: np.ndarray | None = None
+lon_pred: np.ndarray | None = None
+if HAS_LATERAL and heading_pred is not None:
+    R_EARTH_M = 6_371_000.0
+    u_wind_idx = info.e0_cols.index("era_u_wind_ms")
+    v_wind_idx = info.e0_cols.index("era_v_wind_ms")
+    u_wind_arr = e_arr[:, u_wind_idx]
+    v_wind_arr = e_arr[:, v_wind_idx]
+    n_p = len(heading_pred)
+    tas_horiz = tas_pred * np.cos(gamma_pred)
+    v_e = tas_horiz * np.sin(heading_pred) + u_wind_arr[:n_p]
+    v_n = tas_horiz * np.cos(heading_pred) + v_wind_arr[:n_p]
+    lat_pred = np.empty(n_p, dtype=np.float64)
+    lon_pred = np.empty(n_p, dtype=np.float64)
+    lat_pred[0] = lat_arr[0]
+    lon_pred[0] = lon_arr[0]
+    for k in range(1, n_p):
+        lat_rad_k = np.radians(lat_pred[k - 1])
+        d_lat_deg = np.degrees(v_n[k - 1] * STEP_S / R_EARTH_M)
+        d_lon_deg = np.degrees(
+            v_e[k - 1] * STEP_S / (R_EARTH_M * max(np.cos(lat_rad_k), 1e-6))
+        )
+        lat_pred[k] = lat_pred[k - 1] + d_lat_deg
+        lon_pred[k] = lon_pred[k - 1] + d_lon_deg
 
 
 # --- Helpers ---
@@ -205,11 +269,60 @@ def _shade_unknown(ax, t, mask, label):
     ax.set_ylim(ymin, ymax)  # fill_between can shift ylim; clamp back
 
 
-# --- Figure: 3 columns × 3 rows ---
-fig, axes = plt.subplots(3, 3, figsize=(20, 12), sharex=True)
+# --- Figure: 4 rows × 2 cols, priority order ---
+# Row 0: Heading | Alt
+# Row 1: TAS     | FPA (γ)
+# Row 2: GroundT | VZ
+# Row 3: CAS     | Mach
+# Time-axis panels share x within each column. The ground-track panel (2,0)
+# uses lat/lon coords, so its row-2 cell is rebuilt with independent axes.
+fig, axes = plt.subplots(4, 2, figsize=(14, 16))
 
-# ── Col 1, Row 0: Altitude + target ──
+# Build manual sharex pairs for the time-axis panels per column.
+# Col 0 time panels: rows 0 (heading), 1 (TAS), 3 (CAS). Row 2 (ground track) excluded.
+# Col 1 time panels: rows 0 (alt), 1 (FPA), 2 (VZ), 3 (mach).
+for r_src in [1, 3]:
+    axes[r_src, 0].sharex(axes[0, 0])
+for r_src in [1, 2, 3]:
+    axes[r_src, 1].sharex(axes[0, 1])
+
+# ── (0, 0) Heading + target ──
 ax = axes[0, 0]
+if HAS_LATERAL:
+    assert heading_true is not None
+    assert heading_pred is not None
+    assert heading_target is not None
+    assert heading_target_known is not None
+
+    h_known_mask = heading_target_known == 1.0
+    heading_true_deg = np.degrees(heading_true) % 360.0
+    heading_pred_deg = np.degrees(heading_pred) % 360.0
+    heading_target_deg_plot = np.where(
+        h_known_mask, np.degrees(heading_target) % 360.0, np.nan
+    )
+    ax.plot(time_true, heading_true_deg, "k.", ms=1.5, label="True", alpha=0.6)
+    ax.plot(time_pred, heading_pred_deg, "r--", lw=1.2, label="Predicted", alpha=0.8)
+    ax.plot(time_true, heading_target_deg_plot, "b-", lw=2.0, label="Target", alpha=0.5)
+    ax.set_ylim(-10, 370)
+    if (~h_known_mask).any():
+        ax.fill_between(
+            time_true,
+            -10,
+            370,
+            where=~h_known_mask,
+            alpha=0.08,
+            color="gray",
+            label="Heading target unknown",
+        )
+    ax.set_ylabel("Heading [°]")
+    ax.legend(loc="best", fontsize=8)
+else:
+    ax.text(0.5, 0.5, "no lateral channel", ha="center", va="center", transform=ax.transAxes)
+    ax.set_ylabel("Heading [°]")
+ax.grid(True, alpha=0.3)
+
+# ── (0, 1) Altitude + target ──
+ax = axes[0, 1]
 ax.plot(time_true, alt_true, "k-", lw=1.5, label="True", alpha=0.8)
 ax.plot(time_pred, alt_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.plot(time_true, alt_target, "b-", lw=2.0, label="Target", alpha=0.4)
@@ -218,20 +331,8 @@ ax.set_ylabel("Altitude [m]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
-# ── Col 1, Row 1: Alt diff ──
+# ── (1, 0) TAS + target ──
 ax = axes[1, 0]
-diff_alt_true = alt_target - alt_true
-diff_alt_pred = alt_target[: len(alt_pred)] - alt_pred
-ax.plot(time_true, diff_alt_true, "k-", lw=1.5, label="True", alpha=0.8)
-ax.plot(time_pred, diff_alt_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
-ax.axhline(0, color="gray", ls=":", lw=0.8)
-_set_ylim(ax, diff_alt_true)
-ax.set_ylabel("Alt_target − Alt [m]")
-ax.legend(loc="best", fontsize=8)
-ax.grid(True, alpha=0.3)
-
-# ── Col 2, Row 0: TAS + target ──
-ax = axes[0, 1]
 ax.plot(time_true, tas_true, "k-", lw=1.5, label="True", alpha=0.8)
 ax.plot(time_pred, tas_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.plot(time_true, tas_target, "b-", lw=2.0, label="Target", alpha=0.4)
@@ -241,63 +342,99 @@ ax.set_ylabel("TAS [m/s]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
-# ── Col 2, Row 1: TAS diff ──
+# ── (1, 1) FPA + γ_target ──
 ax = axes[1, 1]
-diff_tas_true = tas_target - tas_true
-diff_tas_pred = tas_target[: len(tas_pred)] - tas_pred
-ax.plot(time_true, diff_tas_true, "k-", lw=1.5, label="True", alpha=0.8)
-ax.plot(time_pred, diff_tas_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
-ax.axhline(0, color="gray", ls=":", lw=0.8)
-_set_ylim(ax, diff_tas_true)
-ax.set_ylabel("TAS_target − TAS [m/s]")
-ax.legend(loc="best", fontsize=8)
-ax.grid(True, alpha=0.3)
-
-# ── Col 3, Row 0: Flight-path angle + gamma target + GammaDefaultNet ──
-ax = axes[0, 2]
 ax.plot(time_true, np.degrees(gamma_true), "k-", lw=0.8, label="True", alpha=0.5)
 ax.plot(time_pred, np.degrees(gamma_pred), "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.plot(time_true, np.degrees(gamma_target), "b-", lw=3.0, label="γ target (known)", alpha=0.9)
-# Show unknown regions as shaded
 unknown_mask = gamma_known == 0.0
 if unknown_mask.any():
-    ax.fill_between(time_true, ax.get_ylim()[0] if ax.get_ylim()[0] != 0 else -10, 10,
-                     where=unknown_mask, alpha=0.08, color="gray", label="γ unknown")
+    ax.fill_between(
+        time_true,
+        ax.get_ylim()[0] if ax.get_ylim()[0] != 0 else -10,
+        10,
+        where=unknown_mask,
+        alpha=0.08,
+        color="gray",
+        label="γ unknown",
+    )
 _set_ylim(ax, np.degrees(gamma_true))
 ax.set_ylabel("FPA [°]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
-# ── Col 3, Row 1: Gamma diff ──
-ax = axes[1, 2]
-# Only show diff where gamma target is known; 0 otherwise
-diff_gamma_true = np.where(gamma_known == 1.0, gamma_target_raw - gamma_true, 0.0)
-diff_gamma_pred = np.where(
-    gamma_known[:n_pred] == 1.0,
-    gamma_target_raw[:n_pred] - gamma_pred,
-    0.0,
-)
-ax.plot(time_true, np.degrees(diff_gamma_true), "k-", lw=1.5, label="True", alpha=0.8)
-ax.plot(time_pred, np.degrees(diff_gamma_pred), "r--", lw=1.2, label="Predicted", alpha=0.8)
-ax.axhline(0, color="gray", ls=":", lw=0.8)
-_set_ylim(ax, np.degrees(diff_gamma_true))
-ax.set_ylabel("γ_target − γ [°]")
-ax.legend(loc="best", fontsize=8)
-ax.grid(True, alpha=0.3)
+# ── (2, 0) Ground track on a PlateCarree background ──
+# Replace the default subplot with a cartopy GeoAxes (independent of sharex).
+axes[2, 0].remove()
+proj = ccrs.PlateCarree()
+ax = fig.add_subplot(4, 2, 5, projection=proj)  # row 2, col 0 → linear index 5
+if HAS_LATERAL:
+    lon_min = min(lon_arr.min(), lon_pred.min() if lon_pred is not None else lon_arr.min())
+    lon_max = max(lon_arr.max(), lon_pred.max() if lon_pred is not None else lon_arr.max())
+    lat_min = min(lat_arr.min(), lat_pred.min() if lat_pred is not None else lat_arr.min())
+    lat_max = max(lat_arr.max(), lat_pred.max() if lat_pred is not None else lat_arr.max())
+    lon_margin = max(0.1, 0.10 * (lon_max - lon_min))
+    lat_margin = max(0.1, 0.10 * (lat_max - lat_min))
+    ax.set_extent(
+        [lon_min - lon_margin, lon_max + lon_margin, lat_min - lat_margin, lat_max + lat_margin],
+        crs=proj,
+    )
+    ax.add_feature(cfeature.OCEAN, facecolor="#e6f0fa", zorder=0)
+    ax.add_feature(cfeature.LAND, facecolor="#f5f0e6", zorder=0)
+    ax.add_feature(cfeature.COASTLINE, lw=0.6, edgecolor="0.4", zorder=1)
+    ax.add_feature(cfeature.BORDERS, lw=0.4, edgecolor="0.6", linestyle=":", zorder=1)
+    gl = ax.gridlines(draw_labels=True, lw=0.4, color="0.7", alpha=0.5, zorder=2)
+    gl.top_labels = False
+    gl.right_labels = False
 
-# ── Row 2: Mach / CAS / VZ — true + predicted + target ──
-ax = axes[2, 0]
-ax.plot(time_true, mach_true, "k-", lw=1.5, label="True (era_mach)", alpha=0.8)
-ax.plot(time_pred, mach_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
-ax.plot(time_true, mach_sel, "b-", lw=2.0, label="Mach target (sel)", alpha=0.4)
-_set_ylim(ax, mach_true)
-_shade_unknown(ax, time_true, mach_unknown, "Mach unknown")
-ax.set_ylabel("Mach [-]")
-ax.set_xlabel("Time [min]")
-ax.legend(loc="best", fontsize=8)
-ax.grid(True, alpha=0.3)
+    straight = ~in_turn_arr
+    if straight.any():
+        ax.plot(
+            lon_arr[straight],
+            lat_arr[straight],
+            ".",
+            color="tab:blue",
+            ms=1.5,
+            label="True (straight)",
+            transform=proj,
+            zorder=3,
+        )
+    if in_turn_arr.any():
+        ax.plot(
+            lon_arr[in_turn_arr],
+            lat_arr[in_turn_arr],
+            ".",
+            color="tab:orange",
+            ms=1.5,
+            label="True (in_turn)",
+            transform=proj,
+            zorder=3,
+        )
+    if lat_pred is not None and lon_pred is not None:
+        ax.plot(lon_pred, lat_pred, "r--", lw=1.2, alpha=0.8, label="Predicted",
+                transform=proj, zorder=4)
+        ax.plot(lon_pred[-1], lat_pred[-1], "rv", ms=10, mfc="none",
+                label="end (pred)", transform=proj, zorder=5)
+    ax.plot(lon_arr[0], lat_arr[0], "g^", ms=10, label="start", transform=proj, zorder=5)
+    ax.plot(lon_arr[-1], lat_arr[-1], "kv", ms=10, label="end (true)", transform=proj, zorder=5)
+    ax.legend(loc="best", fontsize=7)
+else:
+    ax.text(0.5, 0.5, "no lateral channel", ha="center", va="center", transform=ax.transAxes)
 
+# ── (2, 1) VZ ──
 ax = axes[2, 1]
+ax.plot(time_true, vz_true, "k-", lw=1.5, label="True (raw_vz_ms)", alpha=0.8)
+ax.plot(time_pred, vz_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
+ax.plot(time_true, vz_sel, "b-", lw=2.0, label="VZ target (sel)", alpha=0.4)
+ax.axhline(0, color="gray", ls=":", lw=0.8)
+_set_ylim(ax, vz_true)
+_shade_unknown(ax, time_true, vz_unknown, "VZ unknown")
+ax.set_ylabel("VZ [m/s]")
+ax.legend(loc="best", fontsize=8)
+ax.grid(True, alpha=0.3)
+
+# ── (3, 0) CAS ──
+ax = axes[3, 0]
 ax.plot(time_true, cas_true, "k-", lw=1.5, label="True (bds_ias_ms)", alpha=0.8)
 ax.plot(time_pred, cas_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.plot(time_true, cas_sel, "b-", lw=2.0, label="CAS target (sel)", alpha=0.4)
@@ -308,14 +445,14 @@ ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
 
-ax = axes[2, 2]
-ax.plot(time_true, vz_true, "k-", lw=1.5, label="True (raw_vz_ms)", alpha=0.8)
-ax.plot(time_pred, vz_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
-ax.plot(time_true, vz_sel, "b-", lw=2.0, label="VZ target (sel)", alpha=0.4)
-ax.axhline(0, color="gray", ls=":", lw=0.8)
-_set_ylim(ax, vz_true)
-_shade_unknown(ax, time_true, vz_unknown, "VZ unknown")
-ax.set_ylabel("VZ [m/s]")
+# ── (3, 1) Mach ──
+ax = axes[3, 1]
+ax.plot(time_true, mach_true, "k-", lw=1.5, label="True (era_mach)", alpha=0.8)
+ax.plot(time_pred, mach_pred, "r--", lw=1.2, label="Predicted", alpha=0.8)
+ax.plot(time_true, mach_sel, "b-", lw=2.0, label="Mach target (sel)", alpha=0.4)
+_set_ylim(ax, mach_true)
+_shade_unknown(ax, time_true, mach_unknown, "Mach unknown")
+ax.set_ylabel("Mach [-]")
 ax.set_xlabel("Time [min]")
 ax.legend(loc="best", fontsize=8)
 ax.grid(True, alpha=0.3)
@@ -323,7 +460,8 @@ ax.grid(True, alpha=0.3)
 fig.suptitle(f"Neural ODE Inference — {best_fid}", fontsize=14)
 fig.tight_layout()
 
-out_path = Path(f"data/figures/inference_check_{best_fid}.png")
+model_suffix = "" if cli_model_name == f"{info.name}_A320" else f"_{cli_model_name}"
+out_path = Path(f"data/figures/inference_check_{best_fid}{model_suffix}.png")
 out_path.parent.mkdir(parents=True, exist_ok=True)
 fig.savefig(out_path, dpi=150)
 print(f"\nSaved to {out_path}")
