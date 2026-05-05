@@ -584,6 +584,69 @@ def _walk_apply_cas(
         cas_sel[i] = cas_opt
 
 
+def _climb_window(
+    first_alt: dict[str, Any], search_window: int, margin: int
+) -> tuple[int, int, int] | None:
+    """Return ``(boundary, win_start, win_end)`` for the climb side, or None."""
+    if first_alt["start_idx"] < margin:
+        return None
+    boundary = first_alt["start_idx"]
+    win_start = max(0, boundary - search_window)
+    return boundary, win_start, boundary
+
+
+def _descent_window(
+    last_alt: dict[str, Any], n: int, search_window: int, margin: int
+) -> tuple[int, int, int] | None:
+    """Return ``(boundary, win_start, win_end)`` for the descent side, or None."""
+    if (n - 1 - last_alt["end_idx"]) < margin:
+        return None
+    boundary = last_alt["end_idx"] + 1
+    win_end = min(n, boundary + search_window)
+    return boundary, boundary, win_end
+
+
+def _apply_one_transition_window(
+    *,
+    cas_sel: np.ndarray,
+    cas_real: np.ndarray,
+    tas_real: np.ndarray,
+    alt_m: np.ndarray,
+    temp_k: np.ndarray,
+    mach_const: float,
+    boundary_idx: int,
+    win_start: int,
+    win_end: int,
+    direction: int,
+    deviation_kt: float,
+    search_window: int,
+) -> None:
+    """Clear-window, optimise crossover CAS, and walk-apply on a single side."""
+    if direction < 0:
+        cas_sel[:boundary_idx] = np.nan
+    else:
+        cas_sel[boundary_idx:] = np.nan
+    cas_opt = _optimize_transition_cas(
+        tas_real[win_start:win_end],
+        mach_const,
+        alt_m[win_start:win_end],
+        temp_k[win_start:win_end],
+        search_window=search_window,
+    )
+    if not np.isfinite(cas_opt):
+        return
+    _walk_apply_cas(
+        cas_sel,
+        cas_real,
+        cas_opt,
+        boundary_idx=boundary_idx,
+        direction=direction,
+        deviation_kt=deviation_kt,
+        win_start=win_start,
+        win_end=win_end,
+    )
+
+
 def _apply_transition_optimisation(
     df: pl.DataFrame,
     alt_segs: list[dict[str, Any]],
@@ -622,57 +685,31 @@ def _apply_transition_optimisation(
 
     first_alt, last_alt = alt_segs[0], alt_segs[-1]
 
-    # Climb window
-    if first_alt["start_idx"] >= margin:
-        mach_const = _mach_value_in_alt_seg(mach_segs, first_alt)
-        if mach_const is not None:
-            boundary = first_alt["start_idx"]
-            win_start = max(0, boundary - search_window)
-            cas_sel[:boundary] = np.nan
-            cas_opt = _optimize_transition_cas(
-                tas_real[win_start:boundary],
-                mach_const,
-                alt_m[win_start:boundary],
-                temp_k[win_start:boundary],
-                search_window=search_window,
-            )
-            if np.isfinite(cas_opt):
-                _walk_apply_cas(
-                    cas_sel,
-                    cas_real,
-                    cas_opt,
-                    boundary_idx=boundary,
-                    direction=-1,
-                    deviation_kt=deviation_kt,
-                    win_start=win_start,
-                    win_end=boundary,
-                )
-
-    # Descent window
-    if (n - 1 - last_alt["end_idx"]) >= margin:
-        mach_const = _mach_value_in_alt_seg(mach_segs, last_alt)
-        if mach_const is not None:
-            boundary = last_alt["end_idx"] + 1
-            win_end = min(n, boundary + search_window)
-            cas_sel[boundary:] = np.nan
-            cas_opt = _optimize_transition_cas(
-                tas_real[boundary:win_end],
-                mach_const,
-                alt_m[boundary:win_end],
-                temp_k[boundary:win_end],
-                search_window=search_window,
-            )
-            if np.isfinite(cas_opt):
-                _walk_apply_cas(
-                    cas_sel,
-                    cas_real,
-                    cas_opt,
-                    boundary_idx=boundary,
-                    direction=+1,
-                    deviation_kt=deviation_kt,
-                    win_start=boundary,
-                    win_end=win_end,
-                )
+    sides: list[tuple[tuple[int, int, int] | None, dict[str, Any], int]] = [
+        (_climb_window(first_alt, search_window, margin), first_alt, -1),
+        (_descent_window(last_alt, n, search_window, margin), last_alt, +1),
+    ]
+    for window, alt_seg, direction in sides:
+        if window is None:
+            continue
+        mach_const = _mach_value_in_alt_seg(mach_segs, alt_seg)
+        if mach_const is None:
+            continue
+        boundary, win_start, win_end = window
+        _apply_one_transition_window(
+            cas_sel=cas_sel,
+            cas_real=cas_real,
+            tas_real=tas_real,
+            alt_m=alt_m,
+            temp_k=temp_k,
+            mach_const=mach_const,
+            boundary_idx=boundary,
+            win_start=win_start,
+            win_end=win_end,
+            direction=direction,
+            deviation_kt=deviation_kt,
+            search_window=search_window,
+        )
 
     return df.with_columns(pl.Series("fdm_cas_sel_kt", cas_sel))
 
