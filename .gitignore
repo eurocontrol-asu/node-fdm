@@ -53,3 +53,9 @@ data/
 
 # Machine-specific config (use config.example.yaml as template)
 config.yaml
+
+# One-shot debug & exploration scripts (keep curated utilities tracked)
+scripts/debug/diag_*
+scripts/debug/bench_*
+scripts/debug/inverse_*
+scripts/debug/conditional_scaling_design.md
