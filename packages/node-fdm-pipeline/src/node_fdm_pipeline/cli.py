@@ -615,7 +615,7 @@ def table_info_cmd(
     ] = Path("data/flights.delta"),
 ) -> None:
     """Inspect a Delta table: partitions, columns, and version count."""
-    from node_fdm_pipeline.commands.table_info import table_info
+    from node_fdm_data.delta import table_info
 
     info = table_info(table_path)
     print(f"Partitions ({len(info['partitions'])}):")  # noqa: T201

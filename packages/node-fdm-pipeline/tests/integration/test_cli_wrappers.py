@@ -95,14 +95,14 @@ class TestCLIDirectInvoke:
         aircraft_list_cmd(config=config, dry_run=True)
 
     def test_table_info_wrapper(self, tmp_path: Path) -> None:
-        """CLI table-info wrapper delegates to commands.table_info."""
+        """CLI table-info wrapper delegates to node_fdm_data.delta.table_info."""
         from unittest.mock import patch
 
         from node_fdm_pipeline.cli import table_info_cmd
 
         mock_info = {"partitions": ["20250101"], "columns": ["raw_icao24"], "versions": 1}
         with patch(
-            "node_fdm_pipeline.commands.table_info.table_info",
+            "node_fdm_data.delta.table_info",
             return_value=mock_info,
         ):
             table_info_cmd(table_path=tmp_path / "fake.delta")
