@@ -48,25 +48,38 @@ def _gamma_expr(tas_col: str, vz_col: str) -> pl.Expr:
     return ratio.arcsin().alias("fdm_gamma_rad")
 
 
-def _derived_exprs(schema: pl.Schema) -> list[pl.Expr]:
-    exprs: list[pl.Expr] = []
-    if "bds_mcp_alt_sel_ft" in schema and "raw_alt_ft" in schema:
-        exprs.append(
-            (pl.col("bds_mcp_alt_sel_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
-        )
-
+def _resolve_speed_cols(schema: pl.Schema) -> tuple[str, str, str]:
     tas_col = "era_tas_kt" if "era_tas_kt" in schema else "TAS"
     vz_col = "raw_vz_ftmin" if "raw_vz_ftmin" in schema else "vertical_rate"
     gs_col = "raw_gs_kt" if "raw_gs_kt" in schema else "groundspeed"
+    return tas_col, vz_col, gs_col
 
+
+def _alt_diff_expr(schema: pl.Schema) -> list[pl.Expr]:
+    if "bds_mcp_alt_sel_ft" in schema and "raw_alt_ft" in schema:
+        return [(pl.col("bds_mcp_alt_sel_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft")]
+    return []
+
+
+def _speed_exprs(schema: pl.Schema, tas_col: str, vz_col: str, gs_col: str) -> list[pl.Expr]:
+    exprs: list[pl.Expr] = []
     if tas_col in schema and vz_col in schema:
         exprs.append(_gamma_expr(tas_col, vz_col))
     if tas_col in schema and gs_col in schema:
         exprs.append((pl.col(tas_col) - pl.col(gs_col)).alias("fdm_long_wind_kt"))
+    return exprs
 
-    exprs.extend(
-        pl.col(col).fill_null(val) for col, val in _FILL_NULL_COLS.items() if col in schema
-    )
+
+def _fill_null_exprs(schema: pl.Schema) -> list[pl.Expr]:
+    return [pl.col(col).fill_null(val) for col, val in _FILL_NULL_COLS.items() if col in schema]
+
+
+def _derived_exprs(schema: pl.Schema) -> list[pl.Expr]:
+    exprs: list[pl.Expr] = []
+    exprs.extend(_alt_diff_expr(schema))
+    cols = _resolve_speed_cols(schema)
+    exprs.extend(_speed_exprs(schema, *cols))
+    exprs.extend(_fill_null_exprs(schema))
     return exprs
 
 
