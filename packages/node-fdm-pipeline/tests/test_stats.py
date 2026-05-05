@@ -61,44 +61,33 @@ typecodes:
 
         return config
 
+    @pytest.mark.parametrize(
+        "train_len, val_len",
+        [
+            pytest.param(100, 20, id="populated"),
+            pytest.param(0, 0, id="empty"),
+        ],
+    )
     @patch("node_fdm.loader.get_train_val_data")
-    def test_stats_output_format(
+    def test_stats_runs_for_each_typecode(
         self,
         mock_get_data: MagicMock,
         tmp_path: Path,
+        train_len: int,
+        val_len: int,
     ) -> None:
-        """Stats are logged with correct fields per typecode."""
+        """run_dataset_stats invokes get_train_val_data once per typecode, even when empty."""
         config = self._make_config(tmp_path)
 
-        # Mock dataset objects with __len__
         mock_train_ds = MagicMock()
-        mock_train_ds.__len__ = MagicMock(return_value=100)
+        mock_train_ds.__len__ = MagicMock(return_value=train_len)
         mock_val_ds = MagicMock()
-        mock_val_ds.__len__ = MagicMock(return_value=20)
+        mock_val_ds.__len__ = MagicMock(return_value=val_len)
         mock_get_data.return_value = (mock_train_ds, mock_val_ds)
 
         run_dataset_stats(arch="adsb", config=config)
 
-        # get_train_val_data called once for A320, once for B738
         assert mock_get_data.call_count == 2
-
-    @patch("node_fdm.loader.get_train_val_data")
-    def test_stats_empty_typecode(
-        self,
-        mock_get_data: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Empty typecode has zero segments."""
-        config = self._make_config(tmp_path)
-
-        mock_train_ds = MagicMock()
-        mock_train_ds.__len__ = MagicMock(return_value=0)
-        mock_val_ds = MagicMock()
-        mock_val_ds.__len__ = MagicMock(return_value=0)
-        mock_get_data.return_value = (mock_train_ds, mock_val_ds)
-
-        # B738 has no entries in Delta Table → zero segments, no crash
-        run_dataset_stats(arch="adsb", config=config)
 
     def test_stats_missing_delta(self, tmp_path: Path) -> None:
         """SystemExit when Delta Table doesn't exist."""
