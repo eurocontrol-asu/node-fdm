@@ -77,26 +77,49 @@ class TestConvertSI:
             if src in pipeline_df.columns:
                 assert tgt in result.columns, f"Missing target column: {tgt}"
 
-    def test_convert_si_target_alt(self) -> None:
-        """fdm_alt_target_ft -> fdm_alt_target_m via ft_to_m."""
-        df = pl.DataFrame({"fdm_alt_target_ft": [10000.0]})
+    @pytest.mark.parametrize(
+        ("src_col", "src_value", "tgt_col", "expected", "rel"),
+        [
+            pytest.param(
+                "fdm_alt_target_ft",
+                10000.0,
+                "fdm_alt_target_m",
+                3048.0,
+                None,
+                id="target_alt_ft_to_m",
+            ),
+            pytest.param(
+                "fdm_cas_sel_kt",
+                250.0,
+                "fdm_cas_sel_ms",
+                250.0 * 0.514444,
+                1e-4,
+                id="cas_sel_kt_to_ms",
+            ),
+            pytest.param(
+                "fdm_vz_sel_ftmin",
+                1000.0,
+                "fdm_vz_sel_ms",
+                1000.0 * 0.3048 / 60.0,
+                1e-4,
+                id="vz_sel_ftmin_to_ms",
+            ),
+        ],
+    )
+    def test_convert_si_selected_target(
+        self,
+        src_col: str,
+        src_value: float,
+        tgt_col: str,
+        expected: float,
+        rel: float | None,
+    ) -> None:
+        """convert_si emits SI target column for selected setpoint inputs."""
+        df = pl.DataFrame({src_col: [src_value]})
         result = convert_si(df)
-        assert "fdm_alt_target_m" in result.columns
-        assert result["fdm_alt_target_m"][0] == pytest.approx(3048.0)
-
-    def test_convert_si_cas_sel(self) -> None:
-        """fdm_cas_sel_kt -> fdm_cas_sel_ms via kt_to_ms."""
-        df = pl.DataFrame({"fdm_cas_sel_kt": [250.0]})
-        result = convert_si(df)
-        assert "fdm_cas_sel_ms" in result.columns
-        assert result["fdm_cas_sel_ms"][0] == pytest.approx(250.0 * 0.514444, rel=1e-4)
-
-    def test_convert_si_vz_sel(self) -> None:
-        """fdm_vz_sel_ftmin -> fdm_vz_sel_ms via ftmin_to_ms."""
-        df = pl.DataFrame({"fdm_vz_sel_ftmin": [1000.0]})
-        result = convert_si(df)
-        assert "fdm_vz_sel_ms" in result.columns
-        assert result["fdm_vz_sel_ms"][0] == pytest.approx(1000.0 * 0.3048 / 60.0, rel=1e-4)
+        assert tgt_col in result.columns
+        approx = pytest.approx(expected, rel=rel) if rel is not None else pytest.approx(expected)
+        assert result[tgt_col][0] == approx
 
     def test_convert_si_nan_preserved(self) -> None:
         """NaN values in source column are preserved in target column."""
