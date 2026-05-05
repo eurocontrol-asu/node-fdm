@@ -5,6 +5,7 @@ from __future__ import annotations
 from pathlib import Path
 from unittest.mock import patch
 
+import pandas as pd
 import polars as pl
 import pytest
 
@@ -304,48 +305,44 @@ class TestJoinFlightlistInline:
         assert result["meta_arrival"][0] == "EGLL"
         assert result["meta_aircraft_type"][0] == "A320"
 
-    def test_join_with_none(self) -> None:
-        """None flightlist → meta columns are null."""
+    @pytest.mark.parametrize(
+        "fl_factory",
+        [
+            pytest.param(lambda: None, id="none"),
+            pytest.param(
+                lambda: pd.DataFrame(
+                    {
+                        "icao24": ["zzz999"],
+                        "callsign": ["OTHER"],
+                        "departure": ["KJFK"],
+                        "arrival": ["KLAX"],
+                        "typecode": ["B738"],
+                    }
+                ),
+                id="no_matching_icao",
+            ),
+            pytest.param(
+                lambda: pd.DataFrame(
+                    {
+                        "icao24": [],
+                        "callsign": [],
+                        "departure": [],
+                        "arrival": [],
+                        "typecode": [],
+                    }
+                ),
+                id="empty",
+            ),
+            pytest.param(
+                lambda: pd.DataFrame({"icao24": ["abc123"], "callsign": ["TEST01"]}),
+                id="missing_columns",
+            ),
+        ],
+    )
+    def test_join_yields_null_meta(self, fl_factory) -> None:
+        """Flightlist that can't contribute metadata → meta_* columns are all null."""
         df = self._make_batch_df()
-        result = _join_flightlist_inline(df, None)
-        assert "meta_departure" in result.columns
-        assert result["meta_departure"].null_count() == len(result)
-
-    def test_join_no_matching_icao(self) -> None:
-        """Flightlist with different icao24 → meta columns are null."""
-        import pandas as pd
-
-        df = self._make_batch_df()
-        fl = pd.DataFrame(
-            {
-                "icao24": ["zzz999"],
-                "callsign": ["OTHER"],
-                "departure": ["KJFK"],
-                "arrival": ["KLAX"],
-                "typecode": ["B738"],
-            }
-        )
-        result = _join_flightlist_inline(df, fl)
-        assert result["meta_departure"].null_count() == len(result)
-
-    def test_join_empty_flightlist(self) -> None:
-        """Empty flightlist DataFrame → meta columns are null."""
-        import pandas as pd
-
-        df = self._make_batch_df()
-        fl = pd.DataFrame(
-            {"icao24": [], "callsign": [], "departure": [], "arrival": [], "typecode": []}
-        )
-        result = _join_flightlist_inline(df, fl)
-        assert result["meta_departure"].null_count() == len(result)
-
-    def test_join_flightlist_missing_columns(self) -> None:
-        """Flightlist without departure/arrival/typecode → meta columns are null."""
-        import pandas as pd
-
-        df = self._make_batch_df()
-        fl = pd.DataFrame({"icao24": ["abc123"], "callsign": ["TEST01"]})
-        result = _join_flightlist_inline(df, fl)
+        result = _join_flightlist_inline(df, fl_factory())
         assert "meta_departure" in result.columns
         assert result["meta_departure"].null_count() == len(result)
 
