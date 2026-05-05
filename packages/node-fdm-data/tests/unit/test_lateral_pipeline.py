@@ -129,7 +129,8 @@ def test_lateral_si_conversions(straight_cruise_flight: pl.DataFrame) -> None:
 
 def test_lateral_heading_coverage(straight_cruise_flight: pl.DataFrame) -> None:
     out = derive_columns(straight_cruise_flight)
-    coverage = float(out["fdm_heading_known"].mean() or 0.0)
+    mean_val = out["fdm_heading_known"].mean()
+    coverage = float(mean_val) if isinstance(mean_val, (int, float)) else 0.0
     # Straight cruise with BDS heading + zero wind should resolve heading on
     # nearly every sample (allow a small margin for Savgol edges).
     assert coverage > 0.3, f"heading_known coverage too low: {coverage:.2%}"

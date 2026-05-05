@@ -117,32 +117,12 @@ def detect_turning_starts(
     if n < _SAVGOL_WINDOW:
         return np.empty(0, dtype=np.intp)
 
-    # Savgol does not tolerate NaN/inf; forward-fill then back-fill so the
-    # filter sees a finite signal.  The Savgol window is short (9 samples)
-    # so isolated gaps get a near-constant local fill -- detected rotation
-    # rate at those points is ~0, which is exactly what we want (no spurious
-    # turn detection on missing data).
-    track_filled = np.asarray(track_deg, dtype=np.float64).copy()
-    if not np.all(np.isfinite(track_filled)):
-        bad = ~np.isfinite(track_filled)
-        good_idx = np.flatnonzero(~bad)
-        if good_idx.size == 0:
-            return np.empty(0, dtype=np.intp)
-        # forward-fill
-        last = track_filled[good_idx[0]]
-        for i in range(n):
-            if bad[i]:
-                track_filled[i] = last
-            else:
-                last = track_filled[i]
+    track_filled, all_nan = _forward_fill_track(track_deg)
+    if all_nan:
+        return np.empty(0, dtype=np.intp)
 
     smoothed = savgol_filter(track_filled, _SAVGOL_WINDOW, _SAVGOL_POLY)
-
-    d_track = np.diff(smoothed, prepend=smoothed[0])
-    # Wrap protection: large jumps come from 0/360 boundary, not real rotation.
-    d_track = np.where(d_track > _HALF_TURN_DEG, d_track - _FULL_TURN_DEG, d_track)
-    d_track = np.where(d_track < -_HALF_TURN_DEG, d_track + _FULL_TURN_DEG, d_track)
-
+    d_track = _unwrap_diff(np.diff(smoothed, prepend=smoothed[0]))
     abs_rate = np.abs(d_track / dt)
 
     peaks, _ = find_peaks(
@@ -151,6 +131,50 @@ def detect_turning_starts(
         distance=_PEAK_DISTANCE,
     )
 
+    starts = _backtrack_starts(abs_rate, peaks, noise_threshold_deg_per_sec)
+    if not starts:
+        return np.empty(0, dtype=np.intp)
+    return np.unique(np.asarray(starts, dtype=np.intp))
+
+
+def _forward_fill_track(
+    track_deg: npt.NDArray[np.floating[Any]],
+) -> tuple[npt.NDArray[np.float64], bool]:
+    """Forward-fill non-finite samples; return ``(filled, all_nan)``.
+
+    Savgol does not tolerate NaN/inf; the short 9-sample window means
+    isolated gaps get a near-constant local fill so detected rotation
+    rate at those points is ~0 (no spurious turn detection).
+    """
+    track_filled = np.asarray(track_deg, dtype=np.float64).copy()
+    if np.all(np.isfinite(track_filled)):
+        return track_filled, False
+    bad = ~np.isfinite(track_filled)
+    good_idx = np.flatnonzero(~bad)
+    if good_idx.size == 0:
+        return track_filled, True
+    last = track_filled[good_idx[0]]
+    for i in range(track_filled.size):
+        if bad[i]:
+            track_filled[i] = last
+        else:
+            last = track_filled[i]
+    return track_filled, False
+
+
+def _unwrap_diff(d_track: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """Wrap-protect a diff'd track: large jumps come from the 0/360 boundary."""
+    d_track = np.where(d_track > _HALF_TURN_DEG, d_track - _FULL_TURN_DEG, d_track)
+    d_track = np.where(d_track < -_HALF_TURN_DEG, d_track + _FULL_TURN_DEG, d_track)
+    return d_track
+
+
+def _backtrack_starts(
+    abs_rate: npt.NDArray[np.float64],
+    peaks: npt.NDArray[np.intp],
+    noise_threshold_deg_per_sec: float,
+) -> list[int]:
+    """Walk back from each peak until rate drops below the noise floor."""
     starts: list[int] = []
     for peak in peaks:
         i = int(peak)
@@ -162,10 +186,7 @@ def detect_turning_starts(
             if i == 0:
                 starts.append(0)
                 break
-
-    if not starts:
-        return np.empty(0, dtype=np.intp)
-    return np.unique(np.asarray(starts, dtype=np.intp))
+    return starts
 
 
 # ---------------------------------------------------------------------------
