@@ -56,20 +56,20 @@ class TestRegistry:
         with pytest.warns(UserWarning, match="already registered"):
             register(spec)
 
-    def test_opensky_spec_cols(self) -> None:
-        """OpenSky 2025 spec has expected column lists."""
-        import node_fdm.architectures.opensky  # noqa: F401 — triggers auto-register
+    def test_adsb_spec_cols(self) -> None:
+        """ADS-B v1 spec has expected column lists and layer composition."""
+        import node_fdm.architectures.adsb  # noqa: F401 — triggers auto-register
 
-        spec = get("opensky_2025")
+        spec = get("node_adsb_v1")
         assert spec.x_cols == [
-            "fdm_distance_cum_m",
             "raw_alt_m",
             "fdm_gamma_rad",
             "era_tas_ms",
+            "fdm_heading_rad",
         ]
-        assert len(spec.layers) == 2
+        assert len(spec.layers) == 4
         assert spec.layers[0].name == "trajectory"
-        assert spec.layers[1].name == "data_ode"
+        assert spec.layers[-1].name == "physics"
 
     def test_qar_spec_cols(self) -> None:
         """QAR spec has expected column lists."""
@@ -157,14 +157,10 @@ class TestArchitectureSpecBounds:
         assert "d_alt_ms" in spec.dx_bounds
         assert "d_tas_ms" not in spec.dx_bounds
 
-    def test_existing_architectures_no_bounds(self) -> None:
-        """Existing architectures (opensky_2025, qar) load with empty bounds."""
-        import node_fdm.architectures.opensky  # triggers auto-register
+    def test_qar_no_bounds(self) -> None:
+        """QAR architecture loads with empty bounds (no projected integration)."""
         import node_fdm.architectures.qar  # noqa: F401 — triggers auto-register
 
-        opensky = get("opensky_2025")
         qar = get("qar")
-        assert opensky.x_bounds == {}
-        assert opensky.dx_bounds == {}
         assert qar.x_bounds == {}
         assert qar.dx_bounds == {}

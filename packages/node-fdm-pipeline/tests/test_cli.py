@@ -325,7 +325,7 @@ class TestCLIDirectInvoke:
 
         config = self._make_config(tmp_path)
         with patch("node_fdm_pipeline.commands.train.run_training"):
-            train(arch="opensky", config=config)
+            train(arch="adsb", config=config)
 
     def test_predict_wrapper(self, tmp_path: Path) -> None:
         """CLI predict wrapper delegates to commands.predict.run_predict."""
@@ -335,7 +335,7 @@ class TestCLIDirectInvoke:
 
         config = self._make_config(tmp_path)
         with patch("node_fdm_pipeline.commands.predict.run_predict"):
-            predict(arch="opensky", config=config)
+            predict(arch="adsb", config=config)
 
     def test_predict_bada_wrapper(self, tmp_path: Path) -> None:
         """CLI predict-bada wrapper delegates to commands.predict.run_predict_bada."""
@@ -355,7 +355,7 @@ class TestCLIDirectInvoke:
 
         config = self._make_config(tmp_path)
         with patch("node_fdm_pipeline.commands.evaluate.run_evaluate"):
-            evaluate(arch="opensky", config=config)
+            evaluate(arch="adsb", config=config)
 
     def test_resume_wrapper(self, tmp_path: Path) -> None:
         """CLI resume wrapper delegates to commands.resume.run_resume."""
@@ -377,7 +377,7 @@ class TestCLIDirectInvoke:
 
         config = self._make_config(tmp_path)
         with patch("node_fdm_pipeline.commands.stats.run_dataset_stats"):
-            dataset_stats(arch="opensky", config=config)
+            dataset_stats(arch="adsb", config=config)
 
     def test_visualize_wrapper(self, tmp_path: Path) -> None:
         """CLI visualize wrapper delegates to commands.visualize."""
@@ -387,7 +387,7 @@ class TestCLIDirectInvoke:
 
         config = self._make_config(tmp_path)
         with patch("node_fdm_pipeline.commands.visualize.run_visualize"):
-            visualize(arch="opensky", config=config)
+            visualize(arch="adsb", config=config)
 
     def test_plot_performance_wrapper(self, tmp_path: Path) -> None:
         """CLI plot-performance wrapper delegates to commands.visualize."""

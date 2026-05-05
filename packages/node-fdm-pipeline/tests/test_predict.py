@@ -66,7 +66,7 @@ typecodes:
 """
         )
 
-        model_dir = models_dir / "opensky_2025_A320"
+        model_dir = models_dir / "node_adsb_v1_A320"
         model_dir.mkdir()
 
         return config
@@ -89,14 +89,14 @@ typecodes:
         from node_fdm_pipeline.resolver import ArchitectureInfo
 
         mock_resolve.return_value = ArchitectureInfo(
-            name="opensky_2025",
+            name="node_adsb_v1",
             x_cols=["distance_m"],
             u_cols=["alt_sel_m"],
             e0_cols=["long_wind_ms"],
             dx_cols=[(1, "gs_ms")],
             preprocessing_fn=None,
             segment_filter_fn=None,
-            architecture_import="node_fdm.architectures.opensky",
+            architecture_import="node_fdm.architectures.adsb",
         )
 
         mock_predictor = MagicMock()
@@ -107,7 +107,7 @@ typecodes:
         mock_predictor_cls.return_value = mock_predictor
 
         run_predict(
-            arch="opensky",
+            arch="adsb",
             config=config,
             typecode="A320",
             device="cpu",
@@ -145,7 +145,7 @@ typecodes:
 
         # Should not raise — just logs warning and skips
         run_predict(
-            arch="opensky",
+            arch="adsb",
             config=config,
             typecode="A320",
             device="cpu",
@@ -168,7 +168,7 @@ typecodes:
 
         # Should not raise — just logs warning and skips
         run_predict(
-            arch="opensky",
+            arch="adsb",
             config=config,
             typecode="A320",
             device="cpu",
@@ -330,7 +330,7 @@ typecodes:
 """
         )
 
-        model_dir = models_dir / "opensky_2025_A320"
+        model_dir = models_dir / "node_adsb_v1_A320"
         model_dir.mkdir()
 
         return config
@@ -361,14 +361,14 @@ typecodes:
             return df
 
         return ArchitectureInfo(
-            name="opensky_2025",
+            name="node_adsb_v1",
             x_cols=["altitude_ft"],
             u_cols=["mach_sel", "cas_sel_kt"],
             e0_cols=["groundspeed"],
             dx_cols=[(1, "vertical_rate")],
             preprocessing_fn=identity_preprocess,
             segment_filter_fn=None,
-            architecture_import="node_fdm.architectures.opensky",
+            architecture_import="node_fdm.architectures.adsb",
         )
 
     @patch("node_fdm_data.delta.read_delta_table")
@@ -400,7 +400,7 @@ typecodes:
         mock_predictor_cls.return_value = mock_predictor
 
         run_predict(
-            arch="opensky",
+            arch="adsb",
             config=config,
             typecode="A320",
             device="cpu",
@@ -432,7 +432,7 @@ typecodes:
         mock_predictor_cls.return_value = mock_predictor
 
         run_predict(
-            arch="opensky",
+            arch="adsb",
             config=config,
             typecode="A320",
             device="cpu",
@@ -474,7 +474,7 @@ typecodes:
         mock_predictor_cls.return_value = mock_predictor
 
         run_predict(
-            arch="opensky",
+            arch="adsb",
             config=config,
             typecode="A320",
             device="cpu",
@@ -513,7 +513,7 @@ typecodes:
         mock_read_delta.return_value = _make_delta_df(split="train")
 
         # Should not raise — no model found, skips gracefully
-        run_predict(arch="opensky", config=config, typecode="A320", local_model=True)
+        run_predict(arch="adsb", config=config, typecode="A320", local_model=True)
 
 
 class TestPredictXInitGuard:
@@ -547,7 +547,7 @@ typecodes:
 """
         )
 
-        model_dir = models_dir / "opensky_2025_A320"
+        model_dir = models_dir / "node_adsb_v1_A320"
         model_dir.mkdir()
 
         mock_read_delta.return_value = _make_delta_df()
@@ -558,14 +558,14 @@ typecodes:
         mock_preprocessing.return_value = mock_result
 
         mock_resolve.return_value = ArchitectureInfo(
-            name="opensky_2025",
+            name="node_adsb_v1",
             x_cols=["distance_m"],
             u_cols=["alt_sel_m"],
             e0_cols=["long_wind_ms"],
             dx_cols=[(1, "gs_ms")],
             preprocessing_fn=mock_preprocessing,
             segment_filter_fn=None,
-            architecture_import="node_fdm.architectures.opensky",
+            architecture_import="node_fdm.architectures.adsb",
         )
 
         mock_predictor = MagicMock()
@@ -575,7 +575,7 @@ typecodes:
         mock_predictor_cls.return_value = mock_predictor
 
         run_predict(
-            arch="opensky",
+            arch="adsb",
             config=config,
             typecode="A320",
             device="cpu",

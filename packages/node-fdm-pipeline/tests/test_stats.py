@@ -77,7 +77,7 @@ typecodes:
         mock_val_ds.__len__ = MagicMock(return_value=20)
         mock_get_data.return_value = (mock_train_ds, mock_val_ds)
 
-        run_dataset_stats(arch="opensky", config=config)
+        run_dataset_stats(arch="adsb", config=config)
 
         # get_train_val_data called once for A320, once for B738
         assert mock_get_data.call_count == 2
@@ -98,7 +98,7 @@ typecodes:
         mock_get_data.return_value = (mock_train_ds, mock_val_ds)
 
         # B738 has no entries in Delta Table → zero segments, no crash
-        run_dataset_stats(arch="opensky", config=config)
+        run_dataset_stats(arch="adsb", config=config)
 
     def test_stats_missing_delta(self, tmp_path: Path) -> None:
         """SystemExit when Delta Table doesn't exist."""
@@ -115,4 +115,4 @@ typecodes:
 """
         )
         with pytest.raises(SystemExit, match="pipeline"):
-            run_dataset_stats(arch="opensky", config=config)
+            run_dataset_stats(arch="adsb", config=config)

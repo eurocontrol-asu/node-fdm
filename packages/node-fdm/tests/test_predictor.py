@@ -34,7 +34,7 @@ class TestModelMeta:
     def test_meta_method_field(self, tmp_path: Path) -> None:
         """ModelMeta persists method='rk4' through JSON roundtrip."""
         meta_data = {
-            "architecture_name": "opensky_2025",
+            "architecture_name": "node_adsb_v1",
             "model_params": [2, 1, 48],
             "step": 1.0,
             "shift": 60,
@@ -55,7 +55,7 @@ class TestModelMeta:
     def test_meta_method_default(self, tmp_path: Path) -> None:
         """ModelMeta defaults to method='euler' when field is absent."""
         meta_data = {
-            "architecture_name": "opensky_2025",
+            "architecture_name": "node_adsb_v1",
             "model_params": [2, 1, 48],
             "step": 1.0,
             "shift": 60,
@@ -75,7 +75,7 @@ class TestModelMeta:
     def test_roundtrip(self) -> None:
         """Full roundtrip preserves all fields."""
         meta = ModelMeta(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_params=(2, 1, 48),
             step=1.0,
             shift=60,
@@ -89,7 +89,7 @@ class TestModelMeta:
         )
         json_str = meta.model_dump_json()
         restored = ModelMeta.model_validate_json(json_str)
-        assert restored.architecture_name == "opensky_2025"
+        assert restored.architecture_name == "node_adsb_v1"
         assert restored.model_params == (2, 1, 48)
         assert len(restored.stats_dict) == 2
         assert restored.stats_dict["altitude_m"].mean == pytest.approx(5000.0)
@@ -97,7 +97,7 @@ class TestModelMeta:
     def test_from_json_file(self, tmp_path: Path) -> None:
         """Load from a JSON file on disk."""
         meta_data = {
-            "architecture_name": "opensky_2025",
+            "architecture_name": "node_adsb_v1",
             "model_params": [2, 1, 48],
             "step": 1.0,
             "shift": 60,
@@ -112,7 +112,7 @@ class TestModelMeta:
         meta_path.write_text(json.dumps(meta_data))
 
         meta = ModelMeta.from_json(meta_path)
-        assert meta.architecture_name == "opensky_2025"
+        assert meta.architecture_name == "node_adsb_v1"
         assert "col1" in meta.stats_dict
 
 
@@ -133,7 +133,7 @@ class TestNodeFDMPredictor:
         from node_fdm.models.fdm import FlightDynamicsModel
         from node_fdm.predictor import NodeFDMPredictor
 
-        spec = get("opensky_2025")
+        spec = get("node_adsb_v1")
         n_x = len(spec.x_cols)
         n_u = len(spec.u_cols)
         n_e = len(spec.e0_cols)
@@ -174,7 +174,7 @@ class TestNodeFDMPredictor:
 
         # Save meta.json
         meta_data = {
-            "architecture_name": "opensky_2025",
+            "architecture_name": "node_adsb_v1",
             "model_params": [2, 1, 48],
             "step": 1.0,
             "shift": 60,
@@ -209,7 +209,7 @@ class TestNodeFDMPredictor:
         from node_fdm.models.fdm import FlightDynamicsModel
         from node_fdm.predictor import NodeFDMPredictor
 
-        spec = get("opensky_2025")
+        spec = get("node_adsb_v1")
         n_x = len(spec.x_cols)
         n_u = len(spec.u_cols)
         n_e = len(spec.e0_cols)
@@ -234,7 +234,7 @@ class TestNodeFDMPredictor:
                 save_dict = {"layer_state": layer.state_dict(), "best_val_loss": 0.1, "epoch": 1}
                 torch.save(save_dict, model_dir / f"{layer_spec.name}.pt")
         meta_data = {
-            "architecture_name": "opensky_2025",
+            "architecture_name": "node_adsb_v1",
             "model_params": [2, 1, 48],
             "step": 1.0,
             "shift": 60,
@@ -254,7 +254,7 @@ class TestNodeFDMPredictor:
         from node_fdm.dataset import FlightSample, compute_stats
         from node_fdm.models.fdm import FlightDynamicsModel
 
-        spec = get("opensky_2025")
+        spec = get("node_adsb_v1")
         n_x = len(spec.x_cols)
         n_u = len(spec.u_cols)
         n_e = len(spec.e0_cols)
@@ -279,7 +279,7 @@ class TestNodeFDMPredictor:
                 save_dict = {"layer_state": layer.state_dict(), "best_val_loss": 0.1, "epoch": 1}
                 torch.save(save_dict, model_dir / f"{layer_spec.name}.pt")
         meta_data = {
-            "architecture_name": "opensky_2025",
+            "architecture_name": "node_adsb_v1",
             "model_params": [2, 1, 48],
             "step": 1.0,
             "shift": 60,
@@ -344,7 +344,7 @@ class TestNodeFDMPredictor:
         n_e = len(predictor.spec.e0_cols)
 
         x_init = np.zeros(n_x, dtype=np.float32)
-        x_init[1] = float("nan")  # raw_alt_m
+        x_init[0] = float("nan")  # raw_alt_m
 
         with pytest.raises(ValueError, match="raw_alt_m"):
             predictor.predict_flight(

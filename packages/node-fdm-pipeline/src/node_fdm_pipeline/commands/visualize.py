@@ -48,7 +48,7 @@ def run_visualize(
     (dashed black) trajectories.  Saves to ``figure_dir`` as PDF.
 
     Args:
-        arch: Architecture identifier (``"opensky"`` or ``"qar"``).
+        arch: Architecture identifier (``"qar"`` or ``"adsb"``).
         config: Path to YAML pipeline config.
         typecode: Single typecode to visualize (default: first from config).
         flight: Specific flight ID to visualize (default: first test flight).

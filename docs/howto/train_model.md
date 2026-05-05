@@ -27,7 +27,7 @@ from node_fdm_data.split import split_by_icao
 split_df = split_by_icao("data/opensky/", ratios=(0.7, 0.15, 0.15), seed=42)
 
 # 2. Load architecture spec
-spec = get("opensky_2025")
+spec = get("node_adsb_v1")
 
 # 3. Build datasets
 train_ds, val_ds = get_train_val_data(
@@ -46,7 +46,7 @@ train_ds, val_ds = get_train_val_data(
 
 # 4. Configure training
 config = TrainingConfig(
-    architecture_name="opensky_2025",
+    architecture_name="node_adsb_v1",
     model_name="opensky_A320",
     model_params=(2, 1, 48),   # (backbone_depth, head_depth, neurons)
     seq_len=60,
@@ -113,16 +113,16 @@ The architecture is inferred from `meta.json` — no `--arch` needed.
 
 ```bash
 # Resume with default settings (200 more epochs)
-fdm resume --model models/opensky_2025_A320 --config config.yaml
+fdm resume --model models/node_adsb_v1_A320 --config config.yaml
 
 # Override learning rate and epochs
-fdm resume --model models/opensky_2025_A320 --config config.yaml --lr 1e-4 --epochs 500
+fdm resume --model models/node_adsb_v1_A320 --config config.yaml --lr 1e-4 --epochs 500
 
 # Overwrite in place (saves back to same directory)
-fdm resume --model models/opensky_2025_A320 --config config.yaml --overwrite
+fdm resume --model models/node_adsb_v1_A320 --config config.yaml --overwrite
 
 # Change sequence length on resume
-fdm resume --model models/opensky_2025_A320 --config config.yaml --seq-len 120
+fdm resume --model models/node_adsb_v1_A320 --config config.yaml --seq-len 120
 ```
 
 CLI overrides (`--lr`, `--epochs`, `--batch-size`, `--seq-len`, `--shift`)

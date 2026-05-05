@@ -139,7 +139,7 @@ typecodes:
         sys.modules["matplotlib"] = mock_mpl
         sys.modules["matplotlib.pyplot"] = mock_plt
         try:
-            run_visualize(arch="opensky", config=config, typecode="A320")
+            run_visualize(arch="adsb", config=config, typecode="A320")
         finally:
             # Restore original state
             for key in list(sys.modules):

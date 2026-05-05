@@ -17,7 +17,7 @@ class ArchitectureInfo:
     """Resolved architecture with schema columns and preprocessing functions.
 
     Attributes:
-        name: Architecture registry name (e.g. ``"opensky_2025"``).
+        name: Architecture registry name (e.g. ``"node_adsb_v1"``).
         x_cols: State column names.
         u_cols: Control column names.
         e0_cols: Environment column names.
@@ -41,8 +41,6 @@ class ArchitectureInfo:
 
 #: Reverse mapping from architecture registry name to CLI arch key.
 ARCH_BY_NAME: dict[str, str] = {
-    "opensky_2025": "opensky",
-    "opensky_v2": "opensky_v2",
     "qar": "qar",
     "node_adsb_v1": "adsb",
 }
@@ -52,7 +50,7 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
     """Resolve an architecture name to its schema and preprocessing components.
 
     Args:
-        arch: Architecture identifier — ``"opensky"``, ``"opensky_v2"``, ``"qar"``, or ``"adsb"``.
+        arch: Architecture identifier — ``"qar"`` or ``"adsb"``.
 
     Returns:
         Fully resolved ``ArchitectureInfo``.
@@ -61,34 +59,6 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
         ValueError: If *arch* is not a supported architecture.
     """
     match arch:
-        case "opensky":
-            from node_fdm_data.schemas.opensky import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
-
-            return ArchitectureInfo(
-                name="opensky_2025",
-                x_cols=X_COLS,
-                u_cols=U_COLS,
-                e0_cols=E0_COLS,
-                e1_cols=E1_COLS,
-                dx_cols=DX_COLS,
-                preprocessing_fn=None,
-                segment_filter_fn=None,
-                architecture_import="node_fdm.architectures.opensky",
-            )
-        case "opensky_v2":
-            from node_fdm_data.schemas.opensky_v2 import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
-
-            return ArchitectureInfo(
-                name="opensky_v2",
-                x_cols=X_COLS,
-                u_cols=U_COLS,
-                e0_cols=E0_COLS,
-                e1_cols=E1_COLS,
-                dx_cols=DX_COLS,
-                preprocessing_fn=None,
-                segment_filter_fn=None,
-                architecture_import="node_fdm.architectures.opensky_v2",
-            )
         case "qar":
             from node_fdm_data.schemas.qar import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
@@ -118,8 +88,5 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 architecture_import="node_fdm.architectures.adsb",
             )
         case _:
-            msg = (
-                f"Unknown architecture: {arch!r}. "
-                "Supported: 'opensky', 'opensky_v2', 'qar', 'adsb'."
-            )
+            msg = f"Unknown architecture: {arch!r}. Supported: 'qar', 'adsb'."
             raise ValueError(msg)

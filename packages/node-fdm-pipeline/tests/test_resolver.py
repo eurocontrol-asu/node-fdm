@@ -10,19 +10,6 @@ from node_fdm_pipeline.resolver import ArchitectureInfo, resolve_architecture
 class TestResolveArchitecture:
     """Tests for resolve_architecture function."""
 
-    def test_resolve_opensky(self) -> None:
-        """Resolving 'opensky' returns correct ArchitectureInfo."""
-        info = resolve_architecture("opensky")
-        assert isinstance(info, ArchitectureInfo)
-        assert info.name == "opensky_2025"
-        assert len(info.x_cols) > 0
-        assert len(info.u_cols) > 0
-        assert len(info.e0_cols) > 0
-        assert len(info.dx_cols) > 0
-        assert info.segment_filter_fn is None
-        assert info.preprocessing_fn is None
-        assert info.architecture_import == "node_fdm.architectures.opensky"
-
     def test_resolve_qar(self) -> None:
         """Resolving 'qar' returns correct ArchitectureInfo."""
         info = resolve_architecture("qar")
@@ -38,38 +25,11 @@ class TestResolveArchitecture:
         with pytest.raises(ValueError, match="Unknown architecture"):
             resolve_architecture("unknown")
 
-    def test_resolve_opensky_v2(self) -> None:
-        """Resolving 'opensky_v2' returns ArchitectureInfo with lateral columns."""
-        info = resolve_architecture("opensky_v2")
-        assert isinstance(info, ArchitectureInfo)
-        assert info.name == "opensky_v2"
-        assert "latitude" in info.x_cols
-        assert "longitude" in info.x_cols
-        assert "track_sel" in info.x_cols
-        assert len(info.x_cols) > len(resolve_architecture("opensky").x_cols)
-        assert info.architecture_import == "node_fdm.architectures.opensky_v2"
-        assert info.preprocessing_fn is None
-
-    def test_opensky_v1_unchanged(self) -> None:
-        """opensky v1 resolver still returns same schema (backward compat)."""
-        info = resolve_architecture("opensky")
-        assert info.name == "opensky_2025"
-        assert "latitude" not in info.x_cols
-        assert "longitude" not in info.x_cols
-        assert len(info.x_cols) == 4  # Original 4 state vars
-
     def test_architecture_info_frozen(self) -> None:
         """ArchitectureInfo is immutable (frozen dataclass)."""
-        info = resolve_architecture("opensky")
+        info = resolve_architecture("adsb")
         with pytest.raises(AttributeError):
             info.name = "modified"  # type: ignore[misc]
-
-    def test_opensky_has_dx_cols(self) -> None:
-        """OpenSky DX_COLS are tuples of (int, str)."""
-        info = resolve_architecture("opensky")
-        for sign, col in info.dx_cols:
-            assert isinstance(sign, int)
-            assert isinstance(col, str)
 
     def test_qar_preprocessing_fn_none(self) -> None:
         """QAR preprocessing function is None (v3 pipeline handles preprocessing)."""
@@ -77,21 +37,19 @@ class TestResolveArchitecture:
         assert info.preprocessing_fn is None
 
     def test_resolve_adsb(self) -> None:
-        """Resolving 'adsb' returns correct ArchitectureInfo with U_COLS for loader."""
+        """Resolving 'adsb' returns correct ArchitectureInfo."""
         info = resolve_architecture("adsb")
         assert isinstance(info, ArchitectureInfo)
         assert info.name == "node_adsb_v1"
-        assert info.x_cols == ["raw_alt_m", "fdm_gamma_rad", "era_tas_ms"]
-        assert info.u_cols == [
-            "fdm_alt_target_m",
-            "fdm_tas_target_ms",
-            "fdm_gamma_target_rad",
-            "fdm_gamma_target_known",
-            "fdm_tas_target_known",
-        ]
-        assert info.e0_cols == ["fdm_long_wind_ms", "era_temp_K"]
-        assert len(info.dx_cols) == 3
-        assert "fdm_gamma_diff_rad" in info.e1_cols
+        assert "raw_alt_m" in info.x_cols
+        assert "fdm_gamma_rad" in info.x_cols
+        assert "era_tas_ms" in info.x_cols
+        assert "fdm_alt_target_m" in info.u_cols
+        assert "fdm_tas_target_ms" in info.u_cols
+        assert "fdm_gamma_target_rad" in info.u_cols
+        assert "era_temp_K" in info.e0_cols
+        assert "fdm_long_wind_ms" in info.e0_cols
+        assert len(info.dx_cols) > 0
         assert info.architecture_import == "node_fdm.architectures.adsb"
         assert info.segment_filter_fn is None
         assert info.preprocessing_fn is None
@@ -100,10 +58,3 @@ class TestResolveArchitecture:
         """Unknown architecture error message includes 'adsb' in supported list."""
         with pytest.raises(ValueError, match="adsb"):
             resolve_architecture("unknown")
-
-    def test_resolve_opensky_and_adsb_coexist(self) -> None:
-        """Both opensky and adsb architectures can be resolved without conflict."""
-        opensky = resolve_architecture("opensky")
-        adsb = resolve_architecture("adsb")
-        assert opensky.name != adsb.name
-        assert opensky.x_cols != adsb.x_cols

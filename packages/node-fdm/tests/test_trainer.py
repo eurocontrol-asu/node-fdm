@@ -15,7 +15,7 @@ def _make_synthetic_dataset(
     n_samples: int = 20,
     seq_len: int = 10,
     n_x: int = 4,
-    n_u: int = 4,
+    n_u: int = 8,
     n_e: int = 4,
 ) -> FlightDataset:
     """Create a synthetic dataset with random tensors."""
@@ -35,7 +35,7 @@ def _make_smooth_dataset(
     n_samples: int = 16,
     seq_len: int = 5,
     n_x: int = 4,
-    n_u: int = 4,
+    n_u: int = 8,
     n_e: int = 4,
 ) -> FlightDataset:
     """Create a dataset with smooth linear trajectories for stable ODE integration."""
@@ -63,7 +63,7 @@ class TestTrainingConfig:
 
     def test_defaults(self) -> None:
         """Default values are applied correctly."""
-        cfg = TrainingConfig(architecture_name="opensky_2025", model_name="test")
+        cfg = TrainingConfig(architecture_name="node_adsb_v1", model_name="test")
         assert cfg.lr == pytest.approx(1e-3)
         assert cfg.epochs == 800
         assert cfg.batch_size == 512
@@ -93,7 +93,7 @@ class TestTrainingConfig:
     def test_roundtrip(self) -> None:
         """model_dump → model_validate round-trips correctly."""
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test",
             lr=0.01,
             epochs=10,
@@ -127,7 +127,7 @@ class TestODETrainer:
         model_dir = Path(str(tmp_path))
 
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_model",
             epochs=1,
             batch_size=4,
@@ -159,7 +159,7 @@ class TestODETrainer:
         meta_path = model_dir / "test_model" / "meta.json"
         assert meta_path.exists()
         meta = json.loads(meta_path.read_text())
-        assert meta["architecture_name"] == "opensky_2025"
+        assert meta["architecture_name"] == "node_adsb_v1"
 
         # Loss CSV saved
         csv_path = model_dir / "test_model" / "training_losses.csv"
@@ -174,7 +174,7 @@ class TestODETrainer:
         model_dir = Path(str(tmp_path))
 
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_rollout",
             epochs=5,
             batch_size=4,
@@ -210,7 +210,7 @@ class TestODETrainer:
         model_dir = Path(str(tmp_path))
 
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_nan",
             epochs=1,
             batch_size=4,
@@ -223,7 +223,7 @@ class TestODETrainer:
         samples = [
             FlightSample(
                 x=torch.full((5, 4), float("nan")),
-                u=torch.randn(5, 4),
+                u=torch.randn(5, 8),
                 e=torch.randn(5, 4),
                 dx=torch.randn(5, 4),
             )
@@ -254,7 +254,7 @@ class TestODETrainer:
         model_dir = Path(str(tmp_path))
 
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_single",
             epochs=1,
             batch_size=1,
@@ -287,7 +287,7 @@ class TestODETrainer:
         model_dir = Path(str(tmp_path))
 
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_short",
             epochs=1,
             batch_size=4,

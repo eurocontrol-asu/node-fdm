@@ -26,7 +26,7 @@ def run_dataset_stats(
     """Compute dataset statistics: flight counts and hours per split.
 
     Args:
-        arch: Architecture identifier (``"opensky"`` or ``"qar"``).
+        arch: Architecture identifier (``"qar"`` or ``"adsb"``).
         config: Path to YAML pipeline config.
     """
     import polars as pl

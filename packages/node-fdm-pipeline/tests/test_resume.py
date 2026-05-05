@@ -21,7 +21,7 @@ from node_fdm.trainer import ODETrainer, TrainingConfig
 def _make_meta_json(
     model_dir: Path,
     *,
-    architecture_name: str = "opensky_2025",
+    architecture_name: str = "node_adsb_v1",
     method: str = "euler",
     seq_len: int = 60,
     lr: float = 1e-3,
@@ -97,7 +97,7 @@ def _make_smooth_dataset(
     n_samples: int = 16,
     seq_len: int = 5,
     n_x: int = 4,
-    n_u: int = 4,
+    n_u: int = 8,
     n_e: int = 4,
 ) -> FlightDataset:
     """Create a dataset with smooth linear trajectories for stable ODE integration."""
@@ -132,15 +132,15 @@ class TestResumeUnit:
         """Create model dir with meta.json → ModelMeta loaded with correct fields."""
         from node_fdm.predictor import ModelMeta
 
-        model_dir = tmp_path / "opensky_2025_A320"
+        model_dir = tmp_path / "node_adsb_v1_A320"
         _make_meta_json(
             model_dir,
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             method="rk4",
         )
 
         meta = ModelMeta.from_json(model_dir / "meta.json")
-        assert meta.architecture_name == "opensky_2025"
+        assert meta.architecture_name == "node_adsb_v1"
         assert meta.method == "rk4"
 
     def test_resume_infers_arch_from_meta(self, tmp_path: Path) -> None:
@@ -217,7 +217,7 @@ class TestResumeFunctional:
         model_dir.mkdir()
 
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_resume",
             epochs=2,
             batch_size=4,
@@ -267,8 +267,8 @@ class TestResumeFunctional:
         """Resume with --lr 1e-4 → TrainingConfig uses overridden LR, not original."""
         from node_fdm_pipeline.commands.resume import run_resume
 
-        model_dir = tmp_path / "models" / "opensky_2025_A320"
-        _make_meta_json(model_dir, architecture_name="opensky_2025", lr=1e-3)
+        model_dir = tmp_path / "models" / "node_adsb_v1_A320"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1", lr=1e-3)
         config = _make_config(tmp_path)
 
         with (
@@ -278,8 +278,8 @@ class TestResumeFunctional:
             patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
-                name="opensky_2025",
-                architecture_import="node_fdm.architectures.opensky",
+                name="node_adsb_v1",
+                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -311,8 +311,8 @@ class TestResumeEdgeCases:
         """Resume from checkpoint without optimizer.pt → fresh optimizer, log warning."""
         from node_fdm_pipeline.commands.resume import run_resume
 
-        model_dir = tmp_path / "models" / "opensky_2025_A320"
-        _make_meta_json(model_dir, architecture_name="opensky_2025")
+        model_dir = tmp_path / "models" / "node_adsb_v1_A320"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1")
         config = _make_config(tmp_path)
 
         # No optimizer.pt in model_dir
@@ -324,8 +324,8 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
-                name="opensky_2025",
-                architecture_import="node_fdm.architectures.opensky",
+                name="node_adsb_v1",
+                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -348,8 +348,8 @@ class TestResumeEdgeCases:
         """--overwrite flag → saves in same model dir, overwrites checkpoints."""
         from node_fdm_pipeline.commands.resume import run_resume
 
-        model_dir = tmp_path / "models" / "opensky_2025_A320"
-        _make_meta_json(model_dir, architecture_name="opensky_2025")
+        model_dir = tmp_path / "models" / "node_adsb_v1_A320"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1")
         config = _make_config(tmp_path)
 
         with (
@@ -359,8 +359,8 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
-                name="opensky_2025",
-                architecture_import="node_fdm.architectures.opensky",
+                name="node_adsb_v1",
+                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -385,8 +385,8 @@ class TestResumeEdgeCases:
         """--seq-len 120 (was 60) → new datasets built with new seq-len."""
         from node_fdm_pipeline.commands.resume import run_resume
 
-        model_dir = tmp_path / "models" / "opensky_2025_A320"
-        _make_meta_json(model_dir, architecture_name="opensky_2025", seq_len=60)
+        model_dir = tmp_path / "models" / "node_adsb_v1_A320"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1", seq_len=60)
         config = _make_config(tmp_path)
 
         with (
@@ -396,8 +396,8 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
-                name="opensky_2025",
-                architecture_import="node_fdm.architectures.opensky",
+                name="node_adsb_v1",
+                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -429,8 +429,8 @@ class TestResumeEdgeCases:
         """
         from node_fdm_pipeline.commands.resume import run_resume
 
-        model_dir = tmp_path / "models" / "opensky_2025_A320"
-        _make_meta_json(model_dir, architecture_name="opensky_2025")
+        model_dir = tmp_path / "models" / "node_adsb_v1_A320"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1")
         config = _make_config(tmp_path)
 
         with (
@@ -440,8 +440,8 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
-                name="opensky_2025",
-                architecture_import="node_fdm.architectures.opensky",
+                name="node_adsb_v1",
+                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -477,8 +477,8 @@ class TestResumeEdgeCases:
         """Valid meta but missing delta table → SystemExit."""
         from node_fdm_pipeline.commands.resume import run_resume
 
-        model_dir = tmp_path / "models" / "opensky_2025_A320"
-        _make_meta_json(model_dir, architecture_name="opensky_2025")
+        model_dir = tmp_path / "models" / "node_adsb_v1_A320"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1")
 
         # Config pointing to non-existent delta table
         data_dir = tmp_path / "data_no_delta"
@@ -505,8 +505,8 @@ typecodes:
         from node_fdm_pipeline.commands.resume import run_resume
 
         # Model dir implies typecode "B777" but delta only has A320
-        model_dir = tmp_path / "models" / "opensky_2025_B777"
-        _make_meta_json(model_dir, architecture_name="opensky_2025")
+        model_dir = tmp_path / "models" / "node_adsb_v1_B777"
+        _make_meta_json(model_dir, architecture_name="node_adsb_v1")
         config = _make_config(tmp_path)  # creates delta with A320 only
 
         with (

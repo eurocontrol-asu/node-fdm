@@ -18,7 +18,7 @@ class TestFDMOpenSky:
 
     def test_forward_pass(self) -> None:
         """Forward pass returns tensor of correct shape (AC11)."""
-        spec = get("opensky_2025")
+        spec = get("node_adsb_v1")
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
         all_cols += [col for _, col in spec.dx_cols]
         stats = _make_stats(all_cols)
@@ -35,7 +35,7 @@ class TestFDMOpenSky:
 
     def test_no_nan_output(self) -> None:
         """Forward pass produces no NaN values."""
-        spec = get("opensky_2025")
+        spec = get("node_adsb_v1")
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
         all_cols += [col for _, col in spec.dx_cols]
         stats = _make_stats(all_cols)

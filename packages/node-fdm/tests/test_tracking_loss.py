@@ -25,7 +25,7 @@ def _make_smooth_dataset(
     n_samples: int = 16,
     seq_len: int = 5,
     n_x: int = 4,
-    n_u: int = 4,
+    n_u: int = 8,
     n_e: int = 4,
     *,
     gamma_offset: float = 0.0,
@@ -84,7 +84,7 @@ def _make_trainer(
     """Build an ODETrainer with tracking config and return (trainer, train_ds, val_ds)."""
 
     cfg = TrainingConfig(
-        architecture_name="opensky_2025",
+        architecture_name="node_adsb_v1",
         model_name="test_tracking",
         epochs=epochs,
         batch_size=4,
@@ -243,7 +243,7 @@ class TestTrainingWithTracking:
     def test_training_with_tracking(self, tmp_path: Path) -> None:
         """2 epochs with lambda_tracking=1.0 → training completes, loss decreases."""
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_tracking_train",
             epochs=2,
             batch_size=4,

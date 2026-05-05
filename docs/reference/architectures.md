@@ -22,7 +22,7 @@ The registry module provides `register()` and `get()` for architecture discovery
 
 The reference implementation for public ADS-B data. Defines a physics-informed architecture for noisy surveillance data.
 
-::: node_fdm.architectures.opensky_2025
+::: node_fdm.architectures.adsb_2025
     options:
       show_root_heading: true
       show_root_full_path: false

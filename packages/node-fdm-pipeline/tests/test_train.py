@@ -84,7 +84,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 epochs=10,
@@ -119,7 +119,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 device="cpu",
@@ -147,7 +147,7 @@ typecodes:
             patch("node_fdm_pipeline.commands.train.importlib.import_module"),
             pytest.raises(SystemExit),
         ):
-            run_training(arch="opensky", config=config, device="cpu")
+            run_training(arch="adsb", config=config, device="cpu")
 
     @patch("node_fdm.trainer.ODETrainer")
     @patch("node_fdm.loader.get_train_val_data")
@@ -163,7 +163,7 @@ typecodes:
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             # Train for B738 which has no entries in Delta Table
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="B738",
                 device="cpu",
@@ -190,7 +190,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 device="cpu",
@@ -218,7 +218,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 device="cpu",
@@ -244,7 +244,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 epochs=1,
@@ -271,7 +271,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 seq_len=200,
@@ -297,7 +297,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 seq_len=200,
@@ -321,7 +321,7 @@ typecodes:
         When e1_cols are forwarded, the trainer computes stats for them and
         they appear in the saved meta.json stats_dict.
         """
-        from node_fdm_data.schemas.opensky import E1_COLS
+        from node_fdm_data.schemas.adsb import E1_COLS
 
         config = self._make_config(tmp_path)
 
@@ -330,7 +330,7 @@ typecodes:
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
             run_training(
-                arch="opensky",
+                arch="adsb",
                 config=config,
                 typecode="A320",
                 epochs=1,

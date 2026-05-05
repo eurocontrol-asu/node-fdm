@@ -170,27 +170,35 @@ class TestGetTrainValData:
                     {
                         "meta_flight_id": f"flight_{i}",
                         "meta_split": split,
-                        "fdm_distance_cum_m": float(j * 500),
+                        # X
                         "raw_alt_m": float(np.linspace(300, 10000, n)[j]),
                         "fdm_gamma_rad": float(rng.uniform(-0.1, 0.1)),
                         "era_tas_ms": float(np.linspace(100, 250, n)[j]),
-                        "fdm_mcp_alt_sel_m": float(np.linspace(300, 10000, n)[j]),
-                        "fdm_mach_sel": 0.0,
-                        "fdm_cas_sel_ms": 0.0,
-                        "fdm_vz_sel_ms": 0.0,
+                        "fdm_heading_rad": float(rng.uniform(0.0, 6.28)),
+                        # U
+                        "fdm_alt_target_m": float(np.linspace(300, 10000, n)[j]),
+                        "fdm_tas_target_ms": float(np.linspace(100, 250, n)[j]),
+                        "fdm_gamma_target_rad": float(rng.uniform(-0.1, 0.1)),
+                        "fdm_gamma_target_known": True,
+                        "fdm_tas_target_known": True,
+                        "fdm_heading_target_rad": float(rng.uniform(-3.14, 3.14)),
+                        "fdm_heading_target_known": True,
+                        "fdm_heading_known": True,
+                        # E0
                         "fdm_long_wind_ms": float(rng.uniform(-5, 5)),
-                        "fdm_adep_dist_m": float(rng.uniform(0, 500000)),
-                        "fdm_ades_dist_m": float(rng.uniform(0, 500000)),
                         "era_temp_K": 220.0,
-                        "raw_gs_ms": float(np.linspace(100, 250, n)[j]),
+                        "era_u_wind_ms": float(rng.uniform(-10, 10)),
+                        "era_v_wind_ms": float(rng.uniform(-10, 10)),
+                        # DX
                         "fdm_d_alt_ms": float(rng.uniform(-1, 1)),
                         "fdm_d_gamma_rads": float(rng.uniform(-0.01, 0.01)),
                         "fdm_d_tas_ms2": float(rng.uniform(-1, 1)),
+                        "fdm_d_heading_rads": float(rng.uniform(-0.05, 0.05)),
                     }
                 )
         data_df = pl.DataFrame(rows)
 
-        from node_fdm_data.schemas.opensky import DX_COLS, E0_COLS, U_COLS, X_COLS
+        from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, U_COLS, X_COLS
 
         dx_col_names = [col for _, col in DX_COLS]
         train_ds, val_ds = get_train_val_data(

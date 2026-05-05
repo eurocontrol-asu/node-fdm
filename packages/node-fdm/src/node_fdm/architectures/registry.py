@@ -48,7 +48,7 @@ class ArchitectureSpec(BaseModel, frozen=True):
     """Full architecture specification for a flight dynamics model.
 
     Attributes:
-        name: Unique architecture name (e.g. ``"opensky_2025"``).
+        name: Unique architecture name (e.g. ``"node_adsb_v1"``).
         x_cols: State variable column names.
         u_cols: Control input column names.
         e0_cols: Environment-at-t0 column names.

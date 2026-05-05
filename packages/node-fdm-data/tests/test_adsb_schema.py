@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
-from node_fdm_data.schemas import adsb, opensky
+from node_fdm_data.schemas import adsb
 
 
 class TestAdsbSchema:
-    """Tests for the adsb schema simplifications vs opensky_2025."""
+    """Tests for the adsb schema column lists."""
 
     def test_x_cols_no_distance(self) -> None:
         """X_COLS removes fdm_distance_cum_m, keeps 4 state variables (Phase 2B)."""
@@ -118,12 +118,3 @@ class TestUColsV3:
     def test_u_cols_length(self) -> None:
         """U_COLS has 8 entries: 4 targets + 3 target_known flags + heading_known."""
         assert len(adsb.U_COLS) == 8
-
-
-class TestBothSchemasCoexist:
-    """Both schemas can be loaded without conflict."""
-
-    def test_both_loaded(self) -> None:
-        """Importing both schemas does not raise."""
-        assert len(opensky.X_COLS) == 4
-        assert len(adsb.X_COLS) == 4

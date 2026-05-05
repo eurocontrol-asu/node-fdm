@@ -190,7 +190,7 @@ def run_predict(
     units with ``meta_split`` and ``fdm_flag_valid`` columns.
 
     Args:
-        arch: Architecture identifier (``"opensky"`` or ``"qar"``).
+        arch: Architecture identifier (``"qar"`` or ``"adsb"``).
         config: Path to YAML pipeline config.
         typecode: Single typecode to predict (default: all from config).
         device: PyTorch device string.

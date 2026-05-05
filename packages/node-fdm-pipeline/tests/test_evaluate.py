@@ -310,7 +310,7 @@ typecodes:
         predict_dir.mkdir(parents=True)
 
         config = self._make_config(tmp_path, data_dir)
-        run_evaluate(arch="opensky", config=config)
+        run_evaluate(arch="adsb", config=config)
 
         output = data_dir / "performance.parquet"
         assert output.exists()
@@ -336,7 +336,7 @@ typecodes:
         config = self._make_config(tmp_path, data_dir)
 
         # Should not crash, just log warning
-        run_evaluate(arch="opensky", config=config)
+        run_evaluate(arch="adsb", config=config)
 
         # No output file created
         assert not (data_dir / "performance.parquet").exists()

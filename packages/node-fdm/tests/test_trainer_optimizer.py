@@ -17,7 +17,7 @@ def _make_smooth_dataset(
     n_samples: int = 16,
     seq_len: int = 5,
     n_x: int = 4,
-    n_u: int = 4,
+    n_u: int = 8,
     n_e: int = 4,
 ) -> FlightDataset:
     """Create a dataset with smooth linear trajectories for stable ODE integration."""
@@ -43,7 +43,7 @@ def _make_smooth_dataset(
 def _make_trainer(tmp_path: Path) -> ODETrainer:
     """Create a minimal ODETrainer for testing."""
     cfg = TrainingConfig(
-        architecture_name="opensky_2025",
+        architecture_name="node_adsb_v1",
         model_name="test_optim",
         epochs=1,
         batch_size=4,
@@ -134,7 +134,7 @@ class TestOptimizerFunctional:
     def test_existing_train_unchanged(self, tmp_path: Path) -> None:
         """Run ODETrainer.train() for 2 epochs → meta.json + layer checkpoints + optimizer.pt."""
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_func",
             epochs=2,
             batch_size=4,
@@ -190,7 +190,7 @@ class TestOptimizerEdgeCases:
     def test_model_meta_backward_compat(self, tmp_path: Path) -> None:
         """Load old meta.json without optimizer_saved → defaults to False."""
         meta_data = {
-            "architecture_name": "opensky_2025",
+            "architecture_name": "node_adsb_v1",
             "model_params": [2, 1, 48],
             "step": 1.0,
             "shift": 60,

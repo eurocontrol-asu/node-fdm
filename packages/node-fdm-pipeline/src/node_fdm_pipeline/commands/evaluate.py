@@ -224,7 +224,7 @@ def run_evaluate(
     per-flight predictions and BADA outputs for comparison.
 
     Args:
-        arch: Architecture identifier (``"opensky"`` or ``"qar"``).
+        arch: Architecture identifier (``"qar"`` or ``"adsb"``).
         config: Path to YAML pipeline config.
     """
     from node_fdm_data.delta import read_delta_table

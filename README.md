@@ -214,7 +214,7 @@ from node_fdm_data.split import split_by_icao
 split_df = split_by_icao(df, ratios=(0.7, 0.15, 0.15), seed=42)
 
 # 2. Load architecture spec
-spec = get("opensky_2025")
+spec = get("node_adsb_v1")
 
 # 3. Build datasets
 train_ds, val_ds = get_train_val_data(
@@ -233,7 +233,7 @@ train_ds, val_ds = get_train_val_data(
 
 # 4. Train
 config = TrainingConfig(
-    architecture_name="opensky_2025",
+    architecture_name="node_adsb_v1",
     model_name="opensky_v1",
     epochs=200,
     lr=1e-3,

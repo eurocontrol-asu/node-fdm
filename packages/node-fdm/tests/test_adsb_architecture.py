@@ -43,33 +43,38 @@ class TestNodeAdsbV1Architecture:
         assert "fdm_d_heading_rads" in dx_names
         assert len(spec.dx_cols) == 4
 
-    def test_three_layers(self) -> None:
-        """Architecture has trajectory + data_ode + physics layers."""
+    def test_four_layers(self) -> None:
+        """Architecture has trajectory + data_ode_long + data_ode_lat + physics."""
         spec = get("node_adsb_v1")
-        assert len(spec.layers) == 3
+        assert len(spec.layers) == 4
         assert spec.layers[0].name == "trajectory"
-        assert spec.layers[1].name == "data_ode"
-        assert spec.layers[2].name == "physics"
+        assert spec.layers[1].name == "data_ode_long"
+        assert spec.layers[2].name == "data_ode_lat"
+        assert spec.layers[3].name == "physics"
 
-    def test_data_ode_outputs_aero_quantities(self) -> None:
-        """data_ode (NN) outputs (a_spec, n_z_residual, phi_bank); gravity + turn applied below."""
+    def test_data_ode_long_outputs_aero_quantities(self) -> None:
+        """data_ode_long outputs (a_spec, n_z_residual)."""
         spec = get("node_adsb_v1")
         assert spec.layers[1].output_cols == [
             "fdm_a_spec_ms2",
             "fdm_n_z_residual",
-            "fdm_phi_bank_rad",
         ]
+
+    def test_data_ode_lat_outputs_phi_bank(self) -> None:
+        """data_ode_lat outputs phi_bank for the lateral channel."""
+        spec = get("node_adsb_v1")
+        assert spec.layers[2].output_cols == ["fdm_phi_bank_rad"]
 
     def test_physics_outputs_dx(self) -> None:
         """PhysicsLayer outputs the ODE derivatives consumed by dx_cols."""
         spec = get("node_adsb_v1")
-        assert spec.layers[2].output_cols == [
+        assert spec.layers[3].output_cols == [
             "fdm_d_tas_ms2",
             "fdm_d_gamma_rads",
             "fdm_n_z",
             "fdm_d_heading_rads",
         ]
-        assert spec.layers[2].trainable is False
+        assert spec.layers[3].trainable is False
 
     def test_col_map_alt_sel(self) -> None:
         """TrajectoryLayer col_map uses fdm_alt_target_m for alt_sel."""
@@ -78,55 +83,27 @@ class TestNodeAdsbV1Architecture:
         assert isinstance(raw, dict)
         assert raw["alt_sel"] == "fdm_alt_target_m"
 
-    def test_opensky_2025_unchanged(self) -> None:
-        """opensky_2025 is still registered and untouched."""
-        import node_fdm.architectures.opensky  # noqa: F401
-
-        spec = get("opensky_2025")
-        assert spec.name == "opensky_2025"
-        assert len(spec.x_cols) == 4
-        assert spec.u_cols[0] == "fdm_mcp_alt_sel_m"
-
 
 class TestAdsbStructuredInputCols:
-    """Tests for data_ode layer input column composition."""
+    """Tests for data_ode_long layer input column composition."""
 
-    def test_adsb_structured_input_cols(self) -> None:
-        """data_ode input_cols == X + U_ODE + E0 + E1 + 4 known-flags."""
-        from node_fdm_data.schemas.adsb import E0_COLS, E1_COLS, U_ODE_COLS, X_COLS
-
-        spec = get("node_adsb_v1")
-        expected = (
-            X_COLS
-            + U_ODE_COLS
-            + E0_COLS
-            + E1_COLS
-            + [
-                "fdm_gamma_target_known",
-                "fdm_tas_target_known",
-                "fdm_heading_target_known",
-                "fdm_heading_known",
-            ]
-        )
-        assert spec.layers[1].input_cols == expected
-
-    def test_data_ode_input_has_g_sin_gamma(self) -> None:
-        """data_ode input_cols contains fdm_g_sin_gamma_ms2 (via E1_COLS)."""
+    def test_data_ode_long_input_has_g_sin_gamma(self) -> None:
+        """data_ode_long input_cols contains fdm_g_sin_gamma_ms2."""
         spec = get("node_adsb_v1")
         assert "fdm_g_sin_gamma_ms2" in spec.layers[1].input_cols
 
-    def test_data_ode_input_has_cos_gamma(self) -> None:
-        """data_ode input_cols contains fdm_cos_gamma (via E1_COLS)."""
+    def test_data_ode_long_input_has_cos_gamma(self) -> None:
+        """data_ode_long input_cols contains fdm_cos_gamma."""
         spec = get("node_adsb_v1")
         assert "fdm_cos_gamma" in spec.layers[1].input_cols
 
-    def test_data_ode_input_has_q_pa(self) -> None:
-        """data_ode input_cols contains fdm_q_pa (dynamic pressure, via E1_COLS)."""
+    def test_data_ode_long_input_has_q_pa(self) -> None:
+        """data_ode_long input_cols contains fdm_q_pa (dynamic pressure)."""
         spec = get("node_adsb_v1")
         assert "fdm_q_pa" in spec.layers[1].input_cols
 
-    def test_data_ode_input_has_g_over_v(self) -> None:
-        """data_ode input_cols contains fdm_g_over_v (g/V ratio, via E1_COLS)."""
+    def test_data_ode_long_input_has_g_over_v(self) -> None:
+        """data_ode_long input_cols contains fdm_g_over_v (g/V ratio)."""
         spec = get("node_adsb_v1")
         assert "fdm_g_over_v" in spec.layers[1].input_cols
 
@@ -150,16 +127,3 @@ class TestAdsbColMapV2:
         """Registered spec u_cols does NOT contain fdm_gamma_sel_rad."""
         spec = get("node_adsb_v1")
         assert "fdm_gamma_sel_rad" not in spec.u_cols
-
-
-class TestBothArchitecturesCoexist:
-    """Both architectures loaded without conflict."""
-
-    def test_both_registered(self) -> None:
-        """Both opensky_2025 and node_adsb_v1 are in the registry."""
-        import node_fdm.architectures.adsb
-        import node_fdm.architectures.opensky  # noqa: F401
-
-        opensky_spec = get("opensky_2025")
-        adsb_spec = get("node_adsb_v1")
-        assert opensky_spec.name != adsb_spec.name

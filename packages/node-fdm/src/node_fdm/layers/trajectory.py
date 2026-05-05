@@ -158,7 +158,7 @@ class TrajectoryLayer(nn.Module):
         #
         # Falls back to the longitudinal-only formula
         # ``gs = tas - long_wind`` when no heading/wind vector is provided
-        # (e.g. opensky_2025 architecture, which does not wire the lateral
+        # (e.g. node_adsb_v1 architecture, which does not wire the lateral
         # canonical keys).  In that case the lateral E1 features are not
         # published either.
         # ------------------------------------------------------------------

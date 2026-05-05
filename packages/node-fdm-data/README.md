@@ -88,7 +88,7 @@ gamma = vz_to_gamma(10.0, 250.0)          # 10 m/s climb at 250 m/s TAS → ~0.0
 ### Column schemas
 
 ```python
-from node_fdm_data.schemas.opensky import X_COLS, U_COLS, E0_COLS, CONVERSIONS
+from node_fdm_data.schemas.adsb import X_COLS, U_COLS, E0_COLS, CONVERSIONS
 
 print(X_COLS)   # ['fdm_distance_cum_m', 'raw_alt_ft', 'fdm_gamma_rad', 'era_tas_kt']
 print(U_COLS)   # ['fdm_alt_sel_ft', 'fdm_mach_sel', 'fdm_cas_sel_kt', 'fdm_vz_sel_ftmin']

@@ -24,7 +24,7 @@ def _make_smooth_dataset(
     n_samples: int = 16,
     seq_len: int = 5,
     n_x: int = 4,
-    n_u: int = 4,
+    n_u: int = 8,
     n_e: int = 4,
 ) -> FlightDataset:
     """Create a dataset with smooth linear trajectories for stable ODE integration."""
@@ -50,7 +50,7 @@ def _make_smooth_dataset(
 def _make_trainer(tmp_path: Path, *, epochs: int = 1) -> ODETrainer:
     """Create a minimal ODETrainer for testing."""
     cfg = TrainingConfig(
-        architecture_name="opensky_2025",
+        architecture_name="node_adsb_v1",
         model_name="test_weights",
         epochs=epochs,
         batch_size=4,
@@ -148,7 +148,7 @@ class TestModelWeightsFunctional:
     def test_train_unchanged(self, tmp_path: Path) -> None:
         """Run train 2 epochs → same artifacts as before (no regression)."""
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_unchanged",
             epochs=2,
             batch_size=4,

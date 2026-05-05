@@ -20,7 +20,7 @@ fdm version
 fdm preprocess --config config.yaml
 fdm identify --config config.yaml
 fdm train --arch opensky --config config.yaml --typecode A320 --method rk4 --seq-len 200
-fdm resume --model models/opensky_2025_A320 --config config.yaml --epochs 200 --lr 1e-4
+fdm resume --model models/node_adsb_v1_A320 --config config.yaml --epochs 200 --lr 1e-4
 fdm predict --arch opensky --config config.yaml --device cuda:0
 fdm evaluate --arch opensky --config config.yaml
 ```

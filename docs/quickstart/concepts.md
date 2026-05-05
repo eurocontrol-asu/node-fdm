@@ -50,7 +50,7 @@ graph LR
 Column groups are defined as plain Python lists in `node_fdm_data.schemas`:
 
 ```python
-from node_fdm_data.schemas.opensky import X_COLS, U_COLS, E0_COLS, DX_COLS
+from node_fdm_data.schemas.adsb import X_COLS, U_COLS, E0_COLS, DX_COLS
 
 print(X_COLS)   # ['distance_m', 'altitude_ft', 'gamma_rad', 'tas_kt']
 print(U_COLS)   # ['alt_sel_ft', 'mach_sel', 'cas_sel_kt', 'vz_sel_ftmin']
@@ -71,7 +71,7 @@ An architecture in **node-fdm** is a **typed specification** defined with Pydant
 ```python
 from node_fdm.architectures.registry import get
 
-spec = get("opensky_2025")
+spec = get("node_adsb_v1")
 for layer in spec.layers:
     print(f"{layer.name}: {layer.layer_class} (trainable={layer.trainable})")
 ```
@@ -127,7 +127,7 @@ Architectures are registered via a **typed Pydantic registry** instead of the le
 
 ```mermaid
 graph LR
-    ID["String Name<br>'opensky_2025'"] --> Reg{registry.py}
+    ID["String Name<br>'node_adsb_v1'"] --> Reg{registry.py}
 
     Reg -->|Resolves to| Spec["ArchitectureSpec<br>(Pydantic, frozen)"]
 
@@ -142,7 +142,7 @@ graph LR
 from node_fdm.architectures.registry import register, get, ArchitectureSpec
 
 # Architectures auto-register on import
-spec = get("opensky_2025")
+spec = get("node_adsb_v1")
 
 # Or register a custom one
 register(ArchitectureSpec(name="my_arch", ...))

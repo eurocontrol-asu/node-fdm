@@ -221,12 +221,12 @@ class TestTrainerNoBoundsCompat:
     """Backward compatibility: no-bounds spec still works identically."""
 
     def test_trainer_no_bounds_compat(self, tmp_path: Path) -> None:
-        """opensky_2025 spec (no bounds) → training runs identically to before."""
+        """node_adsb_v1 spec (no bounds) → training runs identically to before."""
         from node_fdm.trainer import ODETrainer
 
-        # opensky_2025 has 4 x_cols, 4+ u_cols, 4+ e_cols
+        # node_adsb_v1 has 4 x_cols, 4+ u_cols, 4+ e_cols
         cfg = TrainingConfig(
-            architecture_name="opensky_2025",
+            architecture_name="node_adsb_v1",
             model_name="test_compat",
             epochs=1,
             batch_size=4,
@@ -239,7 +239,7 @@ class TestTrainerNoBoundsCompat:
 
         torch.manual_seed(0)
         n_x = 4
-        n_u = 4
+        n_u = 8
         n_e = 4
         samples = [
             FlightSample(
@@ -269,7 +269,7 @@ class TestGradClipNormDefault:
 
     def test_grad_clip_norm_default(self) -> None:
         """Default grad_clip_norm should be 10.0."""
-        cfg = TrainingConfig(architecture_name="opensky_2025", model_name="test")
+        cfg = TrainingConfig(architecture_name="node_adsb_v1", model_name="test")
         assert cfg.grad_clip_norm == pytest.approx(10.0)
 
 
