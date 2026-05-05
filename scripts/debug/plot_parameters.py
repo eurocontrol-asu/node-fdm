@@ -18,7 +18,7 @@ GROUPS: list[tuple[str, str, list[tuple[str, str, dict[str, object]]]]] = [
         "ft",
         [
             ("raw_alt_ft", "raw alt", {"alpha": 0.4, "lw": 0.5}),
-            ("bds_mcp_sel_alt_ft", "MCP sel alt", {"ls": "--", "lw": 1.2}),
+            ("bds_mcp_alt_sel_ft", "MCP sel alt", {"ls": "--", "lw": 1.2}),
             ("fdm_alt_sel_ft", "fdm alt sel", {"ls": "-", "lw": 1.5, "color": "tab:red"}),
             ("fdm_mcp_alt_sel_ft", "fdm MCP alt sel", {"ls": ":", "lw": 1.2}),
         ],

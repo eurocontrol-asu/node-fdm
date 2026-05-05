@@ -209,7 +209,7 @@ class TestBuildSelectedParams:
                 "bds_ias_kt_clean": cas + rng.normal(0, 0.1, n),
                 "raw_vz_ftmin": vz + rng.normal(0, 1, n),
                 "fdm_gamma_rad": gamma,
-                "bds_mcp_sel_alt_ft": np.where(alt > 15000, 35000.0, np.nan),
+                "bds_mcp_alt_sel_ft": np.where(alt > 15000, 35000.0, np.nan),
             }
         )
 
@@ -302,7 +302,7 @@ class TestBuildSelectedParams:
                 "raw_gs_kt": np.full(n, 430.0),
                 "raw_vz_ftmin": np.full(n, 0.0),
                 "bds_ias_kt_clean": np.full(n, 280.0),
-                "bds_mcp_sel_alt_ft": np.full(n, 36000.0),
+                "bds_mcp_alt_sel_ft": np.full(n, 36000.0),
             }
         )
 
@@ -371,12 +371,12 @@ class TestBuildSelectedParamsV3:
                     ]
                 ),
                 "fdm_gamma_rad": np.full(n, 0.05) + rng.normal(0, 0.0001, n),
-                "bds_mcp_sel_alt_ft": np.where(
+                "bds_mcp_alt_sel_ft": np.where(
                     (np.arange(n) > 50) & (np.arange(n) < 250),
                     36000.0,
                     np.nan,
                 ),
-                "bds_fms_sel_alt_ft": np.where(
+                "bds_fms_alt_sel_ft": np.where(
                     (np.arange(n) > 30) & (np.arange(n) < 270),
                     37000.0,
                     np.nan,
@@ -474,7 +474,7 @@ class TestBuildSelectedParamsV3:
             {
                 "raw_alt_ft": alt,
                 "bds_mach_clean": np.full(n, 0.78),
-                "bds_mcp_sel_alt_ft": np.where(
+                "bds_mcp_alt_sel_ft": np.where(
                     (np.arange(n) > 20) & (np.arange(n) < 80), 36000.0, np.nan
                 ),
             }
@@ -496,7 +496,7 @@ class TestBuildSelectedParamsV3:
             {
                 "raw_alt_ft": np.full(n, 35000.0),
                 "bds_mach_clean": np.full(n, 0.78),
-                "bds_fms_sel_alt_ft": np.where(
+                "bds_fms_alt_sel_ft": np.where(
                     (np.arange(n) > 10) & (np.arange(n) < 90), 37000.0, np.nan
                 ),
             }
@@ -569,7 +569,7 @@ class TestBuildSelectedParamsV3:
         assert result["fdm_mach_sel"].is_nan().sum() == n
 
     def test_bds40_all_null(self) -> None:
-        """When bds_mcp_sel_alt_ft is all NaN, alt segments detect on raw_alt_ft.
+        """When bds_mcp_alt_sel_ft is all NaN, alt segments detect on raw_alt_ft.
 
         raw_alt_ft constant at 35000 → level segment detected → fdm_alt_sel_ft
         is NOT all NaN.  MCP/FMS backfill columns remain all NaN.
@@ -579,8 +579,8 @@ class TestBuildSelectedParamsV3:
             {
                 "raw_alt_ft": np.full(n, 35000.0),
                 "bds_mach_clean": np.full(n, 0.78),
-                "bds_mcp_sel_alt_ft": np.full(n, np.nan),
-                "bds_fms_sel_alt_ft": np.full(n, np.nan),
+                "bds_mcp_alt_sel_ft": np.full(n, np.nan),
+                "bds_fms_alt_sel_ft": np.full(n, np.nan),
             }
         )
         config = {

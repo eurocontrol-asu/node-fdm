@@ -27,7 +27,7 @@ class TestConvertSI:
         return pl.DataFrame(
             {
                 "raw_alt_ft": [30000.0, 35000.0],
-                "bds_mcp_sel_alt_ft": [31000.0, 36000.0],
+                "bds_mcp_alt_sel_ft": [31000.0, 36000.0],
                 "fdm_tas_from_cas_kt": [250.0, 450.0],
                 "bds_ias_kt_clean": [200.0, 280.0],
                 "raw_gs_kt": [240.0, 430.0],

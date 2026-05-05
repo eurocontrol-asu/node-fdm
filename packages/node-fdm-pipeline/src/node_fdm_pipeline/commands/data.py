@@ -70,8 +70,8 @@ _RAW_RENAME: dict[str, str] = {
 }
 
 _BDS_RENAME: dict[str, str] = {
-    "selected_mcp": "bds_mcp_sel_alt_ft",
-    "selected_fms": "bds_fms_sel_alt_ft",
+    "selected_mcp": "bds_mcp_alt_sel_ft",
+    "selected_fms": "bds_fms_alt_sel_ft",
     "IAS": "bds_ias_kt",
     "TAS": "bds_tas_kt",
     "Mach": "bds_mach",
@@ -1093,7 +1093,7 @@ class _RawEHSDecoder:
 
     Unlike :class:`_ExtendedDecoder`, this decoder does **not** filter by
     flight duration, preserves ``selected_fms`` (needed for
-    ``bds_fms_sel_alt_ft``), and returns the raw flight on decode failure
+    ``bds_fms_alt_sel_ft``), and returns the raw flight on decode failure
     instead of ``None``.
     """
 

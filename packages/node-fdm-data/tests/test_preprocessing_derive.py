@@ -21,7 +21,7 @@ class TestDeriveGamma:
                 "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "raw_lat_deg": [48.0],
                 "raw_lon_deg": [2.0],
                 "meta_flight_id": ["F001"],
@@ -40,7 +40,7 @@ class TestDeriveGamma:
                 "fdm_tas_from_cas_kt": [0.001],
                 "raw_gs_kt": [0.0],
                 "raw_alt_ft": [1000.0],
-                "bds_mcp_sel_alt_ft": [2000.0],
+                "bds_mcp_alt_sel_ft": [2000.0],
                 "raw_lat_deg": [48.0],
                 "raw_lon_deg": [2.0],
                 "meta_flight_id": ["F001"],
@@ -64,7 +64,7 @@ class TestDeriveLongWind:
                 "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "raw_lat_deg": [48.0],
                 "raw_lon_deg": [2.0],
                 "meta_flight_id": ["F001"],
@@ -75,7 +75,7 @@ class TestDeriveLongWind:
 
 
 class TestDeriveAltDiff:
-    """fdm_alt_diff_ft = bds_mcp_sel_alt_ft - raw_alt_ft."""
+    """fdm_alt_diff_ft = bds_mcp_alt_sel_ft - raw_alt_ft."""
 
     def test_derive_alt_diff(self) -> None:
         df = pl.DataFrame(
@@ -84,7 +84,7 @@ class TestDeriveAltDiff:
                 "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "raw_lat_deg": [48.0],
                 "raw_lon_deg": [2.0],
                 "meta_flight_id": ["F001"],
@@ -109,7 +109,7 @@ class TestDeriveDistanceCum:
                 "fdm_tas_from_cas_kt": [250.0] * 3,
                 "raw_gs_kt": [240.0] * 3,
                 "raw_alt_ft": [35000.0] * 3,
-                "bds_mcp_sel_alt_ft": [36000.0] * 3,
+                "bds_mcp_alt_sel_ft": [36000.0] * 3,
                 "raw_lat_deg": lats,
                 "raw_lon_deg": lons,
                 "meta_flight_id": ["F001"] * 3,
@@ -144,7 +144,7 @@ class TestDeriveDistanceCum:
                 "fdm_tas_from_cas_kt": [250.0] * 4,
                 "raw_gs_kt": [240.0] * 4,
                 "raw_alt_ft": [35000.0] * 4,
-                "bds_mcp_sel_alt_ft": [36000.0] * 4,
+                "bds_mcp_alt_sel_ft": [36000.0] * 4,
                 "raw_lat_deg": [48.0, 48.01, 49.0, 49.01],
                 "raw_lon_deg": [2.0, 2.0, 3.0, 3.0],
                 "meta_flight_id": ["F001", "F001", "F002", "F002"],
@@ -171,7 +171,7 @@ class TestDeriveAirportDistances:
                 "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "raw_lat_deg": [48.8566],
                 "raw_lon_deg": [2.3522],
                 "meta_flight_id": ["F001"],
@@ -200,7 +200,7 @@ class TestDeriveAirportDistances:
                 "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "raw_lat_deg": [48.0],
                 "raw_lon_deg": [2.0],
                 "meta_flight_id": ["F001"],
@@ -220,7 +220,7 @@ class TestDeriveAirportDistances:
                 "fdm_tas_from_cas_kt": [250.0],
                 "raw_gs_kt": [240.0],
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "raw_lat_deg": [48.0],
                 "raw_lon_deg": [2.0],
                 "meta_flight_id": ["F001"],

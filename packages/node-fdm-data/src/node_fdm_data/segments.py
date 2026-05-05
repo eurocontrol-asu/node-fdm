@@ -780,10 +780,10 @@ def build_selected_params(
 
     df = _gamma_from_alt(df, alt_segs, alt_cfg, int(config.get("alt_hold_relax", 15)))
 
-    if "bds_mcp_sel_alt_ft" in df.columns:
-        df = _backfill_alias(df, "bds_mcp_sel_alt_ft", "fdm_mcp_alt_sel_ft")
-    if "bds_fms_sel_alt_ft" in df.columns:
-        df = _backfill_alias(df, "bds_fms_sel_alt_ft", "fdm_fms_alt_sel_ft")
+    if "bds_mcp_alt_sel_ft" in df.columns:
+        df = _backfill_alias(df, "bds_mcp_alt_sel_ft", "fdm_mcp_alt_sel_ft")
+    if "bds_fms_alt_sel_ft" in df.columns:
+        df = _backfill_alias(df, "bds_fms_alt_sel_ft", "fdm_fms_alt_sel_ft")
 
     df = _anchored_target(df, "fdm_alt_sel_ft", alt_col, "fdm_alt_target_ft")
     df = _anchored_target(

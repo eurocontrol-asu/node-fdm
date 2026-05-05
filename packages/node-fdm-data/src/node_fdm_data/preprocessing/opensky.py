@@ -20,7 +20,7 @@ __all__ = [
 
 _TRAFFIC_RENAME: dict[str, str] = {
     "altitude": "raw_alt_ft",
-    "selected_mcp": "bds_mcp_sel_alt_ft",
+    "selected_mcp": "bds_mcp_alt_sel_ft",
     "vertical_rate": "raw_vz_ftmin",
     "Mach": "era_mach",
     "IAS": "bds_ias_kt",
@@ -50,9 +50,9 @@ def _gamma_expr(tas_col: str, vz_col: str) -> pl.Expr:
 
 def _derived_exprs(schema: pl.Schema) -> list[pl.Expr]:
     exprs: list[pl.Expr] = []
-    if "bds_mcp_sel_alt_ft" in schema and "raw_alt_ft" in schema:
+    if "bds_mcp_alt_sel_ft" in schema and "raw_alt_ft" in schema:
         exprs.append(
-            (pl.col("bds_mcp_sel_alt_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
+            (pl.col("bds_mcp_alt_sel_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
         )
 
     tas_col = "era_tas_kt" if "era_tas_kt" in schema else "TAS"

@@ -17,7 +17,7 @@ class TestOpenSkyPreprocessing:
         return pl.LazyFrame(
             {
                 "raw_alt_ft": [5000.0, 10000.0, 15000.0, 20000.0, 25000.0],
-                "bds_mcp_sel_alt_ft": [10000.0, 15000.0, 20000.0, 25000.0, 30000.0],
+                "bds_mcp_alt_sel_ft": [10000.0, 15000.0, 20000.0, 25000.0, 30000.0],
                 "raw_vz_ftmin": [None, 500.0, None, 1000.0, 500.0],
                 "era_mach": [0.5, None, 0.6, None, 0.7],
                 "bds_ias_kt": [None, None, 200.0, 250.0, 300.0],
@@ -26,7 +26,7 @@ class TestOpenSkyPreprocessing:
         )
 
     def test_flight_processing_alt_diff(self, opensky_df: pl.LazyFrame) -> None:
-        """flight_processing adds fdm_alt_diff_ft = bds_mcp_sel_alt_ft - raw_alt_ft."""
+        """flight_processing adds fdm_alt_diff_ft = bds_mcp_alt_sel_ft - raw_alt_ft."""
         result = flight_processing(opensky_df).collect()
         assert "fdm_alt_diff_ft" in result.columns
         expected = [5000.0, 5000.0, 5000.0, 5000.0, 5000.0]
@@ -46,7 +46,7 @@ class TestOpenSkyPreprocessing:
         df = pl.LazyFrame(
             {
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "era_tas_kt": [450.0],
                 "raw_vz_ftmin": [1000.0],
                 "fdm_mach_sel": [0.82],
@@ -67,7 +67,7 @@ class TestOpenSkyPreprocessing:
         df = pl.LazyFrame(
             {
                 "raw_alt_ft": [35000.0],
-                "bds_mcp_sel_alt_ft": [36000.0],
+                "bds_mcp_alt_sel_ft": [36000.0],
                 "era_tas_kt": [450.0],
                 "raw_gs_kt": [430.0],
                 "raw_vz_ftmin": [0.0],
@@ -95,7 +95,7 @@ class TestOpenSkyPreprocessing:
         result = flight_processing(df).collect()
         # Check renamed columns exist
         assert "raw_alt_ft" in result.columns
-        assert "bds_mcp_sel_alt_ft" in result.columns
+        assert "bds_mcp_alt_sel_ft" in result.columns
         assert "raw_vz_ftmin" in result.columns
         assert "fdm_alt_diff_ft" in result.columns
         # Mach → era_mach (not fdm_mach_sel)

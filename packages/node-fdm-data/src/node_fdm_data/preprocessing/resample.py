@@ -34,8 +34,8 @@ BDS_COLS: list[str] = [
     "bds_tas_kt",
     "bds_ias_kt",
     "bds_hdg_deg",
-    "bds_mcp_sel_alt_ft",
-    "bds_fms_sel_alt_ft",
+    "bds_mcp_alt_sel_ft",
+    "bds_fms_alt_sel_ft",
 ]
 
 # (columns_to_interpolate, reference_columns_for_subsegment_detection)

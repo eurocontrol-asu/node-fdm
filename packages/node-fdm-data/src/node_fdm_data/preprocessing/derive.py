@@ -66,7 +66,7 @@ def derive_columns(
     df = df.with_columns(
         ratio.arcsin().alias("fdm_gamma_rad"),
         (pl.col("fdm_tas_from_cas_kt") - pl.col("raw_gs_kt")).alias("fdm_long_wind_kt"),
-        (pl.col("bds_mcp_sel_alt_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
+        (pl.col("bds_mcp_alt_sel_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
     )
 
     # --- Cumulative distance (per flight) ---

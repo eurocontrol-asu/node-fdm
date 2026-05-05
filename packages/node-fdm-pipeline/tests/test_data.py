@@ -202,8 +202,8 @@ class TestDownloadDelta:
             "raw_vz_ftmin",
         }
         assert bds_cols == {
-            "bds_mcp_sel_alt_ft",
-            "bds_fms_sel_alt_ft",
+            "bds_mcp_alt_sel_ft",
+            "bds_fms_alt_sel_ft",
             "bds_ias_kt",
             "bds_tas_kt",
             "bds_mach",
@@ -659,7 +659,7 @@ def _make_derive_delta_table(tmp_path: Path, *, n_flights: int = 1) -> Path:
         "raw_gs_kt": [],
         "raw_track_deg": [],
         "raw_vz_ftmin": [],
-        "bds_mcp_sel_alt_ft": [],
+        "bds_mcp_alt_sel_ft": [],
         "fdm_tas_from_cas_kt": [],
         "era_temp_K": [],
         "meta_flight_id": [],
@@ -684,7 +684,7 @@ def _make_derive_delta_table(tmp_path: Path, *, n_flights: int = 1) -> Path:
             all_rows["raw_gs_kt"].append(440.0)
             all_rows["raw_track_deg"].append(90.0)
             all_rows["raw_vz_ftmin"].append(500.0)
-            all_rows["bds_mcp_sel_alt_ft"].append(36000.0)
+            all_rows["bds_mcp_alt_sel_ft"].append(36000.0)
             all_rows["fdm_tas_from_cas_kt"].append(450.0)
             all_rows["era_temp_K"].append(218.81)  # ISA at FL350
             all_rows["meta_flight_id"].append(f"abc{fi:03d}_TST{fi:02d}_s0")
@@ -1068,10 +1068,10 @@ typecodes:
         segments(config=config, dry_run=False)
         second = pl.read_delta(str(table_path))
 
-        # bds_mcp_sel_alt_ft is an input column that contains "_sel" — must be preserved
-        assert "bds_mcp_sel_alt_ft" in first.columns
-        assert "bds_mcp_sel_alt_ft" in second.columns
-        assert first["bds_mcp_sel_alt_ft"].to_list() == second["bds_mcp_sel_alt_ft"].to_list()
+        # bds_mcp_alt_sel_ft is an input column that contains "_sel" — must be preserved
+        assert "bds_mcp_alt_sel_ft" in first.columns
+        assert "bds_mcp_alt_sel_ft" in second.columns
+        assert first["bds_mcp_alt_sel_ft"].to_list() == second["bds_mcp_alt_sel_ft"].to_list()
 
 
 # ---------------------------------------------------------------------------

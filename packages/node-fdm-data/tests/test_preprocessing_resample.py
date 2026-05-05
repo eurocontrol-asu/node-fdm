@@ -56,8 +56,8 @@ def _make_flight(
         data["bds_tas_kt"] = [450.0] * n
         data["bds_ias_kt"] = [280.0] * n
         data["bds_hdg_deg"] = [90.0] * n
-        data["bds_mcp_sel_alt_ft"] = [35000.0] * n
-        data["bds_fms_sel_alt_ft"] = [35000.0] * n
+        data["bds_mcp_alt_sel_ft"] = [35000.0] * n
+        data["bds_fms_alt_sel_ft"] = [35000.0] * n
 
     return pl.DataFrame(data)
 
@@ -368,8 +368,8 @@ class TestResampleWithBDSColumns:
                 "bds_tas_kt": bds_mach,  # reuse pattern
                 "bds_ias_kt": [None] * n,
                 "bds_hdg_deg": [None] * n,
-                "bds_mcp_sel_alt_ft": [None] * n,
-                "bds_fms_sel_alt_ft": [None] * n,
+                "bds_mcp_alt_sel_ft": [None] * n,
+                "bds_fms_alt_sel_ft": [None] * n,
             }
         )
         result = resample_flight(df, rate_s=4, max_gap_s=30, smooth=False)
