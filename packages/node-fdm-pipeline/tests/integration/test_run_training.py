@@ -37,19 +37,16 @@ def _make_delta_table(path: Path, *, typecodes: list[str] | None = None) -> None
     df.write_delta(str(path), mode="overwrite")
 
 
-class TestRunTraining:
-    """Tests for ``run_training``."""
+def _make_config(tmp_path: Path) -> Path:
+    """Create a valid YAML config and Delta Table."""
+    data_dir = tmp_path / "data"
+    models_dir = data_dir / "models"
+    data_dir.mkdir(parents=True)
+    models_dir.mkdir(parents=True)
 
-    def _make_config(self, tmp_path: Path) -> Path:
-        """Create a valid YAML config and Delta Table."""
-        data_dir = tmp_path / "data"
-        models_dir = data_dir / "models"
-        data_dir.mkdir(parents=True)
-        models_dir.mkdir(parents=True)
-
-        config = tmp_path / "config.yaml"
-        config.write_text(
-            f"""\
+    config = tmp_path / "config.yaml"
+    config.write_text(
+        f"""\
 paths:
   data_dir: "{data_dir}"
 
@@ -57,12 +54,15 @@ typecodes:
   - A320
   - B738
 """
-        )
+    )
 
-        # Create Delta Table
-        _make_delta_table(data_dir / "flights.delta", typecodes=["A320"])
+    _make_delta_table(data_dir / "flights.delta", typecodes=["A320"])
 
-        return config
+    return config
+
+
+class TestRunTraining:
+    """Tests for ``run_training`` with trainer/loader mocked, real config + Delta on disk."""
 
     @patch("node_fdm.trainer.ODETrainer")
     @patch("node_fdm.loader.get_train_val_data")
@@ -73,7 +73,7 @@ typecodes:
         tmp_path: Path,
     ) -> None:
         """CLI args override YAML defaults in TrainingConfig."""
-        config = self._make_config(tmp_path)
+        config = _make_config(tmp_path)
 
         mock_train_ds = MagicMock()
         mock_val_ds = MagicMock()
@@ -112,7 +112,7 @@ typecodes:
         tmp_path: Path,
     ) -> None:
         """When --typecode is given, only that typecode is trained."""
-        config = self._make_config(tmp_path)
+        config = _make_config(tmp_path)
 
         mock_get_data.return_value = (MagicMock(), MagicMock())
         mock_trainer_cls.return_value = MagicMock()
@@ -127,6 +127,158 @@ typecodes:
 
         # Only one call to trainer (A320, not B738)
         assert mock_trainer_cls.call_count == 1
+
+    @pytest.mark.parametrize(
+        "train_len, expected_epochs",
+        [
+            # batch_size=512, n_step=10, coeff=5.0, adjusted=4000
+            pytest.param(5120, 4000, id="default_coefficient"),
+            # batch_size=512, n_step=max(0,1)=1, coeff=min(50,10)=10, adjusted=8000
+            pytest.param(10, 8000, id="capped_at_10x"),
+        ],
+    )
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_epoch_adjustment(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+        train_len: int,
+        expected_epochs: int,
+    ) -> None:
+        """Epochs scale by dataset-size coefficient (capped at 10x for tiny datasets)."""
+        config = _make_config(tmp_path)
+
+        mock_train_ds = MagicMock()
+        mock_train_ds.__len__ = MagicMock(return_value=train_len)
+        mock_get_data.return_value = (mock_train_ds, MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="adsb",
+                config=config,
+                typecode="A320",
+                device="cpu",
+            )
+
+        training_config = mock_trainer_cls.call_args.kwargs["config"]
+        assert training_config.epochs == expected_epochs
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_cli_seq_len_param(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """--seq-len CLI arg propagates to TrainingConfig.seq_len."""
+        config = _make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="adsb",
+                config=config,
+                typecode="A320",
+                epochs=1,
+                seq_len=200,
+                device="cpu",
+            )
+
+        training_config = mock_trainer_cls.call_args.kwargs["config"]
+        assert training_config.seq_len == 200
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_shift_defaults_to_seq_len(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """When --shift is not given, shift defaults to seq_len."""
+        config = _make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="adsb",
+                config=config,
+                typecode="A320",
+                seq_len=200,
+                device="cpu",
+            )
+
+        training_config = mock_trainer_cls.call_args.kwargs["config"]
+        assert training_config.shift == 200
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_shift_explicit(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """Explicit --shift overrides the seq_len default."""
+        config = _make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="adsb",
+                config=config,
+                typecode="A320",
+                seq_len=200,
+                shift=100,
+                device="cpu",
+            )
+
+        training_config = mock_trainer_cls.call_args.kwargs["config"]
+        assert training_config.shift == 100
+
+    @patch("node_fdm.trainer.ODETrainer")
+    @patch("node_fdm.loader.get_train_val_data")
+    def test_train_forwards_e1_cols(
+        self,
+        mock_get_data: MagicMock,
+        mock_trainer_cls: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """run_training forwards the architecture's E1_COLS (incl. diff features) to the loader."""
+        from node_fdm_data.schemas.adsb import E1_COLS
+
+        config = _make_config(tmp_path)
+
+        mock_get_data.return_value = (MagicMock(), MagicMock())
+        mock_trainer_cls.return_value = MagicMock()
+
+        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+            run_training(
+                arch="adsb",
+                config=config,
+                typecode="A320",
+                epochs=1,
+                device="cpu",
+            )
+
+        data_kwargs = mock_get_data.call_args.kwargs
+        assert data_kwargs.get("e1_cols") == E1_COLS
+        assert "fdm_alt_diff_m" in data_kwargs["e1_cols"]
+        assert "fdm_gamma_diff_rad" in data_kwargs["e1_cols"]
+
+
+class TestRunTrainingMissingData:
+    """Tests for ``run_training`` covering missing/empty data paths."""
 
     def test_train_missing_delta(self, tmp_path: Path) -> None:
         """Raises SystemExit when Delta Table doesn't exist."""
@@ -158,10 +310,9 @@ typecodes:
         tmp_path: Path,
     ) -> None:
         """Empty dataset for typecode → warning, skip, no crash."""
-        config = self._make_config(tmp_path)
+        config = _make_config(tmp_path)
 
         with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            # Train for B738 which has no entries in Delta Table
             run_training(
                 arch="adsb",
                 config=config,
@@ -169,153 +320,4 @@ typecodes:
                 device="cpu",
             )
 
-        # No trainer created for empty dataset
         mock_trainer_cls.assert_not_called()
-
-    @pytest.mark.parametrize(
-        "train_len, expected_epochs",
-        [
-            # batch_size=512, n_step=10, coeff=5.0, adjusted=4000
-            pytest.param(5120, 4000, id="default_coefficient"),
-            # batch_size=512, n_step=max(0,1)=1, coeff=min(50,10)=10, adjusted=8000
-            pytest.param(10, 8000, id="capped_at_10x"),
-        ],
-    )
-    @patch("node_fdm.trainer.ODETrainer")
-    @patch("node_fdm.loader.get_train_val_data")
-    def test_epoch_adjustment(
-        self,
-        mock_get_data: MagicMock,
-        mock_trainer_cls: MagicMock,
-        tmp_path: Path,
-        train_len: int,
-        expected_epochs: int,
-    ) -> None:
-        """Epochs scale by dataset-size coefficient (capped at 10x for tiny datasets)."""
-        config = self._make_config(tmp_path)
-
-        mock_train_ds = MagicMock()
-        mock_train_ds.__len__ = MagicMock(return_value=train_len)
-        mock_get_data.return_value = (mock_train_ds, MagicMock())
-        mock_trainer_cls.return_value = MagicMock()
-
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            run_training(
-                arch="adsb",
-                config=config,
-                typecode="A320",
-                device="cpu",
-            )
-
-        training_config = mock_trainer_cls.call_args.kwargs["config"]
-        assert training_config.epochs == expected_epochs
-
-    @patch("node_fdm.trainer.ODETrainer")
-    @patch("node_fdm.loader.get_train_val_data")
-    def test_cli_seq_len_param(
-        self,
-        mock_get_data: MagicMock,
-        mock_trainer_cls: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """--seq-len CLI arg propagates to TrainingConfig.seq_len."""
-        config = self._make_config(tmp_path)
-
-        mock_get_data.return_value = (MagicMock(), MagicMock())
-        mock_trainer_cls.return_value = MagicMock()
-
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            run_training(
-                arch="adsb",
-                config=config,
-                typecode="A320",
-                epochs=1,
-                seq_len=200,
-                device="cpu",
-            )
-
-        training_config = mock_trainer_cls.call_args.kwargs["config"]
-        assert training_config.seq_len == 200
-
-    @patch("node_fdm.trainer.ODETrainer")
-    @patch("node_fdm.loader.get_train_val_data")
-    def test_shift_defaults_to_seq_len(
-        self,
-        mock_get_data: MagicMock,
-        mock_trainer_cls: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """When --shift is not given, shift defaults to seq_len."""
-        config = self._make_config(tmp_path)
-
-        mock_get_data.return_value = (MagicMock(), MagicMock())
-        mock_trainer_cls.return_value = MagicMock()
-
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            run_training(
-                arch="adsb",
-                config=config,
-                typecode="A320",
-                seq_len=200,
-                device="cpu",
-            )
-
-        training_config = mock_trainer_cls.call_args.kwargs["config"]
-        assert training_config.shift == 200
-
-    @patch("node_fdm.trainer.ODETrainer")
-    @patch("node_fdm.loader.get_train_val_data")
-    def test_shift_explicit(
-        self,
-        mock_get_data: MagicMock,
-        mock_trainer_cls: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """Explicit --shift overrides the seq_len default."""
-        config = self._make_config(tmp_path)
-
-        mock_get_data.return_value = (MagicMock(), MagicMock())
-        mock_trainer_cls.return_value = MagicMock()
-
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            run_training(
-                arch="adsb",
-                config=config,
-                typecode="A320",
-                seq_len=200,
-                shift=100,
-                device="cpu",
-            )
-
-        training_config = mock_trainer_cls.call_args.kwargs["config"]
-        assert training_config.shift == 100
-
-    @patch("node_fdm.trainer.ODETrainer")
-    @patch("node_fdm.loader.get_train_val_data")
-    def test_train_forwards_e1_cols(
-        self,
-        mock_get_data: MagicMock,
-        mock_trainer_cls: MagicMock,
-        tmp_path: Path,
-    ) -> None:
-        """run_training forwards the architecture's E1_COLS (incl. diff features) to the loader."""
-        from node_fdm_data.schemas.adsb import E1_COLS
-
-        config = self._make_config(tmp_path)
-
-        mock_get_data.return_value = (MagicMock(), MagicMock())
-        mock_trainer_cls.return_value = MagicMock()
-
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
-            run_training(
-                arch="adsb",
-                config=config,
-                typecode="A320",
-                epochs=1,
-                device="cpu",
-            )
-
-        data_kwargs = mock_get_data.call_args.kwargs
-        assert data_kwargs.get("e1_cols") == E1_COLS
-        assert "fdm_alt_diff_m" in data_kwargs["e1_cols"]
-        assert "fdm_gamma_diff_rad" in data_kwargs["e1_cols"]
