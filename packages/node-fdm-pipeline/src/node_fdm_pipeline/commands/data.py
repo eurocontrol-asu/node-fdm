@@ -8,10 +8,12 @@ install message if missing.
 
 from __future__ import annotations
 
+import os
 import sys
+from concurrent.futures import ProcessPoolExecutor
 from datetime import datetime, timedelta
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -20,6 +22,23 @@ if TYPE_CHECKING:
     from traffic.core import Flight
 
     from node_fdm_pipeline.config import PipelineConfig
+
+
+def _clean_speeds_worker(args: tuple[pl.DataFrame, dict[str, Any]]) -> pl.DataFrame:
+    """ProcessPool worker: invoke ``clean_bds_speeds`` on a single flight."""
+    from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
+
+    flight_df, kwargs = args
+    return clean_bds_speeds(flight_df, **kwargs)
+
+
+def _clean_speeds_init_polars() -> None:
+    """ProcessPool initializer: cap Polars threads to 1 inside each worker
+    to avoid oversubscription (each worker is its own process, so the
+    outer Polars + 8 workers x N threads each would thrash the cores).
+    """
+    os.environ["POLARS_MAX_THREADS"] = "1"
+
 
 __all__ = [
     "aircraft_list",
@@ -800,7 +819,6 @@ def clean_speeds(
     """
     import polars as pl
     from node_fdm_data.delta import read_delta_table, write_columns
-    from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
 
     from node_fdm_pipeline.config import PipelineConfig
 
@@ -822,28 +840,35 @@ def clean_speeds(
         df = df.drop(clean_existing)
 
     flights = df.partition_by("meta_flight_id", maintain_order=True)
-    processed: list[pl.DataFrame] = []
-    for flight_df in flights:
-        processed.append(
-            clean_bds_speeds(
-                flight_df,
-                bds_window=cs_cfg.bds_window,
-                era_window=cs_cfg.era_window,
-                k=cs_cfg.k,
-                n_passes=cs_cfg.n_passes,
-                interp_max_gap=cs_cfg.interp_max_gap,
-                frozen_min_run_len_mach=cs_cfg.frozen_min_run_len_mach,
-                frozen_min_run_len_ias=cs_cfg.frozen_min_run_len_ias,
-                frozen_min_run_len_tas=cs_cfg.frozen_min_run_len_tas,
-                point_jump_max_mach=cs_cfg.point_jump_max_mach,
-                point_jump_max_kt=cs_cfg.point_jump_max_kt,
-                zigzag_jump_min_mach=cs_cfg.zigzag_jump_min_mach,
-                zigzag_jump_min_kt=cs_cfg.zigzag_jump_min_kt,
-                zigzag_half_window=cs_cfg.zigzag_half_window,
-                zigzag_density_min_bds=cs_cfg.zigzag_density_min_bds,
-                zigzag_density_min_era=cs_cfg.zigzag_density_min_era,
-                on_ground_vz_threshold=cs_cfg.on_ground_vz_threshold,
-                on_ground_alt_threshold=cs_cfg.on_ground_alt_threshold,
+    cs_kwargs: dict[str, Any] = {
+        "bds_window": cs_cfg.bds_window,
+        "era_window": cs_cfg.era_window,
+        "k": cs_cfg.k,
+        "n_passes": cs_cfg.n_passes,
+        "interp_max_gap": cs_cfg.interp_max_gap,
+        "frozen_min_run_len_mach": cs_cfg.frozen_min_run_len_mach,
+        "frozen_min_run_len_ias": cs_cfg.frozen_min_run_len_ias,
+        "frozen_min_run_len_tas": cs_cfg.frozen_min_run_len_tas,
+        "point_jump_max_mach": cs_cfg.point_jump_max_mach,
+        "point_jump_max_kt": cs_cfg.point_jump_max_kt,
+        "zigzag_jump_min_mach": cs_cfg.zigzag_jump_min_mach,
+        "zigzag_jump_min_kt": cs_cfg.zigzag_jump_min_kt,
+        "zigzag_half_window": cs_cfg.zigzag_half_window,
+        "zigzag_density_min_bds": cs_cfg.zigzag_density_min_bds,
+        "zigzag_density_min_era": cs_cfg.zigzag_density_min_era,
+        "on_ground_vz_threshold": cs_cfg.on_ground_vz_threshold,
+        "on_ground_alt_threshold": cs_cfg.on_ground_alt_threshold,
+    }
+
+    n_workers = min(8, os.cpu_count() or 4)
+    with ProcessPoolExecutor(
+        max_workers=n_workers,
+        initializer=_clean_speeds_init_polars,
+    ) as ex:
+        processed: list[pl.DataFrame] = list(
+            ex.map(
+                _clean_speeds_worker,
+                ((f, cs_kwargs) for f in flights),
             )
         )
 
