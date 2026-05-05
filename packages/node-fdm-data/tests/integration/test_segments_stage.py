@@ -6,6 +6,8 @@ fdm_pipeline.commands.data.segments end-to-end at the table boundary.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 import pytest
@@ -45,15 +47,15 @@ def _seed_flight_df(*, with_tail_gap: bool = False) -> pl.DataFrame:
     )
 
 
-def _run_segments_stage(input_path, output_path) -> None:
+def _run_segments_stage(input_path: Path, output_path: Path) -> None:
     """Invoke the pipeline segments stage on Delta tables."""
     pytest.importorskip("deltalake")
     from node_fdm_pipeline.commands.data import segments
 
-    segments.run(input_path=str(input_path), output_path=str(output_path))
+    segments.run(input_path=str(input_path), output_path=str(output_path))  # type: ignore[attr-defined]
 
 
-def test_segments_stage_emits_known_mask(tmp_path):
+def test_segments_stage_emits_known_mask(tmp_path: Path) -> None:
     deltalake = pytest.importorskip("deltalake")
     input_path = tmp_path / "input.delta"
     output_path = tmp_path / "output.delta"
@@ -67,7 +69,7 @@ def test_segments_stage_emits_known_mask(tmp_path):
     assert "fdm_tas_target_known" in out.columns
 
 
-def test_segments_stage_no_global_backfill_on_disk(tmp_path):
+def test_segments_stage_no_global_backfill_on_disk(tmp_path: Path) -> None:
     deltalake = pytest.importorskip("deltalake")
     input_path = tmp_path / "input.delta"
     output_path = tmp_path / "output.delta"
