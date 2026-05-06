@@ -300,8 +300,15 @@ def aircraft_list_cmd(
     ] = 100,
     query_date: Annotated[
         str,
-        cyclopts.Parameter(name="--query-date", help="Date to query (YYYY-MM-DD)"),
+        cyclopts.Parameter(name="--query-date", help="Start date to query (YYYY-MM-DD)"),
     ] = "2025-10-01",
+    query_end_date: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--query-end-date",
+            help="End date (exclusive, YYYY-MM-DD); defaults to query_date + 1 day",
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
@@ -314,6 +321,7 @@ def aircraft_list_cmd(
         config=config,
         sample_size=sample_size,
         query_date=query_date,
+        query_end_date=query_end_date,
         dry_run=dry_run,
     )
 

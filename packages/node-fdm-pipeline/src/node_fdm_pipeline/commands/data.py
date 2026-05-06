@@ -107,14 +107,17 @@ def aircraft_list(
     config: Path,
     sample_size: int = 100,
     query_date: str = "2025-10-01",
+    query_end_date: str | None = None,
     dry_run: bool = False,
 ) -> None:
     """Query OpenSky for aircraft database and save to CSV.
 
     Args:
         config: Path to the YAML config file.
-        sample_size: Max flights to sample per typecode.
-        query_date: Date to query for flight list (YYYY-MM-DD).
+        sample_size: Max distinct aircraft per typecode.
+        query_date: Start date for flight list (YYYY-MM-DD).
+        query_end_date: End date (exclusive) for flight list (YYYY-MM-DD).
+            Defaults to query_date + 1 day.
         dry_run: Validate config without performing I/O.
     """
     from node_fdm_pipeline.config import PipelineConfig
@@ -123,7 +126,22 @@ def aircraft_list(
     data_dir = cfg.paths.data_dir
     data_dir.mkdir(parents=True, exist_ok=True)
 
-    log.info("aircraft_list_start", typecodes=cfg.typecodes, query_date=query_date)
+    start_dt = datetime.strptime(query_date, "%Y-%m-%d")
+    if query_end_date is None:
+        end_dt = start_dt + timedelta(days=1)
+    else:
+        end_dt = datetime.strptime(query_end_date, "%Y-%m-%d")
+    if end_dt <= start_dt:
+        raise SystemExit(
+            f"query_end_date ({query_end_date}) must be after query_date ({query_date})"
+        )
+
+    log.info(
+        "aircraft_list_start",
+        typecodes=cfg.typecodes,
+        query_date=query_date,
+        query_end_date=end_dt.strftime("%Y-%m-%d"),
+    )
 
     if dry_run:
         log.info("aircraft_list_dry_run", msg="Config valid, would query OpenSky")
@@ -134,28 +152,79 @@ def aircraft_list(
     _require_traffic()
     from traffic.data import aircraft, opensky
 
-    # Query OpenSky for one day of flights
-    next_date = (datetime.strptime(query_date, "%Y-%m-%d") + timedelta(days=1)).strftime(
-        "%Y-%m-%d"
-    )
     opensky.trino_client.connect()
-    fl_pd = opensky.flightlist(query_date, next_date)
+    fl_pd = opensky.flightlist(start_dt.strftime("%Y-%m-%d"), end_dt.strftime("%Y-%m-%d"))
     fl = pl.from_pandas(fl_pd)
-    acft_db = pl.from_pandas(aircraft.data[["icao24", "registration", "typecode", "age"]])
 
-    # Join + extract airline code
+    wanted_cols = [
+        c
+        for c in [
+            "icao24",
+            "registration",
+            "typecode",
+            "model",
+            "manufacturername",
+            "operator",
+            "owner",
+            "engines",
+            "icaoaircrafttype",
+            "built",
+        ]
+        if c in aircraft.data.columns
+    ]
+    acft_db = pl.from_pandas(aircraft.data[wanted_cols])
+
+    # Derive age (years) from built date relative to query_date
+    if "built" in acft_db.columns:
+        ref_date = start_dt.date()
+        acft_db = (
+            acft_db.with_columns(pl.col("built").cast(pl.Utf8).str.strip_chars().alias("built"))
+            .with_columns(
+                pl.col("built").str.to_date(format="%Y-%m-%d", strict=False).alias("_built_date"),
+            )
+            .with_columns(
+                ((pl.lit(ref_date) - pl.col("_built_date")).dt.total_days() / 365.25)
+                .round(1)
+                .alias("age_years"),
+            )
+            .drop("_built_date")
+        )
+    else:
+        acft_db = acft_db.with_columns(pl.lit(None).alias("age_years"))
+
+    # Join + extract airline code from callsign
     ext = acft_db.join(fl, on="icao24", how="inner").with_columns(
         airline=pl.col("callsign").str.slice(0, 3).str.strip_chars()
     )
 
-    # Sample up to N flights per typecode
+    # Sample up to N distinct aircraft (icao24) per typecode, age must be known
     sampled = (
         ext.filter(pl.col("typecode").is_in(cfg.typecodes))
+        .filter(pl.col("age_years").is_not_null() & (pl.col("age_years") >= 0))
+        .unique(subset=["icao24"], keep="first")
         .group_by("typecode")
         .map_groups(lambda g: g.sample(n=min(sample_size, len(g)), seed=42))
     )
 
-    aircraft_db = sampled.select("icao24", "registration", "typecode", "age", "airline")
+    out_cols = [
+        c
+        for c in [
+            "icao24",
+            "registration",
+            "typecode",
+            "model",
+            "manufacturername",
+            "operator",
+            "owner",
+            "engines",
+            "icaoaircrafttype",
+            "built",
+            "age_years",
+            "airline",
+        ]
+        if c in sampled.columns
+    ]
+    aircraft_db = sampled.select(out_cols)
     output = data_dir / "aircraft_db.csv"
     aircraft_db.write_csv(output)
     log.info("aircraft_list_done", rows=len(aircraft_db), output=str(output))
@@ -201,7 +270,7 @@ def _load_aircraft_db(cfg: PipelineConfig) -> tuple[pl.DataFrame, list[str]]:
             f"aircraft_db.csv not found at {aircraft_csv}. Run 'fdm aircraft-list' first."
         )
     aircraft_db = pl.read_csv(aircraft_csv)
-    return aircraft_db, aircraft_db["icao24"].to_list()
+    return aircraft_db, aircraft_db["icao24"].unique().to_list()
 
 
 def _build_window_df(
