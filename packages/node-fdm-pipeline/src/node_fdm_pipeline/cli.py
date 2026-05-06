@@ -240,6 +240,13 @@ def predict(
             ),
         ),
     ] = None,
+    limit: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--limit",
+            help="Predict at most N flights per typecode (default: all).",
+        ),
+    ] = None,
 ) -> None:
     """Predict flight trajectories using trained Neural ODE models."""
     from node_fdm_pipeline.commands.predict import run_predict
@@ -251,6 +258,7 @@ def predict(
         device=device,
         local_model=local_model,
         model_name=model_name,
+        limit=limit,
     )
 
 

@@ -179,6 +179,7 @@ def _predict_typecode(
     local_model: bool,
     nan_threshold: float,
     model_name: str | None = None,
+    limit: int | None = None,
 ) -> None:
     """Load the typecode's model and predict every flight in its filtered test partition."""
     import polars as pl
@@ -205,7 +206,10 @@ def _predict_typecode(
     output_dir = predict_dir / acft
     output_dir.mkdir(parents=True, exist_ok=True)
 
-    for flight_df in acft_df.partition_by("meta_flight_id", maintain_order=True):
+    flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
+    if limit is not None:
+        flights = flights[:limit]
+    for flight_df in flights:
         _predict_flight(
             flight_df=flight_df,
             info=info,
@@ -226,6 +230,7 @@ def run_predict(
     local_model: bool = False,
     nan_threshold: float = 0.8,
     model_name: str | None = None,
+    limit: int | None = None,
 ) -> None:
     """Predict flight trajectories using trained Neural ODE models.
 
@@ -281,6 +286,7 @@ def run_predict(
             local_model=local_model,
             nan_threshold=nan_threshold,
             model_name=model_name,
+            limit=limit,
         )
 
     log.info("predict_done", typecodes=typecodes)
