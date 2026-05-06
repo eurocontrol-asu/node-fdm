@@ -1339,6 +1339,22 @@ _BDS60_KEYS: tuple[str, ...] = (
     "bds",
 )
 
+# rs1090 source keys that `_BDS_RENAME` maps to `bds_*` targets.  When EHS
+# decoding fails for every flight in a window, downstream `normalize_schema`
+# would otherwise produce zero `bds_*` columns and break the schema contract
+# consumed by `clean-speeds` / `derive`.  Each source key is paired with the
+# numpy dtype it carries on the success path, so null-fills survive Delta's
+# unsupported-Null-dtype check.
+_BDS_SOURCE_KEYS: tuple[str, ...] = tuple(_BDS_RENAME.keys())
+_BDS_SOURCE_DTYPES: dict[str, str] = {
+    "selected_mcp": "Float64",
+    "selected_fms": "Float64",
+    "IAS": "Float64",
+    "TAS": "Float64",
+    "Mach": "Float64",
+    "heading": "Float64",
+}
+
 
 def _explode_bds_column(series: pd.Series, keys: tuple[str, ...]) -> pd.DataFrame:
     """Explode a Series of rs1090 dicts into a flat DataFrame.
@@ -1356,6 +1372,26 @@ def _explode_bds_column(series: pd.Series, keys: tuple[str, ...]) -> pd.DataFram
             for k in keys:
                 out[k][i] = d.get(k)
     return pd.DataFrame(out, index=series.index)
+
+
+def _flight_with_empty_bds_keys(flight: Flight) -> Flight:
+    """Return *flight* with every BDS source key present (null-filled if absent).
+
+    Guarantees the schema contract that `normalize_schema` relies on: even
+    when EHS decoding fails or yields incomplete subframes, the resulting
+    Flight's DataFrame carries every key in :data:`_BDS_SOURCE_KEYS`, so the
+    downstream rename produces every `bds_*` column (with null values).
+    """
+    import pandas as pd
+    from traffic.core import Flight as _Flight
+
+    df = flight.data
+    missing = [k for k in _BDS_SOURCE_KEYS if k not in df.columns]
+    if not missing:
+        return flight
+    n = len(df)
+    df = df.assign(**{k: pd.array([pd.NA] * n, dtype=_BDS_SOURCE_DTYPES[k]) for k in missing})
+    return _Flight(df)
 
 
 class _RawEHSDecoder:
@@ -1377,11 +1413,11 @@ class _RawEHSDecoder:
         try:
             decoded = flight.query_ehs(self.rawdata)
         except Exception:  # noqa: BLE001
-            return flight
+            return _flight_with_empty_bds_keys(flight)
 
         for bds in ("bds40", "bds50", "bds60"):
             if bds not in decoded.data.columns:
-                return flight
+                return _flight_with_empty_bds_keys(flight)
 
         exp40 = _explode_bds_column(decoded.data["bds40"], _BDS40_KEYS)
         exp50 = _explode_bds_column(decoded.data["bds50"], _BDS50_KEYS).drop(
