@@ -69,7 +69,7 @@ END_DATE     ?= 2025-09-08
 ## Note: `download` auto-chains `decode` (raw cache → Delta) by default,
 ## so the `decode` target is not listed here. Invoke `make decode` standalone
 ## to rebuild `data/flights.delta` from the existing `data/raw/` cache.
-pipeline: clean-data aircraft download identify preprocess flag enrich derive segments convert split
+pipeline: clean-data aircraft download identify preprocess flag enrich clean-speeds derive segments convert split
 
 ## Remove Delta table, aircraft CSV, and preprocessed parquet
 ## (the system-owned `data/raw/` cache is preserved — `rm -rf data/raw/` to wipe it)
@@ -88,35 +88,40 @@ download:
 decode:
 	uv run fdm decode --config $(CONFIG) --start-date $(START_DATE) --end-date $(END_DATE)
 
-## Step 1.5: Resample to regular grid
-preprocess:
-	uv run fdm preprocess --config $(CONFIG)
-
-## Step 2: Identify flights
+## Step 2: Identify flights (segment by gap, assign meta_flight_id)
 identify:
 	uv run fdm identify --config $(CONFIG)
 
-## Step 3: Flag valid rows
+## Step 3: Resample to regular grid (overwrites Delta — every downstream step must rerun)
+preprocess:
+	uv run fdm preprocess --config $(CONFIG)
+
+## Step 4: Flag valid rows
 flag:
 	uv run fdm flag --config $(CONFIG)
 
-## Step 4: Enrich with ERA5 weather
+## Step 5: Enrich with ERA5 weather
 enrich:
 	uv run fdm enrich --config $(CONFIG)
 
-## Step 5: Compute derived physics columns
+## Step 6: Clean BDS speeds (Hampel + V-shape + zigzag + ERA fill)
+##         Produces bds_*_clean and fdm_tas_from_cas_kt; required by derive.
+clean-speeds:
+	uv run fdm clean-speeds --config $(CONFIG)
+
+## Step 7: Compute derived physics columns
 derive:
 	uv run fdm derive --config $(CONFIG)
 
-## Step 6: Detect selected-parameter segments
+## Step 8: Detect selected-parameter segments
 segments:
 	uv run fdm segments --config $(CONFIG)
 
-## Step 7: Convert to SI + compute derivatives
+## Step 9: Convert to SI + compute derivatives
 convert:
 	uv run fdm convert --config $(CONFIG)
 
-## Step 8: Train/val/test split
+## Step 10: Train/val/test split
 split:
 	uv run fdm split --config $(CONFIG)
 
