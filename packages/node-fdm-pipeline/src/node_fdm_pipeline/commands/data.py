@@ -18,6 +18,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 if TYPE_CHECKING:
+    import pandas as pd
     import polars as pl
     from traffic.core import Flight
 
@@ -1170,6 +1171,39 @@ def _build_airport_coords(df: pl.DataFrame) -> dict[str, tuple[float, float]] | 
     return coords
 
 
+# Keys returned by rs1090 for each Mode-S Comm-B BDS register (verified at runtime).
+# Used to explode dict-typed columns into flat columns without pandas' O(n²)
+# `Series.apply(pd.Series)`. See scripts/debug/bench_ehs_explode.py.
+_BDS40_KEYS: tuple[str, ...] = ("selected_mcp", "selected_fms", "barometric_setting", "bds")
+_BDS50_KEYS: tuple[str, ...] = ("TAS", "roll", "track", "groundspeed", "track_rate", "bds")
+_BDS60_KEYS: tuple[str, ...] = (
+    "IAS",
+    "Mach",
+    "heading",
+    "vrate_barometric",
+    "vrate_inertial",
+    "bds",
+)
+
+
+def _explode_bds_column(series: pd.Series, keys: tuple[str, ...]) -> pd.DataFrame:
+    """Explode a Series of rs1090 dicts into a flat DataFrame.
+
+    Drop-in replacement for ``series.apply(pd.Series)`` that avoids pandas'
+    super-linear behavior on object-dtype dict columns.
+    """
+    import pandas as pd
+
+    n = len(series)
+    out: dict[str, list[object | None]] = {k: [None] * n for k in keys}
+    arr = series.to_numpy()
+    for i, d in enumerate(arr):
+        if isinstance(d, dict):
+            for k in keys:
+                out[k][i] = d.get(k)
+    return pd.DataFrame(out, index=series.index)
+
+
 class _RawEHSDecoder:
     """Decode EHS data for download step — no preprocessing filters.
 
@@ -1195,13 +1229,11 @@ class _RawEHSDecoder:
             if bds not in decoded.data.columns:
                 return flight
 
-        exp60 = decoded.data["bds60"].apply(pd.Series)
-        exp50 = (
-            decoded.data["bds50"]
-            .apply(pd.Series)
-            .drop(columns=["groundspeed", "track"], errors="ignore")
+        exp40 = _explode_bds_column(decoded.data["bds40"], _BDS40_KEYS)
+        exp50 = _explode_bds_column(decoded.data["bds50"], _BDS50_KEYS).drop(
+            columns=["groundspeed", "track"], errors="ignore"
         )
-        exp40 = decoded.data["bds40"].apply(pd.Series)
+        exp60 = _explode_bds_column(decoded.data["bds60"], _BDS60_KEYS)
         result = pd.concat(
             [
                 decoded.data.drop(columns=["bds40", "bds50", "bds60"]),
