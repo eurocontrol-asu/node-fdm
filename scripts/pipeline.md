@@ -22,11 +22,16 @@ uv run fdm aircraft-list --config config.yaml --sample-size 1 --query-date 2025-
 
 ## 2. download
 
-Telecharge ADS-B (history + flightlist + EHS) depuis OpenSky → Delta Table.
+Telecharge ADS-B (history + flightlist + EHS) depuis OpenSky vers le cache parquet `data/raw/{kind}/date=*/icao24=*/data.parquet`. Diff-based : seuls les `(date, icao24)` manquants du cache sont fetches. Par defaut, `decode` est chaine automatiquement pour produire la Delta Table.
 
 ```bash
 uv run fdm download --config config.yaml --start-date 2025-09-01 --end-date 2025-09-02
 ```
+
+Flags additionnels :
+
+- `--no-decode` : remplit uniquement le cache `data/raw/`, ne lance pas `decode` (pas de Delta).
+- `--force-refresh` : ignore le cache et re-fetch chaque `(date, icao24)`.
 
 ---
 

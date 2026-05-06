@@ -17,6 +17,8 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
+from node_fdm_pipeline.commands import _raw_cache
+
 if TYPE_CHECKING:
     import pandas as pd
     import polars as pl
@@ -313,49 +315,117 @@ def _attach_typecode(df: pl.DataFrame, aircraft_db: pl.DataFrame) -> pl.DataFram
     ).drop("_db_typecode")
 
 
-def _process_window(
-    current: datetime,
-    next_day: datetime,
+opensky: Any = None
+
+
+def _get_opensky() -> Any:
+    """Resolve the ``traffic.data.opensky`` indirection.
+
+    Tests can monkeypatch ``node_fdm_pipeline.commands.data.opensky`` to
+    inject a fake; production code lazily imports the real one on first use.
+    """
+    global opensky
+    if opensky is None:
+        from traffic.data import opensky as _real_opensky
+
+        opensky = _real_opensky
+    return opensky
+
+
+def _fetch_and_cache_window(  # noqa: PLR0913
+    cfg: PipelineConfig,
+    date_str: str,
+    icao24_misses: list[str],
+    kind: _raw_cache.Kind,
+    *,
+    start: datetime,
+    end: datetime,
+) -> None:
+    """Fetch one OpenSky kind for the miss list and write each result atomically."""
+    if not icao24_misses:
+        return
+    api = opensky if opensky is not None else _get_opensky()
+
+    if kind == "flightlist":
+        result = api.flightlist(start, end, icao24=icao24_misses)
+        if result is None:
+            log.warning("download_empty", kind=kind, date=date_str)
+            return
+        df = _to_polars(result)
+        _raw_cache.write_atomic(_raw_cache.cache_path(cfg, kind, date_str, "_"), df)
+        return
+
+    fetcher = api.history if kind == "history" else api.extended
+    result = fetcher(start, end, icao24=icao24_misses)
+    if result is None:
+        log.warning("download_empty", kind=kind, date=date_str)
+        return
+
+    pdf = result.data if hasattr(result, "data") else result
+    for icao24 in icao24_misses:
+        sub = pdf[pdf["icao24"] == icao24] if "icao24" in pdf.columns else pdf
+        df = _to_polars(sub)
+        _raw_cache.write_atomic(_raw_cache.cache_path(cfg, kind, date_str, icao24), df)
+
+
+def _to_polars(obj: Any) -> pl.DataFrame:
+    import polars as pl
+
+    pdf = obj.data if hasattr(obj, "data") else obj
+    return pl.from_pandas(pdf)
+
+
+def _ensure_window_cached(
+    cfg: PipelineConfig,
+    date_str: str,
     icao24_list: list[str],
-    aircraft_db: pl.DataFrame,
-) -> pl.DataFrame | None:
-    """Fetch and assemble one OpenSky day window into a v3-renamed DataFrame."""
-    from traffic.data import opensky
+    *,
+    force: bool = False,
+) -> None:
+    """Ensure (date, icao24) cache entries exist for every kind; fetch only the misses."""
+    start = datetime.strptime(date_str, "%Y%m%d")
+    end = start + timedelta(hours=24)
 
-    date_str = current.strftime("%Y%m%d")
-    log.info("download_fetch", date=date_str)
-
-    history = opensky.history(current, next_day, icao24=icao24_list)
-    if history is None:
-        log.warning("download_empty", kind="history", date=date_str)
-        return None
-
-    extended = opensky.extended(current, next_day, icao24=icao24_list)
-    df = _build_window_df(history, extended)
-    df = normalize_schema(df, batch_date=date_str)
-
-    flightlist = opensky.flightlist(current, next_day, icao24=icao24_list)
-    df = join_flightlist_inline(df, flightlist)
-    df = _attach_typecode(df, aircraft_db)
-
-    log.info("download_processed", date=date_str, rows=len(df))
-    return df
+    kinds: tuple[_raw_cache.Kind, ...] = ("history", "extended", "flightlist")
+    for kind in kinds:
+        if force:
+            misses = list(icao24_list)
+        else:
+            misses = _raw_cache.cache_misses(cfg, kind, date_str, icao24_list)
+        if not misses:
+            continue
+        _fetch_and_cache_window(cfg, date_str, misses, kind, start=start, end=end)
 
 
-def download(
+def decode(
+    *,
+    config: Path,
+    start_date: str,
+    end_date: str,
+    **_kwargs: Any,
+) -> None:
+    """Phase-3 stub — decode raw cache into the Delta Table.
+
+    Filled in by AXM Phase 3. Present here so ``download`` can chain it.
+    """
+    log.info("decode_stub", start_date=start_date, end_date=end_date)
+
+
+def download(  # noqa: PLR0913
     *,
     config: Path,
     start_date: str,
     end_date: str,
     step_hours: int = 24,
     dry_run: bool = False,
+    no_decode: bool = False,
+    force_refresh: bool = False,
 ) -> None:
-    """Download ADS-B history and EHS data, write to Delta Table.
+    """Download ADS-B history and EHS data into the raw parquet cache.
 
-    Fetches ADS-B history and Extended Mode-S (EHS) data from OpenSky,
-    decodes BDS parameters, renames columns to the v3 ``raw_*`` / ``bds_*``
-    convention, and writes the result to a Delta Table partitioned by
-    ``meta_batch_date``.
+    Per ``(date, icao24)``, only missing cache entries are fetched from
+    OpenSky. Unless ``no_decode`` is set, ``decode`` is auto-chained
+    after the cache write to produce the Delta Table.
 
     Args:
         config: Path to the YAML config file.
@@ -363,41 +433,38 @@ def download(
         end_date: End date (YYYY-MM-DD).
         step_hours: Hours between download windows.
         dry_run: Validate config without performing I/O.
+        no_decode: Skip the auto-chained ``decode`` step.
+        force_refresh: Bypass cache and re-fetch every (date, icao24).
     """
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
-    aircraft_db, icao24_list = _load_aircraft_db(cfg)
+    _aircraft_db, icao24_list = _load_aircraft_db(cfg)
 
     log.info("download_start", start_date=start_date, end_date=end_date)
 
     if dry_run:
-        log.info("download_dry_run", msg="Config valid, would download to Delta table")
+        log.info("download_dry_run", msg="Config valid, would download to raw cache")
         return
-
-    import polars as pl
-    from node_fdm_data.delta import write_columns
 
     _require_traffic()
 
-    delta_table = cfg.paths.resolve("delta_table")
     start = datetime.strptime(start_date, "%Y-%m-%d")
     end = datetime.strptime(end_date, "%Y-%m-%d")
     step = timedelta(hours=step_hours)
 
-    all_frames: list[pl.DataFrame] = []
     current = start
     while current < end:
-        next_day = current + timedelta(hours=24)
-        df = _process_window(current, next_day, icao24_list, aircraft_db)
-        if df is not None:
-            all_frames.append(df)
+        date_str = current.strftime("%Y%m%d")
+        log.info("download_fetch", date=date_str)
+        _ensure_window_cached(cfg, date_str, icao24_list, force=force_refresh)
         current += step
 
-    if all_frames:
-        combined = pl.concat(all_frames, how="diagonal_relaxed")
-        write_columns(combined, delta_table)
-        log.info("download_done", table=str(delta_table), rows=len(combined))
+    if no_decode:
+        log.info("download_done_no_decode")
+        return
+
+    decode(config=config, start_date=start_date, end_date=end_date)
 
 
 # ---------------------------------------------------------------------------

@@ -349,6 +349,14 @@ def download(
         bool,
         cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
     ] = False,
+    no_decode: Annotated[
+        bool,
+        cyclopts.Parameter(name="--no-decode", help="Populate raw cache only; skip decode"),
+    ] = False,
+    force_refresh: Annotated[
+        bool,
+        cyclopts.Parameter(name="--force-refresh", help="Bypass cache and re-fetch all data"),
+    ] = False,
 ) -> None:
     """Download ADS-B history data from OpenSky by date range."""
     from node_fdm_pipeline.commands.data import download as download_fn
@@ -359,6 +367,8 @@ def download(
         end_date=end_date,
         step_hours=step_hours,
         dry_run=dry_run,
+        no_decode=no_decode,
+        force_refresh=force_refresh,
     )
 
 

@@ -1117,7 +1117,7 @@ class TestDownloadMock:
         return config
 
     def test_download_mock(self, tmp_path: Path) -> None:
-        """Full download with mocked OpenSky writes Delta table columns."""
+        """Cold download with mocked OpenSky populates the raw/ cache layout."""
         from unittest.mock import MagicMock
 
         import pandas as pd
@@ -1143,27 +1143,12 @@ class TestDownloadMock:
         mock_opensky = MagicMock()
         mock_opensky.history.return_value = mock_history
         mock_opensky.extended.return_value = None
-        mock_opensky.flightlist.return_value = None
-
-        mock_traffic_data = MagicMock()
-        mock_traffic_data.opensky = mock_opensky
-
-        written: list[pl.DataFrame] = []
+        mock_opensky.flightlist.return_value = pd.DataFrame({"icao24": ["abc123"]})
 
         with (
             patch("node_fdm_pipeline.commands.data._require_traffic"),
-            patch.dict(
-                "sys.modules",
-                {
-                    "traffic": MagicMock(),
-                    "traffic.core": MagicMock(),
-                    "traffic.data": mock_traffic_data,
-                },
-            ),
-            patch(
-                "node_fdm_data.delta.write_columns",
-                side_effect=lambda df, _p: written.append(df),
-            ),
+            patch("node_fdm_pipeline.commands.data.opensky", mock_opensky, create=True),
+            patch("node_fdm_pipeline.commands.data.decode") as mock_decode,
         ):
             download(
                 config=config,
@@ -1171,40 +1156,26 @@ class TestDownloadMock:
                 end_date="2025-01-02",
             )
 
-        assert len(written) == 1
-        df = written[0]
-        raw_cols = [c for c in df.columns if c.startswith("raw_")]
-        assert len(raw_cols) > 0
-        assert "meta_batch_date" in df.columns
-        assert "meta_departure" in df.columns
-        assert "meta_arrival" in df.columns
-        assert "meta_aircraft_type" in df.columns
+        raw_root = tmp_path / "data" / "raw"
+        assert (raw_root / "history" / "date=20250101" / "icao24=abc123" / "data.parquet").exists()
+        assert mock_opensky.history.call_count == 1
+        assert mock_decode.call_count == 1
 
     def test_download_empty_history(self, tmp_path: Path) -> None:
-        """OpenSky returns None for history → no data written."""
+        """OpenSky returns None for history → no parquet cache entry written."""
         from unittest.mock import MagicMock
 
         config = self._make_config(tmp_path)
 
         mock_opensky = MagicMock()
         mock_opensky.history.return_value = None
-
-        mock_traffic_data = MagicMock()
-        mock_traffic_data.opensky = mock_opensky
-
-        mock_write = MagicMock()
+        mock_opensky.extended.return_value = None
+        mock_opensky.flightlist.return_value = None
 
         with (
             patch("node_fdm_pipeline.commands.data._require_traffic"),
-            patch.dict(
-                "sys.modules",
-                {
-                    "traffic": MagicMock(),
-                    "traffic.core": MagicMock(),
-                    "traffic.data": mock_traffic_data,
-                },
-            ),
-            patch("node_fdm_data.delta.write_columns", mock_write),
+            patch("node_fdm_pipeline.commands.data.opensky", mock_opensky, create=True),
+            patch("node_fdm_pipeline.commands.data.decode"),
         ):
             download(
                 config=config,
@@ -1212,7 +1183,8 @@ class TestDownloadMock:
                 end_date="2025-01-02",
             )
 
-        mock_write.assert_not_called()
+        history_dir = tmp_path / "data" / "raw" / "history"
+        assert not history_dir.exists() or not any(history_dir.rglob("*.parquet"))
 
 
 # ---------------------------------------------------------------------------
