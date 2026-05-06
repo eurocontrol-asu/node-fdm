@@ -1,4 +1,4 @@
-"""Tests for node_fdm_data.delta — Delta Lake read/write helpers and schema registry."""
+"""Integration scenarios for Delta Lake writes, partition scoping, and time travel."""
 
 from __future__ import annotations
 
