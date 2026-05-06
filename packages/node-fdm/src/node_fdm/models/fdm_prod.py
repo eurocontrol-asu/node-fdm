@@ -139,12 +139,13 @@ class FlightDynamicsModelProd(nn.Module):
             col: self.stats_dict[col]["max"] for col in output_cols if col in self.stats_dict
         }
 
-        # Scaled denormalization: use p999 as scale, dx_bounds as cap.
-        # ``scale_overrides`` / ``cap_overrides`` (set by the architecture
-        # spec) take priority over stats-derived values: required for
-        # output columns that are not in ``dx_cols`` and therefore have no
-        # auto-computed p999 (e.g. PhysicsLayer-feeding heads like
-        # ``fdm_a_spec_ms2`` / ``fdm_n_z_residual``).
+        # Scaled denormalization precedence (mirrors training-side fdm.py):
+        #   scale: layer scale_overrides > spec.nn_output_caps > stats p999
+        #   cap:   layer cap_overrides   > spec.nn_output_caps > |dx_bounds|
+        # ``nn_output_caps`` carries hard physics caps (e.g. phi_bank=1.0 rad)
+        # that override the data-driven p999 fallback; ``scale_overrides`` /
+        # ``cap_overrides`` remain as a per-layer escape hatch for legacy
+        # checkpoints.
         raw_modes = layer_spec.config.get("denormalize_modes", {})
         denormalize_modes: dict[str, str] = dict(raw_modes) if isinstance(raw_modes, dict) else {}
         raw_scale_overrides = layer_spec.config.get("scale_overrides", {})
@@ -155,19 +156,27 @@ class FlightDynamicsModelProd(nn.Module):
         cap_overrides: dict[str, float] = (
             dict(raw_cap_overrides) if isinstance(raw_cap_overrides, dict) else {}
         )
+        nn_output_caps: dict[str, float] = self.spec.nn_output_caps
         scale_dict: dict[str, float] = {}
         cap_dict: dict[str, float] = {}
         for col, mode in denormalize_modes.items():
             if mode != "scaled":
                 continue
+            # Scale = data-driven natural unit (mirrors fdm.py — see notes
+            # there). nn_output_caps does NOT feed scale; it only caps.
             if col in scale_overrides:
                 scale_dict[col] = scale_overrides[col]
             elif col in self.stats_dict:
                 scale_dict[col] = self.stats_dict[col].get("p999", self.stats_dict[col]["std"])
+            # Cap = hard regulatory/physical bound (or fallback to scale).
             if col in cap_overrides:
                 cap_dict[col] = cap_overrides[col]
+            elif col in nn_output_caps:
+                cap_dict[col] = nn_output_caps[col]
             elif col in self.spec.dx_bounds:
                 cap_dict[col] = max(abs(v) for v in self.spec.dx_bounds[col])
+            elif col in scale_dict:
+                cap_dict[col] = scale_dict[col]
 
         return layer_cls(
             input_cols=input_cols,

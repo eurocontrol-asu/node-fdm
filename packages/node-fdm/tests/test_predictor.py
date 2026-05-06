@@ -154,6 +154,7 @@ class TestNodeFDMPredictor:
             spec.u_cols,
             spec.e0_cols,
             dx_col_names,
+            derived_cols=list(spec.derived_output_cols),
         )
 
         # Create model and save checkpoint + meta
@@ -223,7 +224,14 @@ class TestNodeFDMPredictor:
             )
         ]
         dx_col_names = [col for _, col in spec.dx_cols]
-        stats = compute_stats(samples, spec.x_cols, spec.u_cols, spec.e0_cols, dx_col_names)
+        stats = compute_stats(
+            samples,
+            spec.x_cols,
+            spec.u_cols,
+            spec.e0_cols,
+            dx_col_names,
+            derived_cols=list(spec.derived_output_cols),
+        )
 
         model = FlightDynamicsModel(spec, stats)
         model_dir = tmp_path / "guard_model"
@@ -268,7 +276,14 @@ class TestNodeFDMPredictor:
             )
         ]
         dx_col_names = [col for _, col in spec.dx_cols]
-        stats = compute_stats(samples, spec.x_cols, spec.u_cols, spec.e0_cols, dx_col_names)
+        stats = compute_stats(
+            samples,
+            spec.x_cols,
+            spec.u_cols,
+            spec.e0_cols,
+            dx_col_names,
+            derived_cols=list(spec.derived_output_cols),
+        )
 
         model = FlightDynamicsModel(spec, stats)
         model_dir = tmp_path / f"model_{method}"

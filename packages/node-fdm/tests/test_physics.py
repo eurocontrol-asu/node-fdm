@@ -184,7 +184,7 @@ class TestPhysicsLayerInitBias:
             + NODE_ADSB_V1.e0_cols
             + NODE_ADSB_V1.e1_cols
             + [c for _, c in NODE_ADSB_V1.dx_cols]
-            + ["fdm_a_spec_ms2", "fdm_n_z_residual"]
+            + ["fdm_a_spec_ms2", "fdm_n_z_residual", "fdm_phi_bank_rad"]
         )
         stats = {c: {"mean": 0.0, "std": 1.0, "max": 1.0, "p999": 1.0} for c in all_cols}
         model = FlightDynamicsModel(spec=NODE_ADSB_V1, stats_dict=stats, model_params=(2, 1, 32))

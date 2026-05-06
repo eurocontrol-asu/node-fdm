@@ -117,10 +117,17 @@ class FlightDynamicsModel(nn.Module):
         denormalize_modes: dict[str, str | None] = layer_spec.config.get("denormalize_modes", {})
         scale_overrides: dict[str, float] = layer_spec.config.get("scale_overrides", {})
         cap_overrides: dict[str, float] = layer_spec.config.get("cap_overrides", {})
+        nn_output_caps: dict[str, float] = self.spec.nn_output_caps
         scale_dict: dict[str, float] = {}
         cap_dict: dict[str, float] = {}
         for col, mode in denormalize_modes.items():
             if mode == "scaled":
+                # Scale = natural unit of the signal (data-driven).
+                # Precedence: layer scale_overrides > stats p999.
+                # ``nn_output_caps`` deliberately does NOT feed scale: it
+                # represents a hard regulatory/physical bound that should
+                # leave room for the data-driven scale to set the gradient
+                # sensitivity (cap > scale ⇒ live tanh gradient up to cap).
                 if col in scale_overrides:
                     scale_dict[col] = scale_overrides[col]
                 else:
@@ -129,10 +136,18 @@ class FlightDynamicsModel(nn.Module):
                         msg = f"Scaled mode for '{col}' requires 'p999' in stats_dict"
                         raise ValueError(msg)
                     scale_dict[col] = col_stats["p999"]
+                # Cap = hard bound (regulatory / physical / numerical).
+                # Precedence: layer cap_overrides > spec.nn_output_caps >
+                # dx_bounds > scale (cap≡scale fallback preserves legacy
+                # behavior when no explicit physical bound is declared).
                 if col in cap_overrides:
                     cap_dict[col] = cap_overrides[col]
+                elif col in nn_output_caps:
+                    cap_dict[col] = nn_output_caps[col]
                 elif col in self.spec.dx_bounds:
                     cap_dict[col] = self.spec.dx_bounds[col][1]
+                else:
+                    cap_dict[col] = scale_dict[col]
 
         output_init_biases: dict[str, float] = layer_spec.config.get("output_init_biases", {})
 

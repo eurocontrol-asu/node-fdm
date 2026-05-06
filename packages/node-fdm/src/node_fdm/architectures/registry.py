@@ -11,7 +11,7 @@ import warnings
 from typing import Any
 
 import torch.nn as nn
-from pydantic import BaseModel
+from pydantic import BaseModel, Field
 
 __all__ = [
     "REGISTRY",
@@ -72,6 +72,34 @@ class ArchitectureSpec(BaseModel, frozen=True):
     segment_filter_fn: str | None = None
     x_bounds: dict[str, tuple[float, float]] = {}
     dx_bounds: dict[str, tuple[float, float]] = {}
+    derived_output_cols: list[str] = Field(default_factory=list)
+    """NN-output columns whose stats must be derived analytically.
+
+    Listed columns are computed by ``DERIVED_FEATURES`` from the dataset
+    derivatives (e.g. ``fdm_a_spec_ms2`` from ``fdm_d_tas_ms2`` and
+    ``fdm_gamma_rad``). The resulting per-column ``p999`` feeds the
+    ``OutputDenormalizer`` scale via ``_create_structured_layer``.
+    """
+    nn_output_caps: dict[str, float] = Field(default_factory=dict)
+    """Hard physical caps for NN outputs in ``"scaled"`` denormalize mode.
+
+    Takes priority over the data-driven ``stats_dict[col]["p999"]`` fallback
+    for the ``cap`` parameter of ``OutputDenormalizer``. ``scale`` stays
+    data-driven (p999 from ``compute_stats``), so ``cap > scale`` keeps the
+    tanh gradient alive between ``scale`` and ``cap`` while the cap enforces
+    a hard regulatory/physical bound. Itself overridden by
+    ``layer_spec.config["cap_overrides"]`` (legacy per-layer overrides).
+    """
+    nn_output_scale_floor_ratio: float = 0.0
+    """Threshold (as fraction of unconditional p999) for the scale percentile.
+
+    When > 0, ``compute_stats`` derives the scale of NN-output columns from
+    the *conditional* p99.9 of ``|x|`` restricted to samples where
+    ``|x| > floor_ratio * p999_unconditional``. Removes the dilution caused
+    by long stretches of near-zero output (cruise for ``a_spec``,
+    straight-flight for ``phi_bank``) and yields a scale that reflects the
+    natural unit of the *active* signal.
+    """
 
 
 def register(spec: ArchitectureSpec) -> None:

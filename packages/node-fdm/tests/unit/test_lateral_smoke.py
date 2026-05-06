@@ -22,9 +22,9 @@ def _synthetic_stats(spec) -> dict[str, dict[str, float]]:  # type: ignore[no-un
     cols: set[str] = set(spec.x_cols) | set(spec.u_cols) | set(spec.e0_cols)
     cols |= set(spec.e1_cols)
     cols |= {col for _, col in spec.dx_cols}
-    # NN outputs (StructuredLayer) need stats too — its denormaliser
-    # consults stats_dict for the ``scaled`` path even though the
-    # cap/scale overrides take precedence.
+    # NN outputs (StructuredLayer) need stats too — the denormaliser reads
+    # stats_dict for the ``scaled`` path; spec.nn_output_caps / dx_bounds
+    # may further override the data-driven p999 fallback.
     for layer in spec.layers:
         cols |= set(layer.input_cols) | set(layer.output_cols)
     return {c: {"mean": 0.0, "std": 1.0, "max": 1.0, "p999": 1.0, "iqr": 1.0} for c in cols}

@@ -56,6 +56,7 @@ class TestAdsbForwardPass:
         spec = get("node_adsb_v1")
         dx_col_names = [c for _, c in spec.dx_cols]
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols + dx_col_names
+        all_cols += spec.derived_output_cols
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)
@@ -81,6 +82,7 @@ class TestAdsbAltDiffEdgeCases:
         spec = get("node_adsb_v1")
         dx_col_names = [c for _, c in spec.dx_cols]
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols + dx_col_names
+        all_cols += spec.derived_output_cols
         stats = _make_stats(all_cols)
         # Remove alt_diff stats to simulate AXM-758 not yet implemented
         stats.pop("fdm_alt_diff_m", None)

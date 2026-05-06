@@ -155,6 +155,7 @@ class ODETrainer:
         u_ode_cols = list(getattr(self.spec, "u_ode_cols", []) or [])
         dx_col_names = [col for _, col in self.spec.dx_cols]
         e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
+        derived_output_cols = list(getattr(self.spec, "derived_output_cols", []) or [])
         _samples = list(train_dataset)  # type: ignore[call-overload]
         _stats_args = {
             "x_cols": self.spec.x_cols,
@@ -162,12 +163,25 @@ class ODETrainer:
             "e_cols": self.spec.e0_cols,
             "dx_cols": dx_col_names,
         }
-        self.stats_dict = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
+        scale_floor = float(getattr(self.spec, "nn_output_scale_floor_ratio", 0.0) or 0.0)
+        self.stats_dict = compute_stats(
+            _samples,
+            **_stats_args,
+            e1_cols=e1_cols,
+            derived_cols=derived_output_cols,
+            derived_scale_floor_ratio=scale_floor,
+        )
 
         # Model stats: include e1 so StructuredLayer inputs are normalized.
         # compute_stats skips e1 columns already covered by DX, so no
         # overwrite risk for overlapping columns like fdm_d_alt_ms.
-        model_stats = compute_stats(_samples, **_stats_args, e1_cols=e1_cols)
+        model_stats = compute_stats(
+            _samples,
+            **_stats_args,
+            e1_cols=e1_cols,
+            derived_cols=derived_output_cols,
+            derived_scale_floor_ratio=scale_floor,
+        )
 
         self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(
             self.device

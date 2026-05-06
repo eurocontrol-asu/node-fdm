@@ -21,6 +21,7 @@ class TestFDMOpenSky:
         spec = get("node_adsb_v1")
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
         all_cols += [col for _, col in spec.dx_cols]
+        all_cols += spec.derived_output_cols
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)
@@ -38,6 +39,7 @@ class TestFDMOpenSky:
         spec = get("node_adsb_v1")
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
         all_cols += [col for _, col in spec.dx_cols]
+        all_cols += spec.derived_output_cols
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)
@@ -58,6 +60,7 @@ class TestFDMQAR:
         spec = get("qar")
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
         all_cols += [col for _, col in spec.dx_cols]
+        all_cols += spec.derived_output_cols
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)
@@ -75,6 +78,7 @@ class TestFDMQAR:
         spec = get("qar")
         all_cols = spec.x_cols + spec.u_cols + spec.e0_cols + spec.e1_cols
         all_cols += [col for _, col in spec.dx_cols]
+        all_cols += spec.derived_output_cols
         stats = _make_stats(all_cols)
 
         model = FlightDynamicsModel(spec, stats)

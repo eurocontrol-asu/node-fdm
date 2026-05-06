@@ -20,6 +20,8 @@ Auto-registers at import time.
 
 from __future__ import annotations
 
+import math
+
 from node_fdm.architectures.registry import ArchitectureSpec, LayerSpec, register
 from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
 
@@ -120,18 +122,11 @@ NODE_ADSB_V1 = ArchitectureSpec(
                     "fdm_a_spec_ms2": "scaled",
                     "fdm_n_z_residual": "scaled",
                 },
-                # Scales calibrated on real ADS-B distribution (p99.9):
-                #   a_spec      : std=0.6,  p99.9=2.6 m/s²
-                #   n_z_residual: std=0.022, p99.9=0.13
-                # cap = p99.9 (physical bound), scale = cap so denorm = cap*tanh(x).
-                "scale_overrides": {
-                    "fdm_a_spec_ms2": 2.5,
-                    "fdm_n_z_residual": 0.13,
-                },
-                "cap_overrides": {
-                    "fdm_a_spec_ms2": 2.5,
-                    "fdm_n_z_residual": 0.13,
-                },
+                # Scale/cap are now sourced from compute_stats: each col is
+                # listed in ``derived_output_cols`` below, DERIVED_FEATURES
+                # inverts the PhysicsLayer to produce per-sample values, and
+                # the resulting p999 feeds OutputDenormalizer (cap = p999,
+                # so denorm = p999 * tanh(x / p999)).
             },
         ),
         LayerSpec(
@@ -171,16 +166,12 @@ NODE_ADSB_V1 = ArchitectureSpec(
                 "denormalize_modes": {
                     "fdm_phi_bank_rad": "scaled",
                 },
-                # phi_bank: hard cap at 1.0 rad (Decision Q1 from briefing —
-                # ~5.5% of empirical samples saturate; tan(1.0)=1.557 keeps the
-                # ``g/V·tan`` term well-conditioned and the dx clamp ±0.1 rad/s
-                # then bounds the rate physically).
-                "scale_overrides": {
-                    "fdm_phi_bank_rad": 1.0,
-                },
-                "cap_overrides": {
-                    "fdm_phi_bank_rad": 1.0,
-                },
+                # phi_bank cap = 1.0 rad is a physics/conditioning decision,
+                # not a data percentile (tan(1.0)=1.557 keeps ``g/V·tan``
+                # well-conditioned; dx clamp ±0.1 rad/s bounds the rate).
+                # Carried at the spec level via ``nn_output_caps`` so it
+                # overrides the data-driven p999 fallback while still
+                # appearing in stats for diagnostics.
             },
         ),
         LayerSpec(
@@ -223,6 +214,34 @@ NODE_ADSB_V1 = ArchitectureSpec(
         # Rate-2 turn (6 deg/s = 0.1 rad/s) is the typical commercial bound.
         "fdm_d_heading_rads": (-0.1, 0.1),
     },
+    derived_output_cols=[
+        # NN-output targets — stats derived from observable derivatives via
+        # the inverse PhysicsLayer (see node_fdm.dataset.DERIVED_FEATURES).
+        "fdm_a_spec_ms2",
+        "fdm_n_z_residual",
+        "fdm_phi_bank_rad",
+    ],
+    nn_output_caps={
+        # Hard regulatory / physical bounds — not data-driven. Each cap
+        # leaves room above the data-driven p99.9 scale so ``cap > scale``
+        # keeps the tanh gradient alive over the full operational envelope.
+        #
+        # a_spec: ±8 m/s² (~0.8 g) covers emergency braking after landing
+        # per FAA acceleration brochure (typical max 0.6-0.8 g).
+        "fdm_a_spec_ms2": 8.0,
+        # n_z_residual: ±2.0 (n_z certified up to 2.5 g per 14 CFR 25.337,
+        # so residual = n_z - 1 in [-2.0, +1.5]; we use the symmetric bound).
+        "fdm_n_z_residual": 2.0,
+        # phi_bank: pi/3 (60°) — commercial operating limit, FAR/CS-25
+        # normal manoeuvres. tan(pi/3) ≈ 1.73 keeps ``g/V·tan(phi)``
+        # numerically well-behaved.
+        "fdm_phi_bank_rad": math.pi / 3,
+    },
+    # Compute the data-driven scale on the *active* signal: filter out
+    # samples where |x| <= 1% * p999 (cruise / straight flight) so the
+    # resulting p99.9 reflects the natural unit of operating manoeuvres
+    # rather than being diluted by long stretches of near-zero output.
+    nn_output_scale_floor_ratio=0.01,
 )
 
 register(NODE_ADSB_V1)
