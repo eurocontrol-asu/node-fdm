@@ -35,6 +35,23 @@ Additional flags:
 
 ---
 
+## 2b. decode
+
+Rebuilds `data/flights.delta` from the existing `data/raw/` parquet cache. Makes **zero** OpenSky calls — useful for re-running the schema/typecode pipeline after a code change without re-downloading.
+
+```bash
+uv run fdm decode --config config.yaml --start-date 2025-09-01 --end-date 2025-09-02
+```
+
+Additional flags:
+
+- `--icao24-filter PATH`: file with one icao24 per line; intersected with `aircraft_db.csv` to restrict the demanded set.
+- `--dry-run`: validate config without writing the Delta.
+
+Missing `(date, icao24)` cache entries are silently skipped; a single `decode_skipped_uncached` warning is logged at the end with the total count.
+
+---
+
 ## 3. identify
 
 Segments flights (gap-based) and assigns `meta_flight_id`.

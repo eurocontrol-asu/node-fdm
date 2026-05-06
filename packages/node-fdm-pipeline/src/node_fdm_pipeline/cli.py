@@ -373,6 +373,45 @@ def download(
 
 
 @app.command
+def decode(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    start_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--start-date", help="Start date (YYYY-MM-DD)"),
+    ],
+    end_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--end-date", help="End date (YYYY-MM-DD)"),
+    ],
+    icao24_filter: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--icao24-filter",
+            help="Optional file with one icao24 per line; intersected with aircraft_db.csv",
+        ),
+    ] = None,
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Rebuild the Delta Table from the raw parquet cache (no network)."""
+    from node_fdm_pipeline.commands.data import decode as decode_fn
+
+    decode_fn(
+        config=config,
+        start_date=start_date,
+        end_date=end_date,
+        icao24_filter=icao24_filter,
+        dry_run=dry_run,
+    )
+
+
+@app.command
 def enrich(
     *,
     config: Annotated[

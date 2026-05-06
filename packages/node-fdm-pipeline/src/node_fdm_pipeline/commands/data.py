@@ -276,34 +276,6 @@ def _load_aircraft_db(cfg: PipelineConfig) -> tuple[pl.DataFrame, list[str]]:
     return aircraft_db, aircraft_db["icao24"].unique().to_list()
 
 
-def _build_window_df(
-    history: object,
-    extended: object,
-) -> pl.DataFrame:
-    """Merge OpenSky history with decoded EHS extended data into a single Polars frame."""
-    import polars as pl
-    from traffic.core import Traffic
-
-    history_df = pl.from_pandas(history.data)  # type: ignore[attr-defined]
-    if extended is None:
-        return history_df
-
-    ext_pd = extended.data if hasattr(extended, "data") else extended
-    decoder = _RawEHSDecoder(ext_pd)
-    decoded_flights: list[Flight] = []
-    for flight in history:  # type: ignore[attr-defined]
-        decoded = decoder(flight)
-        if decoded is not None:
-            decoded_flights.append(decoded)
-
-    if not decoded_flights:
-        return history_df
-    merged = Traffic.from_flights(decoded_flights)
-    if merged is None:
-        return history_df
-    return pl.from_pandas(merged.data)
-
-
 def _attach_typecode(df: pl.DataFrame, aircraft_db: pl.DataFrame) -> pl.DataFrame:
     """Fill missing meta_aircraft_type from aircraft_db via icao24 lookup."""
     import polars as pl
@@ -397,18 +369,133 @@ def _ensure_window_cached(
         _fetch_and_cache_window(cfg, date_str, misses, kind, start=start, end=end)
 
 
+def _read_icao24_filter(path: Path | None) -> set[str] | None:
+    if path is None:
+        return None
+    return {line.strip().lower() for line in Path(path).read_text().splitlines() if line.strip()}
+
+
+def _decode_one_window(
+    cfg: PipelineConfig,
+    date_str: str,
+    icao24_demanded: list[str],
+    aircraft_db: pl.DataFrame,
+) -> tuple[pl.DataFrame | None, int]:
+    """Decode a single (date, icao24-set) window from the raw cache.
+
+    Returns the per-day frame (or ``None`` if nothing cached) and the
+    skip count for ``(date, icao24)`` pairs absent from the cache.
+    """
+    import polars as pl
+    from traffic.core import Flight, Traffic
+
+    cached = [i for i in icao24_demanded if _raw_cache.is_cached(cfg, "history", date_str, i)]
+    skipped = len(icao24_demanded) - len(cached)
+
+    history_pl = _raw_cache.read_partition(cfg, "history", date_str, icao24_demanded)
+    if history_pl.is_empty():
+        return None, skipped
+
+    extended_pl = _raw_cache.read_partition(cfg, "extended", date_str, cached)
+    extended_pdf = extended_pl.to_pandas() if not extended_pl.is_empty() else None
+
+    flightlist_path = _raw_cache.cache_path(cfg, "flightlist", date_str, "_")
+    flightlist_pl = _raw_cache.read_parquet(flightlist_path) if flightlist_path.exists() else None
+
+    history_pdf = history_pl.to_pandas()
+    decoder = _RawEHSDecoder(extended_pdf)
+    decoded_flights: list[Flight] = []
+    if "icao24" in history_pdf.columns:
+        for _icao24, group in history_pdf.groupby("icao24"):
+            try:
+                fl = Flight(group)
+            except Exception:  # noqa: BLE001, S112
+                continue
+            decoded = decoder(fl)
+            if decoded is not None:
+                decoded_flights.append(decoded)
+    else:
+        return None, skipped
+
+    if not decoded_flights:
+        return None, skipped
+
+    merged = Traffic.from_flights(decoded_flights)
+    if merged is None:
+        return None, skipped
+    df = pl.from_pandas(merged.data)
+    df = normalize_schema(df, batch_date=date_str)
+    df = join_flightlist_inline(df, flightlist_pl)
+    df = _attach_typecode(df, aircraft_db)
+    return df, skipped
+
+
 def decode(
     *,
     config: Path,
     start_date: str,
     end_date: str,
+    icao24_filter: Path | None = None,
+    dry_run: bool = False,
     **_kwargs: Any,
 ) -> None:
-    """Phase-3 stub — decode raw cache into the Delta Table.
+    """Decode raw parquet cache into the ``flights.delta`` Delta Table.
 
-    Filled in by AXM Phase 3. Present here so ``download`` can chain it.
+    Reads ``data/raw/history/`` + ``data/raw/extended/`` + ``data/raw/flightlist/``
+    for the demanded set (``aircraft_db.csv`` ∩ optional ``--icao24-filter``)
+    and rebuilds the Delta partitioned by ``meta_batch_date``. Makes zero
+    network calls — ``traffic.data.opensky`` is never imported.
     """
-    log.info("decode_stub", start_date=start_date, end_date=end_date)
+    import polars as pl
+    from node_fdm_data.delta import write_columns
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    aircraft_db, csv_icao24 = _load_aircraft_db(cfg)
+
+    filter_set = _read_icao24_filter(icao24_filter)
+    demanded = (
+        [i for i in csv_icao24 if i.lower() in filter_set] if filter_set else list(csv_icao24)
+    )
+
+    log.info(
+        "decode_start",
+        start_date=start_date,
+        end_date=end_date,
+        n_icao24=len(demanded),
+    )
+
+    if dry_run:
+        log.info("decode_dry_run", msg="Config valid, would rebuild Delta")
+        return
+
+    start = datetime.strptime(start_date, "%Y-%m-%d")
+    end = datetime.strptime(end_date, "%Y-%m-%d")
+    step = timedelta(hours=24)
+
+    frames: list[pl.DataFrame] = []
+    skipped_total = 0
+    current = start
+    while current < end:
+        date_str = current.strftime("%Y%m%d")
+        df, skipped = _decode_one_window(cfg, date_str, demanded, aircraft_db)
+        skipped_total += skipped
+        if df is not None:
+            frames.append(df)
+        current += step
+
+    if skipped_total > 0:
+        log.warning("decode_skipped_uncached", count=skipped_total)
+
+    if not frames:
+        log.info("decode_done", rows=0, msg="no cached data in range")
+        return
+
+    out = pl.concat(frames, how="diagonal_relaxed")
+    delta_path = Path(cfg.paths.data_dir) / "flights.delta"
+    write_columns(out, delta_path)
+    log.info("decode_done", rows=len(out), output=str(delta_path))
 
 
 def download(  # noqa: PLR0913
