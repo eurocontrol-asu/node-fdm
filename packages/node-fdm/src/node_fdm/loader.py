@@ -21,8 +21,15 @@ log = structlog.get_logger("node_fdm.loader")
 
 
 def _fill_nan_sel(df: pl.DataFrame) -> pl.DataFrame:
-    """Fill NaN and null to 0.0 on ``fdm_*_sel*`` columns."""
-    sel_cols = [c for c in df.columns if c.startswith("fdm_") and "_sel" in c]
+    """Fill NaN and null to 0.0 on numeric ``fdm_*_sel*`` columns.
+
+    Boolean companions like ``fdm_track_sel_known`` are skipped — they
+    carry presence info, not a value, and ``fill_nan`` is unsupported
+    on bool dtype.
+    """
+    sel_cols = [
+        c for c in df.columns if c.startswith("fdm_") and "_sel" in c and df.schema[c].is_numeric()
+    ]
     if sel_cols:
         df = df.with_columns(
             [pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols],
