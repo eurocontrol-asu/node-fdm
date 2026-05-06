@@ -103,7 +103,7 @@ def test_wind_std_constant_wind_zero() -> None:
     u = np.full(n, 10.0)
     v = np.full(n, -5.0)
     wstd = compute_wind_std(u, v)
-    assert np.all(wstd < 1e-9)
+    assert np.all(wstd < 1e-6)
 
 
 def test_wind_std_step_change_detected() -> None:

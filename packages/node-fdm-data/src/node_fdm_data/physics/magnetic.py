@@ -18,6 +18,8 @@ import numpy as np
 import numpy.typing as npt
 from pygeomag import GeoMag  # type: ignore[import-untyped]
 
+from node_fdm_data.physics.wmm import declination_vec
+
 __all__ = [
     "magnetic_declination",
 ]
@@ -66,20 +68,21 @@ def magnetic_declination(
 
     n = lat_arr.size
     out = np.full(n, np.nan, dtype=np.float64)
+    if n == 0:
+        return out
+
+    bad = np.isnan(lat_arr) | np.isnan(lon_arr)
+    if bool(bad.all()):
+        return out
+
     alt_km = np.where(np.isnan(alt_arr), 0.0, alt_arr * _FT_TO_KM)
     decimal_year = _decimal_year(timestamp)
 
-    for i in range(n):
-        if np.isnan(lat_arr[i]) or np.isnan(lon_arr[i]):
-            continue
-        try:
-            res = _GEOMAG.calculate(
-                glat=float(lat_arr[i]),
-                glon=float(lon_arr[i]),
-                alt=float(alt_km[i]),
-                time=decimal_year,
-            )
-            out[i] = res.d
-        except Exception:  # noqa: BLE001 — WMM may reject extreme inputs
-            out[i] = np.nan
-    return out
+    # Mask NaN inputs to a safe value so the vectorized eval does not poison
+    # neighbouring samples; results at masked indices are restored to NaN.
+    lat_safe = np.where(bad, 0.0, lat_arr)
+    lon_safe = np.where(bad, 0.0, lon_arr)
+    alt_safe = np.where(bad, 0.0, alt_km)
+
+    declination = declination_vec(_GEOMAG, lat_safe, lon_safe, alt_safe, decimal_year)
+    return np.where(bad, np.nan, declination)

@@ -146,15 +146,26 @@ def compute_wind_std(
     if n == 0:
         return mag.astype(np.float64)
     w = max(2, int(window_samples))
-    out = np.empty(n, dtype=np.float64)
     half = w // 2
-    for i in range(n):
-        lo = max(0, i - half)
-        hi = min(n, i + half + 1)
-        window = mag[lo:hi]
-        finite = window[np.isfinite(window)]
-        out[i] = float(np.std(finite)) if finite.size >= _MIN_STD_SAMPLES else 0.0
-    return out
+
+    finite = np.isfinite(mag).astype(np.float64)
+    m = np.where(np.isfinite(mag), mag, 0.0)
+    c1 = np.concatenate(([0.0], np.cumsum(m)))
+    c2 = np.concatenate(([0.0], np.cumsum(m * m)))
+    cn = np.concatenate(([0.0], np.cumsum(finite)))
+
+    idx = np.arange(n)
+    lo = np.maximum(0, idx - half)
+    hi = np.minimum(n, idx + half + 1)
+    s1 = c1[hi] - c1[lo]
+    s2 = c2[hi] - c2[lo]
+    cnt = cn[hi] - cn[lo]
+    with np.errstate(invalid="ignore", divide="ignore"):
+        mean = s1 / cnt
+        var = s2 / cnt - mean * mean
+        var = np.where(var < 0, 0.0, var)
+        std = np.sqrt(var)
+    return np.where(cnt >= _MIN_STD_SAMPLES, std, 0.0)
 
 
 def coalesce_heading(  # noqa: PLR0913 — six primary signals, all required
