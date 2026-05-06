@@ -1235,3 +1235,316 @@ class TestBuildSelectedParamsEmpty:
         ):
             assert col in out.columns
         assert len(out) == 0
+
+
+# === Merged from test_gamma_from_alt.py: AXM-802 (altitude-plateau gamma=0) ===
+
+
+def _gfa_alt_config() -> dict[str, Any]:
+    """Minimal config that enables altitude segment detection."""
+    return {
+        "alt": {"tol": 25, "min_len": 5, "use_alt": False},
+    }
+
+
+def _gfa_full_config() -> dict[str, Any]:
+    """Config with mach + alt sections."""
+    return {
+        "mach": {
+            "tol": 0.0005,
+            "min_len": 30,
+            "alt_threshold": 15000,
+            "smooth_window": 10,
+            "use_alt": True,
+        },
+        "alt": {
+            "tol": 25,
+            "min_len": 5,
+            "use_alt": False,
+            "min_abs_value": 25,
+            "smooth_window": 5,
+            "smooth_method": "savgol",
+        },
+    }
+
+
+class TestGammaFromAltColumn:
+    """fdm_gamma_from_alt_rad column: 0.0 in level-flight, NaN elsewhere."""
+
+    def test_column_created_when_alt_segments_exist(self) -> None:
+        alt = np.concatenate(
+            [
+                np.linspace(5000, 35000, 50),
+                np.full(50, 35000.0),
+            ]
+        )
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+        assert "fdm_gamma_from_alt_rad" in result.columns
+
+    def test_zero_inside_altitude_plateau(self) -> None:
+        n = 100
+        alt = np.full(n, 35000.0)
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        alt_sel = result["fdm_alt_sel_ft"]
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+
+        level_mask = ~alt_sel.is_nan()
+        assert level_mask.sum() > 0
+        stabilised = gamma[15:]
+        assert np.nansum(stabilised == 0.0) > 0
+
+    def test_nan_outside_altitude_plateau(self) -> None:
+        alt = np.concatenate(
+            [
+                np.linspace(5000, 35000, 50),
+                np.full(50, 35000.0),
+            ]
+        )
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        alt_sel = result["fdm_alt_sel_ft"]
+        gamma = result["fdm_gamma_from_alt_rad"]
+
+        non_level_mask = alt_sel.is_nan()
+        assert non_level_mask.sum() > 0
+        gamma_outside = gamma.filter(non_level_mask)
+        assert gamma_outside.is_nan().all()
+
+    def test_exact_alignment_with_alt_sel(self) -> None:
+        alt = np.concatenate(
+            [
+                np.full(60, 10000.0),
+                np.linspace(10000, 35000, 80),
+                np.full(60, 35000.0),
+            ]
+        )
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+
+        level_mask = ~np.isnan(alt_sel)
+        assert np.all(np.isnan(gamma[~level_mask]))
+        level_vals = gamma[level_mask]
+        n_nan = np.isnan(level_vals).sum()
+        n_zero = (level_vals == 0.0).sum()
+        assert n_nan > 0
+        assert n_zero > 0
+        assert n_nan + n_zero == len(level_vals)
+
+
+class TestGammaFromAltIntegration:
+    """Integration: gamma_from_alt inside full build_selected_params."""
+
+    def test_full_config_produces_column(self) -> None:
+        n = 300
+        rng = np.random.default_rng(42)
+        alt = np.concatenate(
+            [
+                np.linspace(0, 35000, 100),
+                np.full(100, 35000),
+                np.linspace(35000, 0, 100),
+            ]
+        )
+        mach = np.concatenate(
+            [
+                np.linspace(0.3, 0.78, 100),
+                np.full(100, 0.78),
+                np.linspace(0.78, 0.3, 100),
+            ]
+        )
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "era_mach": mach + rng.normal(0, 0.0001, n),
+            }
+        )
+        result = build_selected_params(df, _gfa_full_config())
+
+        assert "fdm_gamma_from_alt_rad" in result.columns
+        gamma = result["fdm_gamma_from_alt_rad"]
+        assert (gamma == 0.0).sum() > 0
+
+    def test_coexists_with_gamma_sel(self) -> None:
+        n = 300
+        rng = np.random.default_rng(42)
+        alt = np.concatenate(
+            [
+                np.linspace(0, 35000, 100),
+                np.full(100, 35000),
+                np.linspace(35000, 0, 100),
+            ]
+        )
+        vz = np.concatenate(
+            [
+                np.full(100, 2000.0),
+                np.full(100, 0.0) + rng.normal(0, 5, 100),
+                np.full(100, -1500.0),
+            ]
+        )
+        gamma = np.arcsin(np.clip(vz * (0.3048 / 60) / (450 * 0.514444 + 1e-6), -1, 1))
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "era_mach": np.linspace(0.3, 0.78, n),
+                "raw_vz_ftmin": vz,
+                "fdm_gamma_rad": gamma,
+            }
+        )
+        config = {
+            "vz": {
+                "tol": 25,
+                "min_len": 20,
+                "use_alt": False,
+                "min_abs_value": 75,
+                "smooth_window": 15,
+                "smooth_method": "savgol",
+            },
+            "gamma": {
+                "tol": 0.002,
+                "min_len": 15,
+                "use_alt": False,
+                "smooth_window": 5,
+                "smooth_method": "savgol",
+            },
+            "alt": {
+                "tol": 25,
+                "min_len": 5,
+                "use_alt": False,
+                "min_abs_value": 25,
+                "smooth_window": 5,
+                "smooth_method": "savgol",
+            },
+        }
+        result = build_selected_params(df, config)
+
+        assert "fdm_gamma_sel_rad" in result.columns
+        assert "fdm_gamma_from_alt_rad" in result.columns
+
+    def test_length_preserved(self) -> None:
+        n = 150
+        alt = np.concatenate(
+            [
+                np.full(50, 10000.0),
+                np.linspace(10000, 35000, 50),
+                np.full(50, 35000.0),
+            ]
+        )
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+        assert len(result) == n
+        assert len(result["fdm_gamma_from_alt_rad"]) == n
+
+
+class TestGammaFromAltEdgeCases:
+    """Edge cases for altitude-plateau gamma detection."""
+
+    def test_no_alt_config_no_column(self) -> None:
+        n = 50
+        df = pl.DataFrame(
+            {
+                "raw_alt_ft": np.full(n, 35000.0),
+                "era_mach": np.full(n, 0.78),
+            }
+        )
+        config: dict[str, Any] = {
+            "mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True},
+        }
+        result = build_selected_params(df, config)
+        assert "fdm_gamma_from_alt_rad" not in result.columns
+
+    def test_no_altitude_plateau_all_nan(self) -> None:
+        n = 100
+        alt = np.linspace(5000, 35000, n)
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        assert "fdm_gamma_from_alt_rad" in result.columns
+        assert result["fdm_gamma_from_alt_rad"].is_nan().all()
+
+    def test_entire_flight_level(self) -> None:
+        n = 100
+        df = pl.DataFrame({"raw_alt_ft": np.full(n, 35000.0)})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        level_count = (~np.isnan(alt_sel)).sum()
+        zero_count = (gamma == 0.0).sum()
+        nan_count = np.isnan(gamma[~np.isnan(alt_sel)]).sum()
+        assert zero_count + nan_count == level_count
+        assert nan_count <= 15
+
+    def test_multiple_level_segments(self) -> None:
+        alt = np.concatenate(
+            [
+                np.full(40, 10000.0),
+                np.linspace(10000, 35000, 40),
+                np.full(40, 35000.0),
+                np.linspace(35000, 20000, 40),
+                np.full(40, 20000.0),
+            ]
+        )
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+
+        level_mask = ~np.isnan(alt_sel)
+        assert level_mask.sum() > 0
+        level_vals = gamma[level_mask]
+        n_zero = (level_vals == 0.0).sum()
+        n_nan = np.isnan(level_vals).sum()
+        assert n_zero > 0
+        assert n_nan > 0
+        assert n_nan + n_zero == len(level_vals)
+
+    def test_short_flight_below_min_len(self) -> None:
+        n = 3
+        df = pl.DataFrame({"raw_alt_ft": np.full(n, 35000.0)})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        assert "fdm_gamma_from_alt_rad" in result.columns
+        assert result["fdm_gamma_from_alt_rad"].is_nan().all()
+
+    def test_dtype_is_float64(self) -> None:
+        n = 50
+        df = pl.DataFrame({"raw_alt_ft": np.full(n, 35000.0)})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        assert result["fdm_gamma_from_alt_rad"].dtype == pl.Float64
+
+    def test_segment_shorter_than_relax(self) -> None:
+        alt = np.concatenate(
+            [
+                np.linspace(5000, 35000, 50),
+                np.full(10, 35000.0),
+                np.linspace(35000, 5000, 50),
+            ]
+        )
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        result = build_selected_params(df, _gfa_alt_config())
+
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        level_mask = ~np.isnan(alt_sel)
+        if level_mask.sum() > 0:
+            assert np.all(np.isnan(gamma[level_mask]))
+
+    def test_relax_zero_disables_relaxation(self) -> None:
+        n = 100
+        alt = np.full(n, 35000.0)
+        df = pl.DataFrame({"raw_alt_ft": alt})
+        config = {**_gfa_alt_config(), "alt_hold_relax": 0}
+        result = build_selected_params(df, config)
+
+        gamma = result["fdm_gamma_from_alt_rad"].to_numpy()
+        alt_sel = result["fdm_alt_sel_ft"].to_numpy()
+        level_mask = ~np.isnan(alt_sel)
+        assert (gamma[level_mask] == 0.0).all()
