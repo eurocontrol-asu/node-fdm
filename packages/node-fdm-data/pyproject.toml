@@ -131,6 +131,13 @@ exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedE
 [tool.coverage.xml]
 output = "coverage.xml"
 
+[tool.axm-audit.mirror]
+# Modules covered outside tests/unit/ — exempt from PRACTICE_TEST_MIRROR.
+exempt_paths = [
+    "delta.py",            # covered by tests/integration/test_delta_write_and_time_travel.py
+    "lateral_segments.py", # internal helpers of lateral.py, covered transitively via test_lateral.py
+]
+
 [tool.git-cliff.changelog]
 header = ""
 body = """
