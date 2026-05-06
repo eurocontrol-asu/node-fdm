@@ -62,11 +62,29 @@ def read_parquet(path: Path) -> pl.DataFrame:
 
 
 def read_partition(
-    cfg: PipelineConfig, kind: Kind, date_str: str, icao24_list: Iterable[str]
+    cfg: PipelineConfig,
+    kind: Kind,
+    date_str: str,
+    icao24_list: Iterable[str],
+    *,
+    drop_columns: Iterable[str] = (),
 ) -> pl.DataFrame:
-    frames = [
-        read_parquet(p) for i in icao24_list if (p := cache_path(cfg, kind, date_str, i)).exists()
-    ]
+    """Read every cached parquet for the given (kind, date, icao24*) set.
+
+    *drop_columns* is dropped from each frame **before** concat — caller-supplied
+    blacklist for columns whose dtype is known to vary across files (e.g. the
+    OpenSky ``serials`` column, sometimes ``List[Int64]`` and sometimes ``String``).
+    """
+    drop_set = set(drop_columns)
+    frames: list[pl.DataFrame] = []
+    for icao24 in icao24_list:
+        path = cache_path(cfg, kind, date_str, icao24)
+        if not path.exists():
+            continue
+        df = read_parquet(path)
+        if drop_set:
+            df = df.drop([c for c in drop_set if c in df.columns])
+        frames.append(df)
     if not frames:
         return pl.DataFrame()
     return pl.concat(frames, how="vertical_relaxed")

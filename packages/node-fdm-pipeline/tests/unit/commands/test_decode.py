@@ -56,7 +56,7 @@ def test_decode_filter_intersects_with_csv(
 
     requested: list[set[str]] = []
 
-    def fake_read_partition(_cfg, _kind, _date, icao24_list):  # type: ignore[no-untyped-def]
+    def fake_read_partition(_cfg, _kind, _date, icao24_list, **_kwargs):  # type: ignore[no-untyped-def]
         requested.append(set(icao24_list))
         return pl.DataFrame()
 

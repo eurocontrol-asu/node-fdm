@@ -81,6 +81,12 @@ _BDS_RENAME: dict[str, str] = {
     "heading": "bds_hdg_deg",
 }
 
+# OpenSky raw-cache columns whose dtype varies across (date, icao24) parquets
+# (e.g. ``serials`` is sometimes ``List[Int64]`` and sometimes ``String``).
+# Dropped on read before ``vertical_relaxed`` concat — they are unused
+# downstream (``_RawEHSDecoder`` drops them anyway).
+_UNSTABLE_RAW_COLUMNS: tuple[str, ...] = ("serials",)
+
 
 # ---------------------------------------------------------------------------
 # Traffic guard
@@ -392,11 +398,15 @@ def _decode_one_window(
     cached = [i for i in icao24_demanded if _raw_cache.is_cached(cfg, "history", date_str, i)]
     skipped = len(icao24_demanded) - len(cached)
 
-    history_pl = _raw_cache.read_partition(cfg, "history", date_str, icao24_demanded)
+    history_pl = _raw_cache.read_partition(
+        cfg, "history", date_str, icao24_demanded, drop_columns=_UNSTABLE_RAW_COLUMNS
+    )
     if history_pl.is_empty():
         return None, skipped
 
-    extended_pl = _raw_cache.read_partition(cfg, "extended", date_str, cached)
+    extended_pl = _raw_cache.read_partition(
+        cfg, "extended", date_str, cached, drop_columns=_UNSTABLE_RAW_COLUMNS
+    )
     extended_pdf = extended_pl.to_pandas() if not extended_pl.is_empty() else None
 
     flightlist_path = _raw_cache.cache_path(cfg, "flightlist", date_str, "_")
