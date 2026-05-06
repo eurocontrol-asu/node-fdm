@@ -71,9 +71,35 @@ def _filter_nan_segments(
     return x_arr[finite_mask][0], u_seq[finite_mask], e_seq[finite_mask]
 
 
-def _resolve_model_path(*, info: object, acft: str, local_model: bool, models_dir: Path) -> Path:
-    """Resolve the model directory: local models_dir if local_model else packaged pretrained."""
+def _resolve_model_path(
+    *,
+    info: object,
+    acft: str,
+    local_model: bool,
+    models_dir: Path,
+    model_name: str | None = None,
+) -> Path:
+    """Resolve the model directory.
+
+    Precedence:
+        * ``local_model=True`` and ``model_name`` provided →
+          ``models_dir / model_name``.
+        * ``local_model=True`` and ``model_name`` is ``None`` →
+          ``models_dir / f"{info.name}_{acft}"`` (legacy default).
+        * ``local_model=False`` → packaged pretrained directory under
+          ``node_fdm.models.pretrained_models.<info.name>``.
+
+    Args:
+        info: Architecture info (must expose ``.name``).
+        acft: ICAO typecode (used in the legacy default).
+        local_model: If True, resolve under ``models_dir``; else packaged.
+        models_dir: Local models root.
+        model_name: Optional explicit checkpoint directory name (relative
+            to ``models_dir``).  Only honoured when ``local_model=True``.
+    """
     if local_model:
+        if model_name is not None:
+            return models_dir / model_name
         return models_dir / f"{info.name}_{acft}"  # type: ignore[attr-defined]
     return Path(
         str(
@@ -145,6 +171,7 @@ def _predict_typecode(
     device: str,
     local_model: bool,
     nan_threshold: float,
+    model_name: str | None = None,
 ) -> None:
     """Load the typecode's model and predict every flight in its filtered test partition."""
     import polars as pl
@@ -152,7 +179,11 @@ def _predict_typecode(
 
     log.info("predict_typecode", typecode=acft)
     model_path = _resolve_model_path(
-        info=info, acft=acft, local_model=local_model, models_dir=models_dir
+        info=info,
+        acft=acft,
+        local_model=local_model,
+        models_dir=models_dir,
+        model_name=model_name,
     )
     if not model_path.exists():
         log.warning("predict_model_not_found", typecode=acft, path=str(model_path))
@@ -187,6 +218,7 @@ def run_predict(
     device: str = "cpu",
     local_model: bool = False,
     nan_threshold: float = 0.8,
+    model_name: str | None = None,
 ) -> None:
     """Predict flight trajectories using trained Neural ODE models.
 
@@ -202,6 +234,11 @@ def run_predict(
         nan_threshold: Maximum fraction of NaN rows before skipping a flight.
             Flights where NaN fraction exceeds this value are skipped entirely.
             Default ``0.8`` (skip if >80% of timesteps contain NaN).
+        model_name: Optional explicit checkpoint directory name relative to
+            ``models_dir``.  Only used when ``local_model`` is ``True``;
+            overrides the default ``f"{info.name}_{typecode}"`` convention,
+            so checkpoints written by ``fdm train --model-name <name>`` can
+            be loaded back without renaming.
     """
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
@@ -236,6 +273,7 @@ def run_predict(
             device=device,
             local_model=local_model,
             nan_threshold=nan_threshold,
+            model_name=model_name,
         )
 
     log.info("predict_done", typecodes=typecodes)

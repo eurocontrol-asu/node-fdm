@@ -230,6 +230,16 @@ def predict(
         bool,
         cyclopts.Parameter(name="--local-model", help="Use local model directory"),
     ] = False,
+    model_name: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--model-name",
+            help=(
+                "Local checkpoint directory name relative to models_dir "
+                "(default: {arch_registry_name}_{typecode}). Only used with --local-model."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Predict flight trajectories using trained Neural ODE models."""
     from node_fdm_pipeline.commands.predict import run_predict
@@ -240,6 +250,7 @@ def predict(
         typecode=typecode,
         device=device,
         local_model=local_model,
+        model_name=model_name,
     )
 
 
