@@ -384,53 +384,10 @@ class TestBuildSelectedParamsV3:
             }
         )
 
-    @staticmethod
-    def _full_config() -> dict[str, Any]:
-        """Config with all parameter sections."""
-        return {
-            "mach": {
-                "tol": 0.0005,
-                "min_len": 30,
-                "alt_threshold": 15000,
-                "smooth_window": 10,
-                "use_alt": True,
-            },
-            "cas": {
-                "tol": 0.75,
-                "min_len": 20,
-                "use_alt": False,
-                "smooth_window": 10,
-                "smooth_method": "savgol",
-            },
-            "vz": {
-                "tol": 25,
-                "min_len": 20,
-                "use_alt": False,
-                "min_abs_value": 75,
-                "smooth_window": 15,
-                "smooth_method": "savgol",
-            },
-            "gamma": {
-                "tol": 0.002,
-                "min_len": 15,
-                "use_alt": False,
-                "smooth_window": 5,
-                "smooth_method": "savgol",
-            },
-            "alt": {
-                "tol": 25,
-                "min_len": 5,
-                "use_alt": False,
-                "min_abs_value": 25,
-                "smooth_window": 5,
-                "smooth_method": "savgol",
-            },
-        }
-
-    def test_segments_fdm_prefix(self) -> None:
+    def test_segments_fdm_prefix(self, segment_config_full: dict[str, Any]) -> None:
         """All segment columns use the fdm_ prefix."""
         df = self._make_flight_df()
-        result = build_selected_params(df, self._full_config())
+        result = build_selected_params(df, segment_config_full)
         assert "fdm_mach_sel" in result.columns
         assert "fdm_cas_sel_kt" in result.columns
         assert "fdm_vz_sel_ftmin" in result.columns
@@ -1247,27 +1204,6 @@ def _gfa_alt_config() -> dict[str, Any]:
     }
 
 
-def _gfa_full_config() -> dict[str, Any]:
-    """Config with mach + alt sections."""
-    return {
-        "mach": {
-            "tol": 0.0005,
-            "min_len": 30,
-            "alt_threshold": 15000,
-            "smooth_window": 10,
-            "use_alt": True,
-        },
-        "alt": {
-            "tol": 25,
-            "min_len": 5,
-            "use_alt": False,
-            "min_abs_value": 25,
-            "smooth_window": 5,
-            "smooth_method": "savgol",
-        },
-    }
-
-
 class TestGammaFromAltColumn:
     """fdm_gamma_from_alt_rad column: 0.0 in level-flight, NaN elsewhere."""
 
@@ -1341,7 +1277,7 @@ class TestGammaFromAltColumn:
 class TestGammaFromAltIntegration:
     """Integration: gamma_from_alt inside full build_selected_params."""
 
-    def test_full_config_produces_column(self) -> None:
+    def test_full_config_produces_column(self, segment_config_full: dict[str, Any]) -> None:
         n = 300
         rng = np.random.default_rng(42)
         alt = np.concatenate(
@@ -1364,7 +1300,7 @@ class TestGammaFromAltIntegration:
                 "era_mach": mach + rng.normal(0, 0.0001, n),
             }
         )
-        result = build_selected_params(df, _gfa_full_config())
+        result = build_selected_params(df, segment_config_full)
 
         assert "fdm_gamma_from_alt_rad" in result.columns
         gamma = result["fdm_gamma_from_alt_rad"]
@@ -1556,35 +1492,6 @@ _GT_FT_MIN_TO_MS = 0.3048 / 60
 _GT_KT_TO_MS = 0.514444
 
 
-def _gt_full_config() -> dict[str, Any]:
-    """Config that enables vz, gamma, and alt segment detection."""
-    return {
-        "vz": {
-            "tol": 25,
-            "min_len": 20,
-            "use_alt": False,
-            "min_abs_value": 75,
-            "smooth_window": 15,
-            "smooth_method": "savgol",
-        },
-        "gamma": {
-            "tol": 0.002,
-            "min_len": 15,
-            "use_alt": False,
-            "smooth_window": 5,
-            "smooth_method": "savgol",
-        },
-        "alt": {
-            "tol": 25,
-            "min_len": 5,
-            "use_alt": False,
-            "min_abs_value": 25,
-            "smooth_window": 5,
-            "smooth_method": "savgol",
-        },
-    }
-
-
 def _gt_make_standard_flight(n: int = 300, *, seed: int = 42) -> pl.DataFrame:
     rng = np.random.default_rng(seed)
     third = n // 3
@@ -1630,16 +1537,16 @@ def _gt_make_standard_flight(n: int = 300, *, seed: int = 42) -> pl.DataFrame:
 class TestGammaTargetExists:
     """fdm_gamma_target_rad column is created with full config."""
 
-    def test_gamma_target_exists(self) -> None:
+    def test_gamma_target_exists(self, segment_config_full: dict[str, Any]) -> None:
         df = _gt_make_standard_flight()
-        result = build_selected_params(df, _gt_full_config())
+        result = build_selected_params(df, segment_config_full)
         assert "fdm_gamma_target_rad" in result.columns
 
 
 class TestGammaTargetVzSource:
     """Where vz plateau is detected, gamma_target ~ arcsin(vz_ms / tas_ms)."""
 
-    def test_gamma_target_vz_source(self) -> None:
+    def test_gamma_target_vz_source(self, segment_config_full: dict[str, Any]) -> None:
         n = 200
         vz = np.concatenate(
             [
@@ -1663,7 +1570,7 @@ class TestGammaTargetVzSource:
             }
         )
 
-        result = build_selected_params(df, _gt_full_config())
+        result = build_selected_params(df, segment_config_full)
 
         expected_gamma = float(np.arcsin(1500.0 * _GT_FT_MIN_TO_MS / (300.0 * _GT_KT_TO_MS)))
         target = result["fdm_gamma_target_rad"].to_numpy()
@@ -1716,7 +1623,7 @@ class TestGammaTargetGammaSource:
 class TestGammaTargetZeroTas:
     """vz_sel with zero TAS — no crash, clamped gamma."""
 
-    def test_zero_tas_no_crash(self) -> None:
+    def test_zero_tas_no_crash(self, segment_config_full: dict[str, Any]) -> None:
         n = 100
         alt = np.linspace(5_000, 15_000, n)
         vz = np.full(n, 1500.0)
@@ -1732,7 +1639,7 @@ class TestGammaTargetZeroTas:
             }
         )
 
-        result = build_selected_params(df, _gt_full_config())
+        result = build_selected_params(df, segment_config_full)
 
         if "fdm_gamma_target_rad" in result.columns:
             target = result["fdm_gamma_target_rad"].to_numpy()
@@ -1860,7 +1767,9 @@ class TestGammaTargetPriorityVzOverGamma:
 class TestGammaTargetPriorityGammaOverAlt:
     """gamma_sel overrides gamma_from_alt (alt is lowest priority)."""
 
-    def test_gamma_target_priority_gamma_over_alt(self) -> None:
+    def test_gamma_target_priority_gamma_over_alt(
+        self, segment_config_full: dict[str, Any]
+    ) -> None:
         n = 200
         rng = np.random.default_rng(42)
 
@@ -1879,7 +1788,7 @@ class TestGammaTargetPriorityGammaOverAlt:
             }
         )
 
-        result = build_selected_params(df, _gt_full_config())
+        result = build_selected_params(df, segment_config_full)
 
         alt_sel = result["fdm_alt_sel_ft"].to_numpy()
         alt_mask = ~np.isnan(alt_sel)
@@ -1904,9 +1813,9 @@ class TestGammaTargetPriorityGammaOverAlt:
 class TestGammaTargetNoNearZero:
     """Gamma_sel does not detect near-zero plateaus during cruise."""
 
-    def test_gamma_target_no_near_zero(self) -> None:
+    def test_gamma_target_no_near_zero(self, segment_config_full: dict[str, Any]) -> None:
         df = _gt_make_standard_flight()
-        result = build_selected_params(df, _gt_full_config())
+        result = build_selected_params(df, segment_config_full)
 
         if "fdm_gamma_sel_rad" not in result.columns:
             pytest.skip("gamma_sel not produced")
@@ -1956,7 +1865,7 @@ class TestGammaDiffNanFilledZero:
 class TestGammaTargetAllUnknown:
     """Very short flight, no segments → gamma_target_known all 0, target all 0.0."""
 
-    def test_all_unknown_target(self) -> None:
+    def test_all_unknown_target(self, segment_config_full: dict[str, Any]) -> None:
         rng = np.random.default_rng(99)
         n = 10
         vz = rng.uniform(-500, 500, n)
@@ -1975,7 +1884,7 @@ class TestGammaTargetAllUnknown:
             }
         )
 
-        result = build_selected_params(df, _gt_full_config())
+        result = build_selected_params(df, segment_config_full)
 
         known = result["fdm_gamma_target_known"].to_numpy()
         target = result["fdm_gamma_target_rad"].to_numpy()
@@ -2049,7 +1958,7 @@ class TestGammaTargetOnlyAltSel:
 class TestGammaTargetAltHoldSource:
     """Where only alt plateau detected (no vz/gamma), gamma_target = 0."""
 
-    def test_gamma_target_alt_hold_source(self) -> None:
+    def test_gamma_target_alt_hold_source(self, segment_config_full: dict[str, Any]) -> None:
         n = 200
         rng = np.random.default_rng(42)
         alt = np.concatenate(
@@ -2080,7 +1989,7 @@ class TestGammaTargetAltHoldSource:
             }
         )
 
-        result = build_selected_params(df, _gt_full_config())
+        result = build_selected_params(df, segment_config_full)
 
         alt_sel = result["fdm_alt_sel_ft"].to_numpy()
         target = result["fdm_gamma_target_rad"].to_numpy()
