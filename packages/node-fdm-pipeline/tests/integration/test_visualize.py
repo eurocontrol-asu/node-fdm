@@ -6,7 +6,6 @@ import sys
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-import numpy as np
 import polars as pl
 import pytest
 
@@ -18,16 +17,13 @@ from node_fdm_pipeline.commands.visualize import (
 
 
 class TestRunVisualize:
-    """Tests for ``run_visualize``."""
+    """Tests for ``run_visualize`` (Node-FDM inference figure, no BADA)."""
 
     def _make_config_and_data(self, tmp_path: Path) -> Path:
-        """Create config, dirs, and test flight prediction/bada parquets."""
         data_dir = tmp_path / "data"
         predict_dir = data_dir / "predicted_flights" / "A320"
-        bada_dir = data_dir / "bada_flights" / "A320"
         figure_dir = data_dir / "figures"
         predict_dir.mkdir(parents=True)
-        bada_dir.mkdir(parents=True)
         figure_dir.mkdir(parents=True)
 
         config = tmp_path / "config.yaml"
@@ -42,99 +38,72 @@ typecodes:
         )
 
         n = 20
-
-        # Create pred and bada parquet (flight_id = "flight001")
-        pred_data = pl.DataFrame(
+        pred_df = pl.DataFrame(
             {
                 "pred_raw_alt_m": [10050.0] * n,
                 "pred_era_tas_ms": [201.0] * n,
                 "pred_fdm_gamma_rad": [0.011] * n,
+                "pred_fdm_heading_rad": [1.5] * n,
             }
         )
-        pred_data.write_parquet(predict_dir / "flight001.parquet")
-
-        bada_data = pl.DataFrame(
-            {
-                "bada_alt_std_m": [10020.0] * n,
-                "bada_tas_ms": [199.0] * n,
-                "bada_gamma_rad": [0.009] * n,
-            }
-        )
-        bada_data.write_parquet(bada_dir / "flight001.parquet")
-
+        pred_df.write_parquet(predict_dir / "flight001.parquet")
         return config
 
+    @patch("node_fdm_pipeline.commands.visualize._plot_inference_figure")
     @patch("node_fdm_data.delta.read_delta_table")
     @patch("node_fdm_pipeline.commands.visualize._require_viz")
-    @patch("node_fdm_bada.utils.tas_to_cas")
-    @patch("node_fdm_bada.utils.cas_to_mach")
-    def test_visualize_creates_file(
+    def test_visualize_invokes_renderer_for_predicted_flight(
         self,
-        mock_cas_to_mach: MagicMock,
-        mock_tas_to_cas: MagicMock,
         _mock_require_viz: MagicMock,
         mock_read_delta: MagicMock,
+        mock_render: MagicMock,
         tmp_path: Path,
     ) -> None:
-        """PDF file created at expected path."""
-        import types
-
+        """A flight whose predict parquet exists triggers the renderer."""
         config = self._make_config_and_data(tmp_path)
         n = 20
-
-        # Build a Delta Table DataFrame for the flight
         mock_read_delta.return_value = pl.DataFrame(
             {
                 "meta_flight_id": ["flight001"] * n,
                 "meta_aircraft_type": ["A320"] * n,
                 "meta_split": ["test"] * n,
                 "fdm_flag_valid": [True] * n,
-                "raw_alt_m": [10000.0] * n,
-                "era_tas_ms": [200.0] * n,
-                "fdm_gamma_rad": [0.01] * n,
-                "temp_k": [220.0] * n,
-                "fdm_mcp_alt_sel_m": [10000.0] * n,
+                "raw_timestamp": list(range(n)),
             }
         )
 
-        # Mock conversion functions
-        mock_tas_to_cas.return_value = np.zeros(n)
-        mock_cas_to_mach.return_value = np.zeros(n)
+        run_visualize(arch="adsb", config=config, typecode="A320")
 
-        # Build mock matplotlib.pyplot as a real module type
-        mock_fig = MagicMock()
-        mock_ax = MagicMock()
-        axes_array = np.empty(3, dtype=object)
-        axes_array[:] = [mock_ax, mock_ax, mock_ax]
+        mock_render.assert_called_once()
+        out_path = mock_render.call_args.kwargs["output_path"]
+        assert out_path.name == "inference_A320_flight001.png"
 
-        mock_plt = types.ModuleType("matplotlib.pyplot")
-        mock_plt.subplots = MagicMock(return_value=(mock_fig, axes_array))  # type: ignore[attr-defined]
-        mock_plt.close = MagicMock()  # type: ignore[attr-defined]
-        mock_plt.tight_layout = MagicMock()  # type: ignore[attr-defined]
+    @patch("node_fdm_pipeline.commands.visualize._plot_inference_figure")
+    @patch("node_fdm_data.delta.read_delta_table")
+    @patch("node_fdm_pipeline.commands.visualize._require_viz")
+    def test_visualize_skips_flight_without_predict_parquet(
+        self,
+        _mock_require_viz: MagicMock,
+        mock_read_delta: MagicMock,
+        mock_render: MagicMock,
+        tmp_path: Path,
+    ) -> None:
+        """A flight without a predict parquet is logged-and-skipped."""
+        config = self._make_config_and_data(tmp_path)
+        n = 20
+        mock_read_delta.return_value = pl.DataFrame(
+            {
+                "meta_flight_id": ["does_not_exist"] * n,
+                "meta_aircraft_type": ["A320"] * n,
+                "meta_split": ["test"] * n,
+                "fdm_flag_valid": [True] * n,
+                "raw_timestamp": list(range(n)),
+            }
+        )
 
-        mock_mpl = types.ModuleType("matplotlib")
+        run_visualize(arch="adsb", config=config, typecode="A320")
 
-        # Remove any cached matplotlib modules so our fake gets picked up
-        saved = {}
-        for key in list(sys.modules):
-            if key.startswith("matplotlib"):
-                saved[key] = sys.modules.pop(key)
-
-        sys.modules["matplotlib"] = mock_mpl
-        sys.modules["matplotlib.pyplot"] = mock_plt
-        try:
-            run_visualize(arch="adsb", config=config, typecode="A320")
-        finally:
-            # Restore original state
-            for key in list(sys.modules):
-                if key.startswith("matplotlib"):
-                    del sys.modules[key]
-            sys.modules.update(saved)
-
-        # Figure saved
-        mock_fig.savefig.assert_called_once()
-        saved_path = mock_fig.savefig.call_args[0][0]
-        assert "viz_A320_flight001.pdf" in str(saved_path)
+        mock_render.assert_not_called()
 
 
 def _make_config(tmp_path: Path) -> Path:

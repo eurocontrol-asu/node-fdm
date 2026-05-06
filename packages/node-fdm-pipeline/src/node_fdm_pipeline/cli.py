@@ -661,11 +661,18 @@ def visualize(
         str | None,
         cyclopts.Parameter(help="Specific flight ID to visualize"),
     ] = None,
+    limit: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--limit",
+            help="Visualize at most N flights per typecode (default: all).",
+        ),
+    ] = None,
 ) -> None:
-    """Visualize prediction comparisons (Node-FDM vs BADA vs ground truth)."""
+    """Visualize Node-FDM inference vs ground truth (4x2 figure per flight)."""
     from node_fdm_pipeline.commands.visualize import run_visualize
 
-    run_visualize(arch=arch, config=config, typecode=typecode, flight=flight)
+    run_visualize(arch=arch, config=config, typecode=typecode, flight=flight, limit=limit)
 
 
 @app.command(name="plot-performance")
