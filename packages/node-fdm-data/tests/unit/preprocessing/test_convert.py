@@ -377,3 +377,146 @@ class TestComputeDerivatives:
         assert result["fdm_d_alt_ms"][0] == pytest.approx(0.0)
         assert result["fdm_d_gamma_rads"][0] == pytest.approx(0.0)
         assert result["fdm_d_tas_ms2"][0] == pytest.approx(0.0)
+
+
+# ---------------------------------------------------------------------------
+# AXM-844: rename fdm_d_vz_ms → fdm_d_alt_ms
+# ---------------------------------------------------------------------------
+
+
+class TestSIDerivativesNaming:
+    """All derivative names follow fdm_d_{state}_{unit}."""
+
+    def test_si_derivatives_naming(self) -> None:
+        """SI_DERIVATIVES contains fdm_d_alt_ms, not fdm_d_vz_ms."""
+        deriv_names = [tgt for _, tgt in SI_DERIVATIVES]
+        assert "fdm_d_alt_ms" in deriv_names, "fdm_d_alt_ms missing from SI_DERIVATIVES"
+        assert "fdm_d_vz_ms" not in deriv_names, "fdm_d_vz_ms should be renamed"
+
+    def test_derivative_bounds_key(self) -> None:
+        """DERIVATIVE_BOUNDS uses fdm_d_alt_ms key, not fdm_d_vz_ms."""
+        assert "fdm_d_alt_ms" in DERIVATIVE_BOUNDS
+        assert "fdm_d_vz_ms" not in DERIVATIVE_BOUNDS
+
+
+class TestRawVzMsUntouched:
+    """Edge case: raw_vz_ms column still exists separately after rename."""
+
+    def test_raw_vz_ms_column_preserved(self) -> None:
+        """raw_vz_ms is an input column, not affected by derivative rename."""
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["A", "A", "A"],
+                "raw_alt_m": [0.0, 100.0, 300.0],
+                "fdm_gamma_rad": [0.0, 0.01, 0.03],
+                "era_tas_ms": [100.0, 110.0, 130.0],
+            }
+        )
+        result = compute_derivatives(df, dt=4.0)
+        assert "fdm_d_alt_ms" in result.columns
+        deriv_col = "fdm_d_alt_ms"
+        assert deriv_col != "raw_vz_ms"
+
+    def test_derivative_output_uses_new_name(self) -> None:
+        """compute_derivatives produces fdm_d_alt_ms, not fdm_d_vz_ms."""
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["A", "A", "A"],
+                "raw_alt_m": [0.0, 100.0, 300.0],
+                "fdm_gamma_rad": [0.0, 0.0, 0.0],
+                "era_tas_ms": [200.0, 200.0, 200.0],
+            }
+        )
+        result = compute_derivatives(df, dt=4.0)
+        assert "fdm_d_alt_ms" in result.columns, "Expected fdm_d_alt_ms in output"
+        assert "fdm_d_vz_ms" not in result.columns, "fdm_d_vz_ms should no longer appear"
+        assert result["fdm_d_alt_ms"][1] == pytest.approx(25.0)
+        assert result["fdm_d_alt_ms"][2] == pytest.approx(50.0)
+
+
+# ---------------------------------------------------------------------------
+# AXM-846: rename fdm_d_tas_ms → fdm_d_tas_ms2
+# ---------------------------------------------------------------------------
+
+
+# -- Expected unit suffixes for derivative columns --
+# d(alt)/dt   → m/s   → _ms
+# d(gamma)/dt → rad/s → _rads
+# d(tas)/dt   → m/s²  → _ms2
+EXPECTED_SUFFIXES: dict[str, str] = {
+    "fdm_d_alt_ms": "_ms",
+    "fdm_d_gamma_rads": "_rads",
+    "fdm_d_tas_ms2": "_ms2",
+    "fdm_d_heading_rads": "_rads",
+}
+
+
+class TestDerivativeColumnUnitSuffix:
+    """All derivative columns have suffixes matching their SI unit."""
+
+    def test_si_derivatives_tas_renamed(self) -> None:
+        """SI_DERIVATIVES contains fdm_d_tas_ms2, not fdm_d_tas_ms."""
+        deriv_names = [tgt for _, tgt in SI_DERIVATIVES]
+        assert "fdm_d_tas_ms2" in deriv_names
+        assert "fdm_d_tas_ms" not in deriv_names
+
+    def test_derivative_bounds_tas_key(self) -> None:
+        """DERIVATIVE_BOUNDS uses fdm_d_tas_ms2 key, not fdm_d_tas_ms."""
+        assert "fdm_d_tas_ms2" in DERIVATIVE_BOUNDS
+        assert "fdm_d_tas_ms" not in DERIVATIVE_BOUNDS
+
+    def test_dx_cols_suffix_matches_unit(self) -> None:
+        """Every DX_COLS entry has a suffix that matches its actual SI unit."""
+        from node_fdm_data.schemas.adsb import DX_COLS
+
+        dx_names = [name for _, name in DX_COLS]
+        for name in dx_names:
+            matched = False
+            for expected_name, suffix in EXPECTED_SUFFIXES.items():
+                if name == expected_name:
+                    assert name.endswith(suffix), f"{name} should end with {suffix}"
+                    matched = True
+                    break
+            assert matched, f"Unexpected derivative column {name} — update EXPECTED_SUFFIXES"
+
+
+class TestAdsbDxColsNaming:
+    """node_adsb_v1 spec uses correctly-suffixed DX_COL names."""
+
+    def test_adsb_dx_cols_naming(self) -> None:
+        """All DX_COL names in adsb schema have correct unit suffix."""
+        from node_fdm_data.schemas.adsb import DX_COLS
+
+        dx_names = [name for _, name in DX_COLS]
+        assert "fdm_d_tas_ms2" in dx_names
+        assert "fdm_d_tas_ms" not in dx_names
+        assert "fdm_d_alt_ms" in dx_names
+        assert "fdm_d_gamma_rads" in dx_names
+
+    def test_node_adsb_v1_dx_cols(self) -> None:
+        """NODE_ADSB_V1 architecture spec picks up the renamed DX_COLS."""
+        import node_fdm.architectures.adsb  # noqa: F401
+        from node_fdm.architectures.registry import get
+
+        spec = get("node_adsb_v1")
+        dx_names = [name for _, name in spec.dx_cols]
+        assert "fdm_d_tas_ms2" in dx_names
+        assert "fdm_d_tas_ms" not in dx_names
+
+
+class TestOldDeltaTableCompat:
+    """Edge case: data with old fdm_d_tas_ms column name."""
+
+    def test_compute_derivatives_produces_new_name(self) -> None:
+        """compute_derivatives outputs fdm_d_tas_ms2, not fdm_d_tas_ms."""
+        df = pl.DataFrame(
+            {
+                "meta_flight_id": ["A", "A", "A"],
+                "raw_alt_m": [0.0, 100.0, 300.0],
+                "fdm_gamma_rad": [0.0, 0.01, 0.03],
+                "era_tas_ms": [100.0, 110.0, 130.0],
+            }
+        )
+        result = compute_derivatives(df, dt=4.0)
+        assert "fdm_d_tas_ms2" in result.columns
+        assert "fdm_d_tas_ms" not in result.columns
