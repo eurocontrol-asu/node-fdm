@@ -117,7 +117,14 @@ def _load_test_df(delta_table: Path) -> object:
 
     df = read_delta_table(delta_table)
     df = df.filter(pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"))
-    sel_cols = [c for c in df.columns if c.startswith("fdm_") and "_sel_" in c]
+    # Boolean companions like ``fdm_track_sel_known`` are filtered out:
+    # ``fill_nan`` is unsupported on bool dtype, and they carry presence
+    # info, not a value to fill.
+    sel_cols = [
+        c
+        for c in df.columns
+        if c.startswith("fdm_") and "_sel_" in c and df.schema[c].is_numeric()
+    ]
     if sel_cols:
         df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])
     return df
