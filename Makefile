@@ -63,12 +63,16 @@ SAMPLE_SIZE  ?= 100
 START_DATE   ?= 2025-09-01
 END_DATE     ?= 2025-09-08
 
-.PHONY: pipeline clean-data aircraft download identify preprocess flag enrich derive segments convert split
+.PHONY: pipeline clean-data aircraft download decode identify preprocess flag enrich derive segments convert split
 
 ## Run full data pipeline from scratch: clean → split
+## Note: `download` auto-chains `decode` (raw cache → Delta) by default,
+## so the `decode` target is not listed here. Invoke `make decode` standalone
+## to rebuild `data/flights.delta` from the existing `data/raw/` cache.
 pipeline: clean-data aircraft download identify preprocess flag enrich derive segments convert split
 
 ## Remove Delta table, aircraft CSV, and preprocessed parquet
+## (the system-owned `data/raw/` cache is preserved — `rm -rf data/raw/` to wipe it)
 clean-data:
 	rm -rf data/flights.delta data/preprocessed_parquet data/aircraft_db.csv data/predicted_flights
 
@@ -76,9 +80,13 @@ clean-data:
 aircraft:
 	uv run fdm aircraft-list --config $(CONFIG) --sample-size $(SAMPLE_SIZE)
 
-## Step 1: Download ADS-B data
+## Step 1: Download ADS-B data into data/raw/ (auto-chains decode → Delta)
 download:
 	uv run fdm download --config $(CONFIG) --start-date $(START_DATE) --end-date $(END_DATE)
+
+## Step 1b: Decode data/raw/ → data/flights.delta (no network)
+decode:
+	uv run fdm decode --config $(CONFIG) --start-date $(START_DATE) --end-date $(END_DATE)
 
 ## Step 1.5: Resample to regular grid
 preprocess:

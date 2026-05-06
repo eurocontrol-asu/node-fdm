@@ -22,7 +22,7 @@ uv run fdm aircraft-list --config config.yaml --sample-size 1 --query-date 2025-
 
 ## 2. download
 
-Downloads ADS-B (history + flightlist + EHS) from OpenSky into the parquet cache at `data/raw/{kind}/date=*/icao24=*/data.parquet`. Diff-based: only the `(date, icao24)` entries missing from the cache are fetched. By default, `decode` is auto-chained to produce the Delta Table.
+Downloads ADS-B (history + flightlist + EHS) from OpenSky into the **system-owned** parquet cache at `data/raw/{kind}/date=*/icao24=*/data.parquet` (gitignored, regenerable, safe to `rm -rf`). Diff-based: only the `(date, icao24)` entries missing from the cache are fetched. By default, `decode` is auto-chained to produce the Delta Table — pass `--no-decode` to populate the cache only.
 
 ```bash
 uv run fdm download --config config.yaml --start-date 2025-09-01 --end-date 2025-09-02
@@ -38,6 +38,8 @@ Additional flags:
 ## 2b. decode
 
 Rebuilds `data/flights.delta` from the existing `data/raw/` parquet cache. Makes **zero** OpenSky calls — useful for re-running the schema/typecode pipeline after a code change without re-downloading.
+
+`decode` is auto-chained at the end of `download` by default; invoke it standalone (or via `make decode`) only when re-running the decoding pass against an already-warm raw cache (e.g. after a `_RawEHSDecoder` change, a rename-map update, or a typecode refresh in `aircraft_db.csv`).
 
 ```bash
 uv run fdm decode --config config.yaml --start-date 2025-09-01 --end-date 2025-09-02
