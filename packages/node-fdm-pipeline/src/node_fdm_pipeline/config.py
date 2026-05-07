@@ -102,10 +102,20 @@ class TasFilterConfig(BaseModel, frozen=True):
 
 
 class VzFilterConfig(BaseModel, frozen=True):
-    """Vertical-speed selected-parameter filter."""
+    """Vertical-speed selected-parameter filter.
 
+    Two modes:
+    - ``"bilateral_vz"`` (default) — bilateral-smoothed vz plateau detector.
+    - ``"savgol_vz"`` — legacy savgol detector.
+    """
+
+    mode: Literal["bilateral_vz", "savgol_vz"] = "bilateral_vz"
+    sigma_s: float = 6.0
+    sigma_r: float = 350.0
+    slope_tol: float = 15.0
+    flat_tol: float = 100.0
+    min_len: int = 10
     tol: float = 25
-    min_len: int = 25
     use_alt: bool = False
     min_abs_value: float = 75
     smooth_window: int = 15
@@ -138,12 +148,20 @@ class AltFilterConfig(BaseModel, frozen=True):
 class GammaFilterConfig(BaseModel, frozen=True):
     """Flight-path angle selected-parameter filter.
 
-    Adds ``min_abs_value`` (default 0.005 rad) to filter near-zero
-    gamma plateaus during cruise that are not meaningful targets.
+    Two modes:
+    - ``"bilateral_gamma"`` (default) — bilateral-smoothed gamma plateau detector
+      with cascade exclusion (alt-hold mask passed at call site).
+    - ``"savgol_gamma"`` — legacy savgol detector.
     """
 
+    mode: Literal["bilateral_gamma", "savgol_gamma"] = "bilateral_gamma"
+    sigma_s: float = 6.0
+    sigma_r: float = 1.2e-2
+    slope_tol: float = 3e-4
+    flat_tol: float = 2e-3
+    abs_min: float = 5e-3
+    min_len: int = 10
     tol: float = 0.002
-    min_len: int = 15
     use_alt: bool = False
     min_abs_value: float = 0.005
     smooth_window: int = 5

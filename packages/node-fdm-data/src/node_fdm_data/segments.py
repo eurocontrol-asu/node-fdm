@@ -37,6 +37,8 @@ __all__ = [
     "build_selected_params",
     "detect_alt_hold_from_vz",
     "detect_constant_segments",
+    "detect_gamma_plateaus_from_bilat",
+    "detect_vz_plateaus_from_bilat",
 ]
 
 
@@ -156,6 +158,99 @@ def detect_alt_hold_from_vz(
     if start is not None and n - start >= min_len:
         segments.append(_make_segment(start, n - 1, alt))
     return segments
+
+
+def _bilateral_plateau_runs(
+    y_bilat: np.ndarray,
+    flat: np.ndarray,
+    flat_tol: float,
+    min_len: int,
+    abs_min: float | None,
+) -> list[dict[str, Any]]:
+    """Walk runs of ``flat=True`` and accept those satisfying tolerances."""
+    segments: list[dict[str, Any]] = []
+    n = len(flat)
+    start: int | None = None
+
+    def _try_emit(s: int, e_inclusive: int) -> None:
+        if e_inclusive - s + 1 < min_len:
+            return
+        chunk = y_bilat[s : e_inclusive + 1]
+        if (chunk.max() - chunk.min()) > 2.0 * flat_tol:
+            return
+        mean = float(np.mean(chunk))
+        if abs_min is not None and abs(mean) < abs_min:
+            return
+        segments.append({"start_idx": s, "end_idx": e_inclusive, "var_mean": mean})
+
+    for i in range(n):
+        if flat[i]:
+            if start is None:
+                start = i
+            continue
+        if start is not None:
+            _try_emit(start, i - 1)
+            start = None
+    if start is not None:
+        _try_emit(start, n - 1)
+    return segments
+
+
+def detect_gamma_plateaus_from_bilat(
+    gamma_raw: np.ndarray,
+    exclusion_mask: np.ndarray,
+    *,
+    sigma_s: float,
+    sigma_r: float,
+    slope_tol: float,
+    flat_tol: float,
+    abs_min: float,
+    min_len: int,
+) -> list[dict[str, Any]]:
+    """Detect gamma plateaus from a bilateral-smoothed gamma signal.
+
+    The exclusion mask (True = exclude) lets the caller enforce cascade
+    priority (e.g. mask out alt-hold regions before searching for gamma
+    plateaus). Returns segment dicts ``{start_idx, end_idx, var_mean}``
+    where ``var_mean`` is the mean of the bilateral gamma over the run.
+    """
+    g = np.asarray(gamma_raw, dtype=np.float64).copy()
+    nan_mask = np.isnan(g)
+    if nan_mask.any():
+        interpolated = _interpolate_nans(g, nan_mask)
+        if interpolated is None:
+            return []
+        g = interpolated
+    g_bilat = _bilateral_1d(_bilateral_1d(g, sigma_s, sigma_r), sigma_s, sigma_r)
+    dgamma = np.abs(np.diff(g_bilat, prepend=g_bilat[0]))
+    excl = np.asarray(exclusion_mask, dtype=bool)
+    flat = (dgamma < slope_tol) & (~excl)
+    return _bilateral_plateau_runs(g_bilat, flat, flat_tol, min_len, abs_min)
+
+
+def detect_vz_plateaus_from_bilat(
+    vz_ftmin: np.ndarray,
+    exclusion_mask: np.ndarray,
+    *,
+    sigma_s: float,
+    sigma_r: float,
+    slope_tol: float,
+    flat_tol: float,
+    min_len: int,
+) -> list[dict[str, Any]]:
+    """Detect vz plateaus from a bilateral-smoothed vz signal."""
+    vz = np.asarray(vz_ftmin, dtype=np.float64).copy()
+    nan_mask = np.isnan(vz)
+    if nan_mask.any():
+        interpolated = _interpolate_nans(vz, nan_mask)
+        if interpolated is None:
+            return []
+        vz = interpolated
+    vz_bilat = _bilateral_1d(_bilateral_1d(vz, sigma_s, sigma_r), sigma_s, sigma_r)
+    dvz = np.abs(np.diff(vz_bilat, prepend=vz_bilat[0]))
+    excl = np.asarray(exclusion_mask, dtype=bool)
+    flat = (dvz < slope_tol) & (~excl)
+    return _bilateral_plateau_runs(vz_bilat, flat, flat_tol, min_len, abs_min=None)
 
 
 def _prepare_values(
@@ -325,21 +420,6 @@ def _normalize_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     for key, value in cfg.items():
         out[_CFG_ALIASES.get(key, key)] = value
     return out
-
-
-def _detect_with_alt(
-    df: pl.DataFrame,
-    src_col: str,
-    out_col: str,
-    cfg: dict[str, Any],
-    alt_arr: np.ndarray,
-) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
-    if src_col not in df.columns:
-        return df, []
-    segs = detect_constant_segments(
-        df[src_col].to_numpy(), alt_values=alt_arr, **_normalize_cfg(cfg)
-    )
-    return add_segment_column(df, segs, out_col), segs
 
 
 def _detect_mach_in_plateau(
@@ -547,14 +627,89 @@ def _build_gamma_target(df: pl.DataFrame, tas_col: str) -> pl.DataFrame:
     )
 
 
+_GAMMA_BILATERAL_KEYS = {
+    "sigma_s",
+    "sigma_r",
+    "slope_tol",
+    "flat_tol",
+    "abs_min",
+    "min_len",
+}
+
+_VZ_BILATERAL_KEYS = {
+    "sigma_s",
+    "sigma_r",
+    "slope_tol",
+    "flat_tol",
+    "min_len",
+}
+
+
+def _gamma_raw_from_vz_tas(df: pl.DataFrame) -> np.ndarray | None:
+    if "raw_vz_ftmin" not in df.columns:
+        return None
+    tas_col = "fdm_tas_from_cas_kt" if "fdm_tas_from_cas_kt" in df.columns else None
+    if tas_col is None and "fdm_tas_kt" in df.columns:
+        tas_col = "fdm_tas_kt"
+    if tas_col is None:
+        return None
+    vz_ms = df["raw_vz_ftmin"].to_numpy().astype(np.float64) * _FT_MIN_TO_MS
+    tas_ms = df[tas_col].to_numpy().astype(np.float64) * _KT_TO_MS
+    return np.arcsin(np.clip(vz_ms / np.clip(tas_ms, 1e-6, None), -1.0, 1.0))
+
+
+def _alt_hold_mask(df: pl.DataFrame) -> np.ndarray:
+    if "fdm_alt_sel_ft" in df.columns:
+        return np.asarray(~np.isnan(df["fdm_alt_sel_ft"].to_numpy()), dtype=bool)
+    return np.zeros(len(df), dtype=bool)
+
+
 def _detect_gamma_sel(df: pl.DataFrame, gamma_cfg: dict[str, Any] | None) -> pl.DataFrame:
-    if gamma_cfg is None or "fdm_gamma_rad" not in df.columns:
+    if gamma_cfg is None:
         return df
-    gcfg = GammaFilterConfig(**_normalize_cfg(gamma_cfg))
+    cfg = _normalize_cfg(gamma_cfg)
+    mode = cfg.pop("mode", "savgol_gamma")
+    if mode == "bilateral_gamma":
+        gamma_raw = _gamma_raw_from_vz_tas(df)
+        if gamma_raw is None:
+            return df
+        kwargs = {k: cfg[k] for k in _GAMMA_BILATERAL_KEYS if k in cfg}
+        segs = detect_gamma_plateaus_from_bilat(gamma_raw, _alt_hold_mask(df), **kwargs)
+        return add_segment_column(df, segs, "fdm_gamma_sel_rad")
+    if "fdm_gamma_rad" not in df.columns:
+        return df
+    legacy_cfg = {k: v for k, v in cfg.items() if k not in _GAMMA_BILATERAL_KEYS - {"min_len"}}
+    gcfg = GammaFilterConfig(**legacy_cfg)
     gamma_segs = detect_constant_segments(
         df["fdm_gamma_rad"].to_numpy().copy(), **gcfg.model_dump()
     )
     return add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
+
+
+def _detect_vz_sel(
+    df: pl.DataFrame,
+    vz_cfg: dict[str, Any],
+    vz_col: str,
+    alt_arr: np.ndarray,
+) -> pl.DataFrame:
+    if vz_col not in df.columns:
+        return df
+    cfg = _normalize_cfg(vz_cfg)
+    mode = cfg.pop("mode", "savgol_vz")
+    if mode == "bilateral_vz":
+        alt_hold = _alt_hold_mask(df)
+        gamma_mask = (
+            ~np.isnan(df["fdm_gamma_sel_rad"].to_numpy())
+            if "fdm_gamma_sel_rad" in df.columns
+            else np.zeros(len(df), dtype=bool)
+        )
+        exclusion = alt_hold | gamma_mask
+        kwargs = {k: cfg[k] for k in _VZ_BILATERAL_KEYS if k in cfg}
+        segs = detect_vz_plateaus_from_bilat(df[vz_col].to_numpy(), exclusion, **kwargs)
+        return add_segment_column(df, segs, "fdm_vz_sel_ftmin")
+    legacy_cfg = {k: v for k, v in cfg.items() if k not in _VZ_BILATERAL_KEYS - {"min_len"}}
+    segs = detect_constant_segments(df[vz_col].to_numpy(), alt_values=alt_arr, **legacy_cfg)
+    return add_segment_column(df, segs, "fdm_vz_sel_ftmin")
 
 
 _BILATERAL_KEYS = {"sigma_s", "sigma_r", "n_passes", "tol_ftmin", "min_len"}
@@ -882,14 +1037,13 @@ def build_selected_params(
             tas_cfg,
             [mach_segs, cas_segs],
         )
-    df, _ = _detect_with_alt(
+    df = _detect_gamma_sel(df, config.get("gamma"))
+    df = _detect_vz_sel(
         df,
-        _resolve_col(df, "raw_vz_ftmin", "vertical_rate"),
-        "fdm_vz_sel_ftmin",
         config.get("vz", {}),
+        _resolve_col(df, "raw_vz_ftmin", "vertical_rate"),
         alt_arr,
     )
-    df = _detect_gamma_sel(df, config.get("gamma"))
 
     df = _apply_transition_optimisation(
         df,
