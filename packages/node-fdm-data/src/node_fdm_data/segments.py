@@ -22,7 +22,7 @@ from typing import Any
 import numpy as np
 import polars as pl
 from pydantic import BaseModel
-from scipy.signal import butter, filtfilt, savgol_filter
+from scipy.signal import savgol_filter
 
 from node_fdm_data.physics.isa import isa_temperature
 from node_fdm_data.physics.speed import (
@@ -31,6 +31,7 @@ from node_fdm_data.physics.speed import (
     tas_to_cas_real,
     vz_to_gamma,
 )
+from node_fdm_data.smoothing import bilateral_1d, butter_lowpass, interpolate_nans
 
 __all__ = [
     "GammaFilterConfig",
@@ -60,22 +61,6 @@ class GammaFilterConfig(BaseModel):
     smooth_method: str = "savgol"
 
 
-def _interpolate_nans(y: np.ndarray, nan_mask: np.ndarray) -> np.ndarray | None:
-    valid = ~nan_mask
-    n_valid = int(valid.sum())
-    if n_valid >= 2:  # noqa: PLR2004
-        y[nan_mask] = np.interp(
-            np.flatnonzero(nan_mask),
-            np.flatnonzero(valid),
-            y[valid],
-        )
-        return y
-    if n_valid == 1:
-        y[nan_mask] = y[valid][0]
-        return y
-    return None
-
-
 def _smooth(y: np.ndarray, window: int, method: str) -> np.ndarray:
     if method == "savgol":
         win = min(window, len(y) - (len(y) % 2 == 0))
@@ -92,27 +77,6 @@ def _make_segment(start: int, end_idx: int, y: np.ndarray) -> dict[str, Any]:
         "end_idx": end_idx,
         "var_mean": float(np.mean(y[start : end_idx + 1])),
     }
-
-
-def _bilateral_1d(y: np.ndarray, sigma_s: float, sigma_r: float) -> np.ndarray:
-    """1D bilateral filter (Tomasi & Manduchi 1998).
-
-    Spatial kernel ``sigma_s`` (samples) flattens homogeneous zones,
-    range kernel ``sigma_r`` (y-units) preserves jumps.
-    """
-    n = len(y)
-    half = int(np.ceil(3 * sigma_s))
-    out = np.empty_like(y)
-    spatial = np.exp(-0.5 * (np.arange(-half, half + 1) / sigma_s) ** 2)
-    for i in range(n):
-        a = max(0, i - half)
-        b = min(n, i + half + 1)
-        ys = y[a:b]
-        sp_w = spatial[a - (i - half) : b - (i - half)]
-        rng_w = np.exp(-0.5 * ((ys - y[i]) / sigma_r) ** 2)
-        w = sp_w * rng_w
-        out[i] = float(np.sum(w * ys) / np.sum(w))
-    return out
 
 
 def detect_alt_hold_from_vz(
@@ -138,13 +102,12 @@ def detect_alt_hold_from_vz(
     alt = np.asarray(alt_ft, dtype=np.float64)
     nan_mask = np.isnan(vz)
     if nan_mask.any():
-        interpolated = _interpolate_nans(vz, nan_mask)
-        if interpolated is None:
+        if int((~nan_mask).sum()) == 0:
             return []
-        vz = interpolated
+        vz = interpolate_nans(vz)
     vz_bilat = vz
     for _ in range(max(0, int(n_passes))):
-        vz_bilat = _bilateral_1d(vz_bilat, sigma_s, sigma_r)
+        vz_bilat = bilateral_1d(vz_bilat, sigma_s, sigma_r)
     mask = np.abs(vz_bilat) < tol_ftmin
     segments: list[dict[str, Any]] = []
     start: int | None = None
@@ -220,41 +183,14 @@ def detect_gamma_plateaus_from_bilat(
     g = np.asarray(gamma_raw, dtype=np.float64).copy()
     nan_mask = np.isnan(g)
     if nan_mask.any():
-        interpolated = _interpolate_nans(g, nan_mask)
-        if interpolated is None:
+        if int((~nan_mask).sum()) == 0:
             return []
-        g = interpolated
-    g_bilat = _bilateral_1d(_bilateral_1d(g, sigma_s, sigma_r), sigma_s, sigma_r)
+        g = interpolate_nans(g)
+    g_bilat = bilateral_1d(bilateral_1d(g, sigma_s, sigma_r), sigma_s, sigma_r)
     dgamma = np.abs(np.diff(g_bilat, prepend=g_bilat[0]))
     excl = np.asarray(exclusion_mask, dtype=bool)
     flat = (dgamma < slope_tol) & (~excl)
     return _bilateral_plateau_runs(g_bilat, flat, flat_tol, min_len, abs_min)
-
-
-def _butter_lowpass(
-    y: np.ndarray,
-    cutoff_s: float,
-    dt: float = 4.0,
-    order: int = 4,
-) -> np.ndarray:
-    """Zero-phase Butterworth low-pass filter via ``filtfilt``.
-
-    NaNs are linearly interpolated up front. Returns ``y`` unchanged when
-    the signal is too short for the requested filter order.
-    """
-    y_arr = np.asarray(y, dtype=np.float64).copy()
-    if len(y_arr) < 2 * order:
-        return y_arr
-    nan_mask = np.isnan(y_arr)
-    if nan_mask.any():
-        interpolated = _interpolate_nans(y_arr, nan_mask)
-        if interpolated is None:
-            return y_arr
-        y_arr = interpolated
-    nyq = 0.5 / dt
-    wn = min(0.99, (1.0 / cutoff_s) / nyq)
-    b, a = butter(order, wn, btype="low")
-    return np.asarray(filtfilt(b, a, y_arr), dtype=np.float64)
 
 
 def _mask_to_segments(mask: np.ndarray) -> list[tuple[int, int]]:
@@ -310,13 +246,12 @@ def detect_mach_plateaus_bilat(
     work = raw.copy()
     nan_mask = np.isnan(work)
     if nan_mask.any():
-        interpolated = _interpolate_nans(work, nan_mask)
-        if interpolated is None:
+        if int((~nan_mask).sum()) == 0:
             return []
-        work = interpolated
+        work = interpolate_nans(work)
     smooth = work
     for _ in range(max(0, int(n_passes))):
-        smooth = _bilateral_1d(smooth, sigma_s, sigma_r)
+        smooth = bilateral_1d(smooth, sigma_s, sigma_r)
     dmach = np.abs(np.diff(smooth, prepend=smooth[0]))
     flat = dmach < slope_tol
     alt_mask = np.asarray(alt_plateau_mask, dtype=bool)
@@ -367,14 +302,13 @@ def detect_cas_plateaus_bilat(
     work = raw.copy()
     nan_mask = np.isnan(work)
     if nan_mask.any():
-        interpolated = _interpolate_nans(work, nan_mask)
-        if interpolated is None:
+        if int((~nan_mask).sum()) == 0:
             return []
-        work = interpolated
-    work = _butter_lowpass(work, cutoff_s)
+        work = interpolate_nans(work)
+    work = butter_lowpass(work, cutoff_s)
     smooth = work
     for _ in range(max(0, int(n_passes))):
-        smooth = _bilateral_1d(smooth, sigma_s, sigma_r)
+        smooth = bilateral_1d(smooth, sigma_s, sigma_r)
     dcas = np.abs(np.diff(smooth, prepend=smooth[0]))
     excl = np.asarray(mach_mask, dtype=bool)
     flat = (dcas < slope_tol) & (~excl)
@@ -416,11 +350,10 @@ def detect_vz_plateaus_from_bilat(
     vz = np.asarray(vz_ftmin, dtype=np.float64).copy()
     nan_mask = np.isnan(vz)
     if nan_mask.any():
-        interpolated = _interpolate_nans(vz, nan_mask)
-        if interpolated is None:
+        if int((~nan_mask).sum()) == 0:
             return []
-        vz = interpolated
-    vz_bilat = _bilateral_1d(_bilateral_1d(vz, sigma_s, sigma_r), sigma_s, sigma_r)
+        vz = interpolate_nans(vz)
+    vz_bilat = bilateral_1d(bilateral_1d(vz, sigma_s, sigma_r), sigma_s, sigma_r)
     dvz = np.abs(np.diff(vz_bilat, prepend=vz_bilat[0]))
     excl = np.asarray(exclusion_mask, dtype=bool)
     flat = (dvz < slope_tol) & (~excl)
@@ -436,10 +369,9 @@ def _prepare_values(
     nan_mask = np.isnan(y)
     has_nan = bool(nan_mask.any())
     if has_nan:
-        interpolated = _interpolate_nans(y, nan_mask)
-        if interpolated is None:
+        if int((~nan_mask).sum()) == 0:
             return None
-        y = interpolated
+        y = interpolate_nans(y)
     if smooth_window is not None and smooth_window > 1:
         y = _smooth(y, smooth_window, smooth_method)
     if has_nan:
@@ -791,9 +723,16 @@ def _build_tas_target(df: pl.DataFrame, alt_arr: np.ndarray) -> pl.DataFrame:
         target[gap] = sel[gap]
 
     known = ~np.isnan(target)
-    return df.with_columns(
+    df = df.with_columns(
         pl.Series("fdm_tas_target_kt", target),
         pl.Series("fdm_tas_target_known", known),
+    )
+    return df.with_columns(
+        pl.col("fdm_tas_target_kt")
+        .fill_nan(None)
+        .forward_fill()
+        .backward_fill()
+        .fill_null(pl.lit(float("nan")))
     )
 
 

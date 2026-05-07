@@ -1106,6 +1106,12 @@ class TestTasTargetEnvelope:
         assert np.all(np.isnan(out["fdm_tas_target_kt"].to_numpy()))
 
     def test_tas_target_no_global_backfill(self):
+        """AXM-1690: contract update.
+
+        After AXM-1690 the target column is forward+backward filled, so
+        the tail is no longer NaN. The pre-fill state is preserved by
+        ``fdm_tas_target_known`` instead.
+        """
         n_climb, n_cruise, n_tail = 100, 100, 50
         n = n_climb + n_cruise + n_tail
         alt = np.empty(n)
@@ -1117,14 +1123,21 @@ class TestTasTargetEnvelope:
         cas = np.full(n, np.nan)
 
         out = build_selected_params(_bsp_flight(alt_ft=alt, mach=mach, cas=cas), _bsp_config())
-        target = out["fdm_tas_target_kt"].to_numpy()
-        assert np.all(np.isnan(target[-n_tail:]))
+        known = out["fdm_tas_target_known"].to_numpy().astype(bool)
+        # The pre-fill mask must be False on the tail (no detection there).
+        assert not known[-n_tail:].any()
 
 
 class TestTasTargetKnownMaskBSP:
     """AC6: fdm_tas_target_known column."""
 
     def test_tas_target_known_mask_emitted(self):
+        """AXM-1690: contract update.
+
+        ``fdm_tas_target_known`` reflects the pre-fill detection mask;
+        post-AXM-1690 the target column is forward+backward filled so
+        ``known`` is a strict subset of ``~isnan(target)``.
+        """
         alt = _bsp_three_phase_alt(100, 100, 100)
         n = alt.size
         mach = np.full(n, np.nan)
@@ -1134,9 +1147,12 @@ class TestTasTargetKnownMaskBSP:
         out = build_selected_params(_bsp_flight(alt_ft=alt, mach=mach, cas=cas), _bsp_config())
 
         assert "fdm_tas_target_known" in out.columns
-        known = out["fdm_tas_target_known"].to_numpy()
+        known = out["fdm_tas_target_known"].to_numpy().astype(bool)
         target = out["fdm_tas_target_kt"].to_numpy()
-        np.testing.assert_array_equal(known.astype(bool), ~np.isnan(target))
+        # The known mask is a subset of the non-NaN target rows.
+        assert np.all(~np.isnan(target[known]))
+        # And distinguishes detected from filled rows.
+        assert 0 < int(known.sum()) < n
 
 
 class TestNoOptimisationEdgeCases:
@@ -2127,13 +2143,15 @@ class TestTasTargetNoNan:
         assert np.all(~np.isnan(target[coverage]))
 
     def test_tas_target_known_mask_matches_target(self) -> None:
+        """AXM-1690: contract update — known reflects pre-fill detection."""
         df = _tt_make_flight()
         result = build_selected_params(df, _tt_config())
 
         assert "fdm_tas_target_known" in result.columns
         target = result["fdm_tas_target_kt"].to_numpy()
         known = result["fdm_tas_target_known"].to_numpy().astype(bool)
-        np.testing.assert_array_equal(known, ~np.isnan(target))
+        # Detected rows are always non-NaN in target; the converse no longer holds.
+        assert np.all(~np.isnan(target[known]))
 
 
 class TestTasTargetMachPriority:
@@ -2186,6 +2204,7 @@ class TestNoMachSegments:
     """No Mach segments — only CAS/TAS segments contribute; gaps stay NaN."""
 
     def test_no_mach_segments_yields_nan_gaps(self) -> None:
+        """AXM-1690: contract update — known is the pre-fill mask."""
         df = _tt_make_flight(include_mach=False)
         cfg = _tt_config(include_mach=False)
         result = build_selected_params(df, cfg)
@@ -2202,7 +2221,8 @@ class TestNoMachSegments:
         coverage = ~np.isnan(cas_sel) | ~np.isnan(tas_sel)
         assert np.all(~np.isnan(target[coverage]))
         known = result["fdm_tas_target_known"].to_numpy().astype(bool)
-        np.testing.assert_array_equal(known, ~np.isnan(target))
+        # Detected rows are non-NaN; remaining rows may be ffill/bfilled.
+        assert np.all(~np.isnan(target[known]))
 
 
 class TestNoSegmentsAtAll:
@@ -2231,6 +2251,7 @@ class TestNanInAltitude:
     """NaN in altitude — target stays NaN where altitude is NaN (no backfill)."""
 
     def test_nan_altitude_yields_nan_target(self) -> None:
+        """AXM-1690: contract update — known reflects pre-fill detection only."""
         nan_indices = [50, 51, 52, 150, 151]
         df = _tt_make_flight(alt_nan_indices=nan_indices)
         result = build_selected_params(df, _tt_config())
@@ -2238,7 +2259,8 @@ class TestNanInAltitude:
         assert "fdm_tas_target_kt" in result.columns
         target = result["fdm_tas_target_kt"].to_numpy()
         known = result["fdm_tas_target_known"].to_numpy().astype(bool)
-        np.testing.assert_array_equal(known, ~np.isnan(target))
+        # Detected rows must remain non-NaN in the filled target.
+        assert np.all(~np.isnan(target[known]))
 
 
 class TestDetectAltHoldFromVz:
@@ -2431,3 +2453,111 @@ class TestDetectAltSelDispatch:
         expected = expected_df["fdm_alt_sel_ft"].to_numpy()
         actual = result["fdm_alt_sel_ft"].to_numpy()
         assert (~np.isnan(actual)).sum() == (~np.isnan(expected)).sum()
+
+
+class TestTasTargetForwardBackwardFill:
+    """Tests for AXM-1690: fdm_tas_target_kt is ffill+bfill per flight.
+
+    The plateau target is sparse by construction (only rows inside Mach
+    or CAS plateaus carry a value).  After AXM-1690, the column is
+    forward-filled then backward-filled so every row is non-NaN, while
+    fdm_tas_target_known reflects the *pre-fill* mask.
+    """
+
+    @staticmethod
+    def _make_single_plateau_flight(n: int = 300) -> pl.DataFrame:
+        """Synthetic single-flight DataFrame with one Mach plateau in the middle."""
+        rng = np.random.default_rng(42)
+        alt = np.concatenate(
+            [
+                np.linspace(0, 35000, n // 3),
+                np.full(n // 3, 35000),
+                np.linspace(35000, 0, n - 2 * (n // 3)),
+            ]
+        )
+        mach = np.concatenate(
+            [
+                np.linspace(0.3, 0.78, n // 3),
+                np.full(n // 3, 0.78),
+                np.linspace(0.78, 0.3, n - 2 * (n // 3)),
+            ]
+        )
+        return pl.DataFrame(
+            {
+                "raw_alt_ft": alt,
+                "bds_mach_clean": mach + rng.normal(0, 0.0001, n),
+                "bds_ias_kt_clean": np.full(n, 280.0) + rng.normal(0, 0.1, n),
+                "raw_vz_ftmin": np.concatenate(
+                    [
+                        np.full(n // 3, 2000.0),
+                        np.full(n // 3, 0.0) + rng.normal(0, 5, n // 3),
+                        np.full(n - 2 * (n // 3), -1500.0),
+                    ]
+                ),
+                "fdm_gamma_rad": np.full(n, 0.05) + rng.normal(0, 0.0001, n),
+            }
+        )
+
+    def test_tas_target_filled_no_nan(self, segment_config_full: dict[str, Any]) -> None:
+        """AC1: fdm_tas_target_kt has zero NaN after ffill+bfill."""
+        df = self._make_single_plateau_flight()
+        result = build_selected_params(df, segment_config_full)
+        assert "fdm_tas_target_kt" in result.columns
+        assert int(result["fdm_tas_target_kt"].is_nan().sum()) == 0
+
+    def test_tas_target_known_unaffected_by_fill(
+        self, segment_config_full: dict[str, Any]
+    ) -> None:
+        """AC1: fdm_tas_target_known stays True only on pre-fill (detected) rows.
+
+        After ffill+bfill, every row of fdm_tas_target_kt is non-NaN, but
+        fdm_tas_target_known must reflect the *pre-fill* state — i.e. it
+        must have strictly fewer True rows than total rows when at least
+        one row is filled by ffill/bfill.
+        """
+        df = self._make_single_plateau_flight()
+        result = build_selected_params(df, segment_config_full)
+        n = len(result)
+        known = result["fdm_tas_target_known"].to_numpy()
+        n_known = int(known.sum())
+        # Some rows are detected (the plateau) and some are not (ramps);
+        # the boolean mask must distinguish them.
+        assert 0 < n_known < n, (
+            f"fdm_tas_target_known must reflect pre-fill mask: "
+            f"got {n_known}/{n} True (expected strict subset)"
+        )
+
+    def test_gamma_target_still_nan_preserving(self, segment_config_full: dict[str, Any]) -> None:
+        """AC3: fdm_gamma_target_rad and its `_known` mask are NOT modified.
+
+        The existing _build_gamma_target zero-fills NaN gaps and emits a
+        companion fdm_gamma_target_known mask that flags detected rows.
+        This ticket must NOT touch that logic — verified here by checking
+        the mask still discriminates detected vs. undetected rows.
+        """
+        df = self._make_single_plateau_flight()
+        result = build_selected_params(df, segment_config_full)
+        assert "fdm_gamma_target_rad" in result.columns
+        assert "fdm_gamma_target_known" in result.columns
+        known = result["fdm_gamma_target_known"].to_numpy()
+        n = len(result)
+        n_known = int((known > 0).sum())
+        assert 0 < n_known < n, (
+            f"fdm_gamma_target_known must reflect detection state (got {n_known}/{n} detected)"
+        )
+
+    def test_alt_target_anchored_unchanged(self, segment_config_full: dict[str, Any]) -> None:
+        """AC4: fdm_alt_target_ft anchored-target logic is unchanged.
+
+        Snapshot: alt_target last row equals the actual altitude (anchor),
+        and the column has no NaN — both properties of the existing
+        _anchored_target implementation that this ticket must not break.
+        """
+        df = self._make_single_plateau_flight()
+        result = build_selected_params(df, segment_config_full)
+        assert "fdm_alt_target_ft" in result.columns
+        alt_target = result["fdm_alt_target_ft"].to_numpy()
+        raw_alt = result["raw_alt_ft"].to_numpy()
+        assert not np.isnan(alt_target).any(), "fdm_alt_target_ft must be fully filled"
+        # Anchor invariant: last row equals the raw altitude at that point.
+        assert np.isclose(alt_target[-1], raw_alt[-1])
