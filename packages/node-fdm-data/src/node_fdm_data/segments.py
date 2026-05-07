@@ -17,6 +17,7 @@ Example::
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from typing import Any
 
 import numpy as np
@@ -575,6 +576,50 @@ def _normalize_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+def _detect_mach_bilateral(
+    df: pl.DataFrame,
+    src_col: str,
+    out_col: str,
+    cfg_norm: dict[str, Any],
+    alt_arr: np.ndarray,
+    plateau_mask: np.ndarray,
+    min_mach_value: float,
+) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    kwargs = {k: cfg_norm[k] for k in _MACH_BILATERAL_KEYS if k in cfg_norm}
+    raw = df[src_col].to_numpy().astype(np.float64, copy=True)
+    segs = detect_mach_plateaus_bilat(raw, plateau_mask, **kwargs)
+    segs = [s for s in segs if s["var_mean"] >= min_mach_value]
+    return add_segment_column(df, segs, out_col), segs
+
+
+def _detect_mach_savgol(
+    df: pl.DataFrame,
+    src_col: str,
+    out_col: str,
+    cfg_norm: dict[str, Any],
+    alt_arr: np.ndarray,
+    plateau_mask: np.ndarray,
+    min_mach_value: float,
+) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    arr = df[src_col].to_numpy().astype(np.float64, copy=True)
+    arr[~plateau_mask] = np.nan
+    legacy_cfg = {k: v for k, v in cfg_norm.items() if k not in _MACH_BILATERAL_KEYS}
+    segs = detect_constant_segments(arr, alt_values=alt_arr, **legacy_cfg)
+    segs = [s for s in segs if s["var_mean"] >= min_mach_value]
+    return add_segment_column(df, segs, out_col), segs
+
+
+_MachDetector = Callable[
+    [pl.DataFrame, str, str, dict[str, Any], np.ndarray, np.ndarray, float],
+    tuple[pl.DataFrame, list[dict[str, Any]]],
+]
+
+_MACH_DETECTORS: dict[str, _MachDetector] = {
+    "bilateral_mach": _detect_mach_bilateral,
+    "savgol_mach": _detect_mach_savgol,
+}
+
+
 def _detect_mach_in_plateau(
     df: pl.DataFrame,
     src_col: str,
@@ -586,28 +631,20 @@ def _detect_mach_in_plateau(
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     """Detect Mach plateaus restricted to altitude-plateau rows only.
 
-    Dispatches on ``cfg['mode']``:
+    Dispatches on ``cfg['mode']`` via the :data:`_MACH_DETECTORS` registry:
     - ``"bilateral_mach"`` (AXM-1689) — bilateral-smoothed detector with
-      altitude-plateau gate.
+      altitude-plateau gate (:func:`_detect_mach_bilateral`).
     - ``"savgol_mach"`` — legacy detector: NaN out non-plateau rows then
-      run :func:`detect_constant_segments`.
+      run :func:`detect_constant_segments` (:func:`_detect_mach_savgol`).
+
+    Unknown modes fall back to ``savgol_mach``.
     """
     if src_col not in df.columns:
         return df, []
     cfg_norm = _normalize_cfg(cfg)
     mode = cfg_norm.pop("mode", "savgol_mach")
-    if mode == "bilateral_mach":
-        kwargs = {k: cfg_norm[k] for k in _MACH_BILATERAL_KEYS if k in cfg_norm}
-        raw = df[src_col].to_numpy().astype(np.float64, copy=True)
-        segs = detect_mach_plateaus_bilat(raw, plateau_mask, **kwargs)
-        segs = [s for s in segs if s["var_mean"] >= min_mach_value]
-        return add_segment_column(df, segs, out_col), segs
-    arr = df[src_col].to_numpy().astype(np.float64, copy=True)
-    arr[~plateau_mask] = np.nan
-    legacy_cfg = {k: v for k, v in cfg_norm.items() if k not in _MACH_BILATERAL_KEYS}
-    segs = detect_constant_segments(arr, alt_values=alt_arr, **legacy_cfg)
-    segs = [s for s in segs if s["var_mean"] >= min_mach_value]
-    return add_segment_column(df, segs, out_col), segs
+    detector = _MACH_DETECTORS.get(mode, _detect_mach_savgol)
+    return detector(df, src_col, out_col, cfg_norm, alt_arr, plateau_mask, min_mach_value)
 
 
 def _detect_cas_dispatch(
