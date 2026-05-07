@@ -45,17 +45,13 @@ def _filter_nan_segments(
     """
     import numpy as np
 
-    finite_mask = (
-        np.isfinite(x_arr).all(axis=1)
-        & np.isfinite(u_seq).all(axis=1)
-        & np.isfinite(e_seq).all(axis=1)
-    )
+    finite_mask = np.isfinite(x_arr).all(axis=1) & np.isfinite(e_seq).all(axis=1)
     nan_fraction = 1.0 - finite_mask.mean()
 
     if nan_fraction > nan_threshold:
-        x_cols, u_cols, e_cols = col_names
+        x_cols, _u_cols, e_cols = col_names
         nan_cols = []
-        for cols, arr in [(x_cols, x_arr), (u_cols, u_seq), (e_cols, e_seq)]:
+        for cols, arr in [(x_cols, x_arr), (e_cols, e_seq)]:
             for i, col in enumerate(cols):
                 if not np.isfinite(arr[:, i]).all():
                     nan_cols.append(col)
@@ -123,7 +119,7 @@ def _load_test_df(delta_table: Path) -> object:
     sel_cols = [
         c
         for c in df.columns
-        if c.startswith("fdm_") and "_sel_" in c and df.schema[c].is_numeric()
+        if c.startswith("fdm_") and "_sel" in c and df.schema[c] != pl.Boolean
     ]
     if sel_cols:
         df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])
@@ -164,8 +160,77 @@ def _predict_flight(
         log.warning("predict_skip_bad_x_init", flight_id=flight_id)
         return
 
-    pred_df = pl.DataFrame({f"pred_{k}": v for k, v in predictions.items()})
+    is_lateral = "fdm_heading_rad" in info.x_cols  # type: ignore[attr-defined]
+    if is_lateral:
+        lat_pred, lon_pred = _integrate_lat_lon(
+            flight_df=flight_df,
+            info=info,
+            predictions=predictions,
+            x_arr=x_arr,
+            e_arr=e_arr,
+            step=float(predictor.meta.step),  # type: ignore[attr-defined]
+        )
+        pred_cols = {
+            f"pred_{k}": np.concatenate(([np.nan], np.asarray(v, dtype=np.float64)))
+            for k, v in predictions.items()
+        }
+        pred_cols["pred_lat_deg"] = lat_pred
+        pred_cols["pred_lon_deg"] = lon_pred
+    else:
+        pred_cols = {f"pred_{k}": v for k, v in predictions.items()}
+
+    pred_df = pl.DataFrame(pred_cols)
     pred_df.write_parquet(output_dir / f"{flight_id}.parquet")
+
+
+def _integrate_lat_lon(
+    *,
+    flight_df: object,
+    info: object,
+    predictions: dict[str, np.ndarray],
+    x_arr: np.ndarray,
+    e_arr: np.ndarray,
+    step: float,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Euler-integrate (lat, lon) from predicted heading/tas/gamma + winds."""
+    import numpy as np
+
+    lat_arr = flight_df.select("raw_lat_deg").to_numpy().astype(np.float64).ravel()  # type: ignore[attr-defined]
+    lon_arr = flight_df.select("raw_lon_deg").to_numpy().astype(np.float64).ravel()  # type: ignore[attr-defined]
+
+    finite_mask = np.isfinite(x_arr).all(axis=1) & np.isfinite(e_arr).all(axis=1)
+    lat_arr = lat_arr[finite_mask]
+    lon_arr = lon_arr[finite_mask]
+    e_filtered = e_arr[finite_mask]
+
+    heading_pred = np.asarray(predictions["fdm_heading_rad"], dtype=np.float64)
+    tas_pred = np.asarray(predictions["era_tas_ms"], dtype=np.float64)
+    gamma_pred = np.asarray(predictions["fdm_gamma_rad"], dtype=np.float64)
+    n_pred = len(heading_pred)
+
+    u_idx = info.e0_cols.index("era_u_wind_ms")  # type: ignore[attr-defined]
+    v_idx = info.e0_cols.index("era_v_wind_ms")  # type: ignore[attr-defined]
+    u_wind = e_filtered[:n_pred, u_idx].astype(np.float64)
+    v_wind = e_filtered[:n_pred, v_idx].astype(np.float64)
+
+    earth_radius = 6_371_000.0
+    lat = np.empty(n_pred + 1, dtype=np.float64)
+    lon = np.empty(n_pred + 1, dtype=np.float64)
+    lat[0] = lat_arr[0]
+    lon[0] = lon_arr[0]
+
+    horiz_tas = tas_pred * np.cos(gamma_pred)
+    v_e = horiz_tas * np.sin(heading_pred) + u_wind
+    v_n = horiz_tas * np.cos(heading_pred) + v_wind
+
+    for i in range(n_pred):
+        lat_rad = np.radians(lat[i])
+        d_lat = np.degrees(v_n[i] * step / earth_radius)
+        d_lon = np.degrees(v_e[i] * step / (earth_radius * max(np.cos(lat_rad), 1e-6)))
+        lat[i + 1] = lat[i] + d_lat
+        lon[i + 1] = lon[i] + d_lon
+
+    return lat, lon
 
 
 def _predict_typecode(
@@ -180,6 +245,7 @@ def _predict_typecode(
     nan_threshold: float,
     model_name: str | None = None,
     limit: int | None = None,
+    flight: str | None = None,
 ) -> None:
     """Load the typecode's model and predict every flight in its filtered test partition."""
     import polars as pl
@@ -203,11 +269,16 @@ def _predict_typecode(
         log.warning("predict_empty_test_set", typecode=acft)
         return
 
-    output_dir = predict_dir / acft
+    output_dir = predict_dir / model_path.name / acft
     output_dir.mkdir(parents=True, exist_ok=True)
 
+    if flight is not None:
+        acft_df = acft_df.filter(pl.col("meta_flight_id") == flight)
+        if len(acft_df) == 0:
+            log.warning("predict_flight_not_found", typecode=acft, flight=flight)
+            return
     flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
-    if limit is not None:
+    if flight is None and limit is not None:
         flights = flights[:limit]
     for flight_df in flights:
         _predict_flight(
@@ -231,6 +302,7 @@ def run_predict(
     nan_threshold: float = 0.8,
     model_name: str | None = None,
     limit: int | None = None,
+    flight: str | None = None,
 ) -> None:
     """Predict flight trajectories using trained Neural ODE models.
 
@@ -287,6 +359,7 @@ def run_predict(
             nan_threshold=nan_threshold,
             model_name=model_name,
             limit=limit,
+            flight=flight,
         )
 
     log.info("predict_done", typecodes=typecodes)
@@ -365,6 +438,21 @@ def run_predict_bada(
         output_dir = bada_dir / acft
         output_dir.mkdir(parents=True, exist_ok=True)
 
+        # Project v3 Delta columns into the legacy names expected by the
+        # BADA predictor (written against the pandas/v1 schema).
+        acft_df = acft_df.with_columns(
+            pl.col("raw_alt_m").alias("alt_std_m"),
+            pl.col("era_tas_ms").alias("tas_ms"),
+            pl.col("era_temp_K").alias("temperature"),
+            pl.col("era_mach").alias("mach"),
+            pl.col("fdm_cas_ms").alias("cas_ms"),
+            pl.col("fdm_cas_sel_ms").alias("cas_sel_ms"),
+            pl.col("fdm_mach_sel").alias("mach_sel"),
+            pl.col("fdm_vz_sel_ms").alias("vz_sel_ms"),
+            pl.col("fdm_alt_target_m").alias("alt_sel_m"),
+            pl.col("fdm_long_wind_ms").alias("long_wind_ms"),
+        )
+
         # Write per-flight parquets for BADA predictor interface
         flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
         with tempfile.TemporaryDirectory() as tmp_dir:
@@ -381,7 +469,8 @@ def run_predict_bada(
             )
 
             Parallel(n_jobs=n_jobs, backend="loky")(
-                delayed(process_single_flight)(fp, ac, processor, output_dir) for fp in filepaths
+                delayed(process_single_flight)(fp, ac, processor=processor, output_dir=output_dir)
+                for fp in filepaths
             )
 
         log.info("predict_bada_typecode_done", typecode=acft)
