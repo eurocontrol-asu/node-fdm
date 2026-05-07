@@ -266,7 +266,7 @@ class TestBuildSelectedParams:
         assert len(result) == n
 
     def test_missing_columns_handled(self) -> None:
-        """Missing optional columns are gracefully skipped."""
+        """Mach plateau alone derives CAS/TAS pointwise (AXM-1689)."""
         df = pl.DataFrame(
             {
                 "raw_alt_ft": np.full(50, 30000.0),
@@ -276,7 +276,12 @@ class TestBuildSelectedParams:
         config = {"mach": {"tol": 0.001, "min_len": 10, "alt_threshold": 15000, "use_alt": True}}
         result = build_selected_params(df, config)
         assert "fdm_mach_sel" in result.columns
-        assert "fdm_cas_sel_kt" not in result.columns  # CAS column not provided
+        assert "fdm_cas_sel_kt" in result.columns
+        assert "fdm_tas_sel_kt" in result.columns
+        plateau_cas = result["fdm_cas_sel_kt"].to_numpy()[1:]
+        plateau_tas = result["fdm_tas_sel_kt"].to_numpy()[1:]
+        assert np.isfinite(plateau_cas).all()
+        assert np.isfinite(plateau_tas).all()
 
     def test_mach_and_mach_sel_coexist(self) -> None:
         """Both bds_mach_clean and fdm_mach_sel exist after segments stage."""
@@ -678,7 +683,7 @@ class TestTasSelected:
         )
 
     def test_tas_sel_no_config(self) -> None:
-        """Without 'tas' key in config, fdm_tas_sel_kt is not created (backward compat)."""
+        """Without 'tas' key in config, TAS is still derived from Mach plateau (AXM-1689)."""
         n = 100
         df = pl.DataFrame(
             {
@@ -691,7 +696,8 @@ class TestTasSelected:
             "mach": {"tol": 0.001, "min_len": 5, "alt_threshold": 15000, "use_alt": True},
         }
         result = build_selected_params(df, config)
-        assert "fdm_tas_sel_kt" not in result.columns
+        assert "fdm_tas_sel_kt" in result.columns
+        assert np.isfinite(result["fdm_tas_sel_kt"].to_numpy()[1:]).all()
 
     def test_tas_sel_all_nan(self) -> None:
         """All-NaN era_tas_kt produces no crash and no TAS segments."""
@@ -730,7 +736,7 @@ class TestTasSelected:
         assert result["fdm_tas_sel_kt"].is_nan().sum() == n
 
     def test_tas_sel_no_column(self) -> None:
-        """Missing era_tas_kt column is gracefully skipped."""
+        """Missing fdm_tas_from_cas_kt: TAS is still derived from Mach plateau (AXM-1689)."""
         n = 50
         df = pl.DataFrame(
             {
@@ -743,7 +749,8 @@ class TestTasSelected:
             "tas": {"tol": 1.0, "min_len": 10, "use_alt": False},
         }
         result = build_selected_params(df, config)
-        assert "fdm_tas_sel_kt" not in result.columns
+        assert "fdm_tas_sel_kt" in result.columns
+        assert np.isfinite(result["fdm_tas_sel_kt"].to_numpy()[1:]).all()
 
 
 class TestTargetColumns:
