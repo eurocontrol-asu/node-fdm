@@ -35,6 +35,7 @@ __all__ = [
     "GammaFilterConfig",
     "add_segment_column",
     "build_selected_params",
+    "detect_alt_hold_from_vz",
     "detect_constant_segments",
 ]
 
@@ -86,6 +87,75 @@ def _make_segment(start: int, end_idx: int, y: np.ndarray) -> dict[str, Any]:
         "end_idx": end_idx,
         "var_mean": float(np.mean(y[start : end_idx + 1])),
     }
+
+
+def _bilateral_1d(y: np.ndarray, sigma_s: float, sigma_r: float) -> np.ndarray:
+    """1D bilateral filter (Tomasi & Manduchi 1998).
+
+    Spatial kernel ``sigma_s`` (samples) flattens homogeneous zones,
+    range kernel ``sigma_r`` (y-units) preserves jumps.
+    """
+    n = len(y)
+    half = int(np.ceil(3 * sigma_s))
+    out = np.empty_like(y)
+    spatial = np.exp(-0.5 * (np.arange(-half, half + 1) / sigma_s) ** 2)
+    for i in range(n):
+        a = max(0, i - half)
+        b = min(n, i + half + 1)
+        ys = y[a:b]
+        sp_w = spatial[a - (i - half) : b - (i - half)]
+        rng_w = np.exp(-0.5 * ((ys - y[i]) / sigma_r) ** 2)
+        w = sp_w * rng_w
+        out[i] = float(np.sum(w * ys) / np.sum(w))
+    return out
+
+
+def detect_alt_hold_from_vz(
+    vz_ftmin: np.ndarray,
+    alt_ft: np.ndarray,
+    *,
+    sigma_s: float = 6.0,
+    sigma_r: float = 350.0,
+    n_passes: int = 2,
+    tol_ftmin: float = 400.0,
+    min_len: int = 6,
+) -> list[dict[str, Any]]:
+    """Detect altitude-hold plateaus from vertical speed.
+
+    Linearly interpolates NaNs in ``vz_ftmin`` (returns ``[]`` if fully
+    NaN), applies ``n_passes`` of a 1D bilateral filter, then keeps
+    runs where ``|vz_bilat| < tol_ftmin`` of length ``>= min_len``.
+    Each segment's ``var_mean`` is the mean of ``alt_ft`` over the run
+    so the result can feed :func:`add_segment_column` directly into
+    ``fdm_alt_sel_ft``.
+    """
+    vz = np.asarray(vz_ftmin, dtype=np.float64).copy()
+    alt = np.asarray(alt_ft, dtype=np.float64)
+    nan_mask = np.isnan(vz)
+    if nan_mask.any():
+        interpolated = _interpolate_nans(vz, nan_mask)
+        if interpolated is None:
+            return []
+        vz = interpolated
+    vz_bilat = vz
+    for _ in range(max(0, int(n_passes))):
+        vz_bilat = _bilateral_1d(vz_bilat, sigma_s, sigma_r)
+    mask = np.abs(vz_bilat) < tol_ftmin
+    segments: list[dict[str, Any]] = []
+    start: int | None = None
+    n = len(mask)
+    for i in range(n):
+        if mask[i]:
+            if start is None:
+                start = i
+            continue
+        if start is not None:
+            if i - start >= min_len:
+                segments.append(_make_segment(start, i - 1, alt))
+            start = None
+    if start is not None and n - start >= min_len:
+        segments.append(_make_segment(start, n - 1, alt))
+    return segments
 
 
 def _prepare_values(
@@ -487,17 +557,31 @@ def _detect_gamma_sel(df: pl.DataFrame, gamma_cfg: dict[str, Any] | None) -> pl.
     return add_segment_column(df, gamma_segs, "fdm_gamma_sel_rad")
 
 
+_BILATERAL_KEYS = {"sigma_s", "sigma_r", "n_passes", "tol_ftmin", "min_len"}
+
+
 def _detect_alt_sel(
     df: pl.DataFrame,
     alt_cfg: dict[str, Any] | None,
     alt_col: str,
     alt_arr: np.ndarray,
+    vz_col: str | None = None,
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     if alt_cfg is None or alt_col not in df.columns:
         return df, []
     cfg = _normalize_cfg(alt_cfg)
-    cfg.setdefault("use_alt", False)
-    segs = detect_constant_segments(alt_arr, **cfg)
+    mode = cfg.pop("mode", "savgol_alt")
+    if mode == "bilateral_vz":
+        if vz_col is None or vz_col not in df.columns:
+            return df, []
+        vz_arr = df[vz_col].to_numpy()
+        bilateral_kwargs = {k: cfg[k] for k in _BILATERAL_KEYS if k in cfg}
+        segs = detect_alt_hold_from_vz(vz_arr, alt_arr, **bilateral_kwargs)
+        return add_segment_column(df, segs, "fdm_alt_sel_ft"), segs
+    # Legacy savgol_alt path — drop bilateral-only keys.
+    legacy_cfg = {k: v for k, v in cfg.items() if k not in _BILATERAL_KEYS}
+    legacy_cfg.setdefault("use_alt", False)
+    segs = detect_constant_segments(alt_arr, **legacy_cfg)
     return add_segment_column(df, segs, "fdm_alt_sel_ft"), segs
 
 
@@ -760,7 +844,8 @@ def build_selected_params(
 
     # 1. Altitude plateaus FIRST — Mach detection is restricted to these rows.
     alt_cfg = config.get("alt")
-    df, alt_segs = _detect_alt_sel(df, alt_cfg, alt_col, alt_arr)
+    vz_col = _resolve_col(df, "raw_vz_ftmin", "vertical_rate")
+    df, alt_segs = _detect_alt_sel(df, alt_cfg, alt_col, alt_arr, vz_col=vz_col)
     if alt_cfg is None:
         # Backwards compatible: without an alt config we cannot derive the
         # plateau mask, so Mach detection falls back to its altitude-gated

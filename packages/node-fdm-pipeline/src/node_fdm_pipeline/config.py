@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from pathlib import Path
-from typing import Self
+from typing import Literal, Self
 
 from pydantic import BaseModel, field_validator
 
@@ -113,10 +113,22 @@ class VzFilterConfig(BaseModel, frozen=True):
 
 
 class AltFilterConfig(BaseModel, frozen=True):
-    """Altitude selected-parameter filter."""
+    """Altitude selected-parameter filter.
 
+    Two modes:
+    - ``"bilateral_vz"`` (default) — detect plateaus where vertical
+      speed is locally near zero after a bilateral smoothing of vz.
+    - ``"savgol_alt"`` — legacy detector running on a savgol-smoothed
+      altitude signal.
+    """
+
+    mode: Literal["bilateral_vz", "savgol_alt"] = "bilateral_vz"
+    sigma_s: float = 6.0
+    sigma_r: float = 350.0
+    n_passes: int = 2
+    tol_ftmin: float = 400.0
+    min_len: int = 6
     tol: float = 25
-    min_len: int = 5
     use_alt: bool = False
     min_abs_value: float = 25
     smooth_window: int = 5

@@ -75,6 +75,6 @@ class TestSelectedParamConfigUnit:
         assert cfg.cas.smooth_method == "savgol"
         assert cfg.vz.min_abs_value == 75
         assert cfg.alt.tol == 25
-        assert cfg.alt.min_len == 5
+        assert cfg.alt.min_len == 6
         assert cfg.gamma.tol == 0.002
         assert cfg.gamma.smooth_window == 5

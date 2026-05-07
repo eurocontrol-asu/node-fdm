@@ -2,15 +2,18 @@
 
 from __future__ import annotations
 
+from itertools import pairwise
 from typing import Any
 
 import numpy as np
 import polars as pl
 import pytest
+from node_fdm_pipeline.config import AltFilterConfig
 
 from node_fdm_data.segments import (
     add_segment_column,
     build_selected_params,
+    detect_alt_hold_from_vz,
     detect_constant_segments,
 )
 
@@ -2236,3 +2239,195 @@ class TestNanInAltitude:
         target = result["fdm_tas_target_kt"].to_numpy()
         known = result["fdm_tas_target_known"].to_numpy().astype(bool)
         np.testing.assert_array_equal(known, ~np.isnan(target))
+
+
+class TestDetectAltHoldFromVz:
+    """AXM-1687 — bilateral vz-based altitude plateau detection."""
+
+    @staticmethod
+    def _three_plateau_signal(seed: int = 0) -> tuple[np.ndarray, np.ndarray]:
+        """Synthetic 3-plateau alt + matching vz (ft/min, dt=4 s)."""
+        rng = np.random.default_rng(seed)
+        plateaus = [10000.0, 20000.0, 35000.0]
+        parts: list[np.ndarray] = [np.full(60, plateaus[0])]
+        for prev, nxt in pairwise(plateaus):
+            parts.append(np.linspace(prev, nxt, 40))
+            parts.append(np.full(60, nxt))
+        alt = np.concatenate(parts)
+        alt = np.round(alt / 25.0) * 25.0
+        alt = alt + rng.uniform(-50.0, 50.0, alt.shape)
+        dt_s = 4.0
+        vz_ftmin = np.gradient(alt, dt_s) * 60.0
+        return vz_ftmin, alt
+
+    def test_detect_alt_hold_from_vz_three_plateaus(self) -> None:
+        """AC1, AC2 — 3 segments, each var_mean within ±100 ft."""
+        vz, alt = self._three_plateau_signal()
+        segs = detect_alt_hold_from_vz(
+            vz,
+            alt,
+            sigma_s=6.0,
+            sigma_r=350.0,
+            n_passes=2,
+            tol_ftmin=400.0,
+            min_len=6,
+        )
+        assert len(segs) == 3
+        truths = [10000.0, 20000.0, 35000.0]
+        for seg, truth in zip(segs, truths, strict=True):
+            assert abs(seg["var_mean"] - truth) < 100.0
+            assert "start_idx" in seg and "end_idx" in seg
+
+    def test_detect_alt_hold_from_vz_all_nan(self) -> None:
+        """AC3 — fully-NaN input returns [] without raising."""
+        vz = np.full(200, np.nan)
+        alt = np.full(200, np.nan)
+        segs = detect_alt_hold_from_vz(
+            vz,
+            alt,
+            sigma_s=6.0,
+            sigma_r=350.0,
+            n_passes=2,
+            tol_ftmin=400.0,
+            min_len=6,
+        )
+        assert segs == []
+
+    def test_detect_alt_hold_from_vz_partial_nan(self) -> None:
+        """AC3 — 5% NaN in vz is interpolated; plateaus still detected."""
+        rng = np.random.default_rng(1)
+        vz, alt = self._three_plateau_signal(seed=1)
+        idx = rng.choice(vz.size, size=max(1, vz.size // 20), replace=False)
+        vz_nan = vz.copy()
+        vz_nan[idx] = np.nan
+        segs = detect_alt_hold_from_vz(
+            vz_nan,
+            alt,
+            sigma_s=6.0,
+            sigma_r=350.0,
+            n_passes=2,
+            tol_ftmin=400.0,
+            min_len=6,
+        )
+        assert len(segs) >= 1
+
+    def test_detect_alt_hold_from_vz_too_short(self) -> None:
+        """AC1 — runs shorter than min_len are discarded."""
+        vz = np.zeros(5)
+        alt = np.full(5, 30000.0)
+        segs = detect_alt_hold_from_vz(
+            vz,
+            alt,
+            sigma_s=6.0,
+            sigma_r=350.0,
+            n_passes=2,
+            tol_ftmin=400.0,
+            min_len=6,
+        )
+        assert segs == []
+
+
+class TestAltFilterConfigBilateral:
+    """AXM-1687 — AltFilterConfig mode + bilateral params."""
+
+    def test_alt_filter_config_default_mode_bilateral(self) -> None:
+        """AC4 — defaults: bilateral_vz mode + script-calibrated params."""
+        cfg = AltFilterConfig()
+        assert cfg.mode == "bilateral_vz"
+        assert cfg.sigma_s == 6.0
+        assert cfg.sigma_r == 350.0
+        assert cfg.n_passes == 2
+        assert cfg.tol_ftmin == 400.0
+        assert cfg.min_len == 6
+        assert cfg.tol == 25
+        assert cfg.use_alt is False
+        assert cfg.min_abs_value == 25
+        assert cfg.smooth_window == 5
+        assert cfg.smooth_method == "savgol"
+
+    def test_alt_filter_config_savgol_mode_legacy_defaults(self) -> None:
+        """AC4 — savgol_alt mode constructs and exposes legacy fields."""
+        cfg = AltFilterConfig(mode="savgol_alt")
+        assert cfg.mode == "savgol_alt"
+        assert cfg.tol == 25
+        assert cfg.use_alt is False
+        assert cfg.min_abs_value == 25
+        assert cfg.smooth_window == 5
+        assert cfg.smooth_method == "savgol"
+
+
+def _alt_sel_fixture_df(seed: int = 0) -> pl.DataFrame:
+    """Constant-cruise polars DF (n=200) with required columns."""
+    rng = np.random.default_rng(seed)
+    n = 200
+    alt = np.full(n, 35000.0) + rng.normal(0, 5.0, n)
+    vz = rng.normal(0, 5.0, n)
+    mach = np.full(n, 0.78) + rng.normal(0, 0.0001, n)
+    cas = np.full(n, 280.0) + rng.normal(0, 0.1, n)
+    tas = np.full(n, 460.0)
+    gamma = np.zeros(n)
+    return pl.DataFrame(
+        {
+            "raw_alt_ft": alt,
+            "raw_vz_ftmin": vz,
+            "bds_mach_clean": mach,
+            "bds_ias_kt_clean": cas,
+            "fdm_tas_from_cas_kt": tas,
+            "fdm_gamma_rad": gamma,
+        }
+    )
+
+
+class TestDetectAltSelDispatch:
+    """AXM-1687 — _detect_alt_sel dispatches on cfg['mode']."""
+
+    def test_detect_alt_sel_bilateral_mode_writes_alt_sel(
+        self, segment_config_full: dict[str, Any]
+    ) -> None:
+        """AC5, AC6 — bilateral_vz mode populates fdm_alt_sel_ft."""
+        df = _alt_sel_fixture_df()
+        cfg = dict(segment_config_full)
+        cfg["alt"] = {
+            "mode": "bilateral_vz",
+            "sigma_s": 6.0,
+            "sigma_r": 350.0,
+            "n_passes": 2,
+            "tol_ftmin": 400.0,
+            "min_len": 6,
+        }
+        result = build_selected_params(df, cfg)
+        assert "fdm_alt_sel_ft" in result.columns
+        non_nan = (~np.isnan(result["fdm_alt_sel_ft"].to_numpy())).sum()
+        assert non_nan >= 100
+
+    def test_detect_alt_sel_savgol_backcompat(self, segment_config_full: dict[str, Any]) -> None:
+        """AC5 — savgol_alt mode coverage matches direct detect_constant_segments snapshot."""
+        df = _alt_sel_fixture_df()
+        legacy_alt_cfg = {
+            "mode": "savgol_alt",
+            "tol": 25,
+            "min_len": 5,
+            "use_alt": False,
+            "min_abs_value": 25,
+            "smooth_window": 5,
+            "smooth_method": "savgol",
+        }
+        cfg = dict(segment_config_full)
+        cfg["alt"] = legacy_alt_cfg
+        result = build_selected_params(df, cfg)
+        assert "fdm_alt_sel_ft" in result.columns
+
+        alt_arr = df["raw_alt_ft"].to_numpy()
+        expected_segs = detect_constant_segments(
+            alt_arr,
+            tol=25,
+            min_len=5,
+            use_alt=False,
+            min_abs_value=25,
+            smooth_window=5,
+            smooth_method="savgol",
+        )
+        expected_df = add_segment_column(df, expected_segs, "fdm_alt_sel_ft")
+        expected = expected_df["fdm_alt_sel_ft"].to_numpy()
+        actual = result["fdm_alt_sel_ft"].to_numpy()
+        assert (~np.isnan(actual)).sum() == (~np.isnan(expected)).sum()
