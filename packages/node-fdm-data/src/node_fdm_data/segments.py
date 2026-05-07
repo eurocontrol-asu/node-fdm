@@ -22,12 +22,13 @@ from typing import Any
 import numpy as np
 import polars as pl
 from pydantic import BaseModel
-from scipy.signal import savgol_filter
+from scipy.signal import butter, filtfilt, savgol_filter
 
 from node_fdm_data.physics.isa import isa_temperature
 from node_fdm_data.physics.speed import (
     cas_to_tas_real,
     mach_to_tas_real,
+    tas_to_cas_real,
     vz_to_gamma,
 )
 
@@ -36,8 +37,10 @@ __all__ = [
     "add_segment_column",
     "build_selected_params",
     "detect_alt_hold_from_vz",
+    "detect_cas_plateaus_bilat",
     "detect_constant_segments",
     "detect_gamma_plateaus_from_bilat",
+    "detect_mach_plateaus_bilat",
     "detect_vz_plateaus_from_bilat",
 ]
 
@@ -226,6 +229,177 @@ def detect_gamma_plateaus_from_bilat(
     excl = np.asarray(exclusion_mask, dtype=bool)
     flat = (dgamma < slope_tol) & (~excl)
     return _bilateral_plateau_runs(g_bilat, flat, flat_tol, min_len, abs_min)
+
+
+def _butter_lowpass(
+    y: np.ndarray,
+    cutoff_s: float,
+    dt: float = 4.0,
+    order: int = 4,
+) -> np.ndarray:
+    """Zero-phase Butterworth low-pass filter via ``filtfilt``.
+
+    NaNs are linearly interpolated up front. Returns ``y`` unchanged when
+    the signal is too short for the requested filter order.
+    """
+    y_arr = np.asarray(y, dtype=np.float64).copy()
+    if len(y_arr) < 2 * order:
+        return y_arr
+    nan_mask = np.isnan(y_arr)
+    if nan_mask.any():
+        interpolated = _interpolate_nans(y_arr, nan_mask)
+        if interpolated is None:
+            return y_arr
+        y_arr = interpolated
+    nyq = 0.5 / dt
+    wn = min(0.99, (1.0 / cutoff_s) / nyq)
+    b, a = butter(order, wn, btype="low")
+    return np.asarray(filtfilt(b, a, y_arr), dtype=np.float64)
+
+
+def _mask_to_segments(mask: np.ndarray) -> list[tuple[int, int]]:
+    """Walk a boolean mask and return inclusive [start, end] runs of True."""
+    runs: list[tuple[int, int]] = []
+    n = len(mask)
+    start: int | None = None
+    for i in range(n):
+        if mask[i]:
+            if start is None:
+                start = i
+            continue
+        if start is not None:
+            runs.append((start, i - 1))
+            start = None
+    if start is not None:
+        runs.append((start, n - 1))
+    return runs
+
+
+def _passes_alt_gate(
+    start: int,
+    end: int,
+    alt_segs: list[tuple[int, int]],
+    alt_mask: np.ndarray,
+) -> bool:
+    """Endpoint inside any alt plateau OR plateau ``[start, end]`` fully
+    contains an alt plateau."""
+    if alt_mask[start] or alt_mask[min(end, len(alt_mask) - 1)]:
+        return True
+    return any(start <= a and b <= end for a, b in alt_segs)
+
+
+def detect_mach_plateaus_bilat(
+    mach_raw: np.ndarray,
+    alt_plateau_mask: np.ndarray,
+    *,
+    sigma_s: float,
+    sigma_r: float,
+    n_passes: int = 2,
+    slope_tol: float,
+    flat_tol: float,
+    min_len: int,
+) -> list[dict[str, Any]]:
+    """Detect Mach plateaus from a bilateral-smoothed Mach signal.
+
+    Plateaus are kept only when their endpoint sits inside an altitude
+    plateau (per ``alt_plateau_mask``) OR they fully contain at least one
+    altitude plateau. ``var_mean`` is the mean of the **raw** Mach over
+    the run (not the bilateral-smoothed value).
+    """
+    raw = np.asarray(mach_raw, dtype=np.float64)
+    work = raw.copy()
+    nan_mask = np.isnan(work)
+    if nan_mask.any():
+        interpolated = _interpolate_nans(work, nan_mask)
+        if interpolated is None:
+            return []
+        work = interpolated
+    smooth = work
+    for _ in range(max(0, int(n_passes))):
+        smooth = _bilateral_1d(smooth, sigma_s, sigma_r)
+    dmach = np.abs(np.diff(smooth, prepend=smooth[0]))
+    flat = dmach < slope_tol
+    alt_mask = np.asarray(alt_plateau_mask, dtype=bool)
+    alt_segs = _mask_to_segments(alt_mask)
+    segments: list[dict[str, Any]] = []
+    n = len(smooth)
+    i = 0
+    while i < n:
+        if not flat[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and flat[j + 1]:
+            j += 1
+        if j - i + 1 >= min_len:
+            seg = smooth[i : j + 1]
+            if (seg.max() - seg.min()) <= flat_tol and _passes_alt_gate(i, j, alt_segs, alt_mask):
+                segments.append(
+                    {
+                        "start_idx": i,
+                        "end_idx": j,
+                        "var_mean": float(np.nanmean(raw[i : j + 1])),
+                    }
+                )
+        i = j + 1
+    return segments
+
+
+def detect_cas_plateaus_bilat(
+    cas_raw: np.ndarray,
+    mach_mask: np.ndarray,
+    *,
+    cutoff_s: float,
+    sigma_s: float,
+    sigma_r: float,
+    n_passes: int = 2,
+    slope_tol: float,
+    flat_tol: float,
+    min_len: int,
+) -> list[dict[str, Any]]:
+    """Detect CAS plateaus from a Butterworth+bilateral-smoothed CAS signal.
+
+    Samples flagged in ``mach_mask`` are excluded so the detector does not
+    fire inside Mach-plateau zones. ``var_mean`` is the mean of the raw
+    CAS over the run.
+    """
+    raw = np.asarray(cas_raw, dtype=np.float64)
+    work = raw.copy()
+    nan_mask = np.isnan(work)
+    if nan_mask.any():
+        interpolated = _interpolate_nans(work, nan_mask)
+        if interpolated is None:
+            return []
+        work = interpolated
+    work = _butter_lowpass(work, cutoff_s)
+    smooth = work
+    for _ in range(max(0, int(n_passes))):
+        smooth = _bilateral_1d(smooth, sigma_s, sigma_r)
+    dcas = np.abs(np.diff(smooth, prepend=smooth[0]))
+    excl = np.asarray(mach_mask, dtype=bool)
+    flat = (dcas < slope_tol) & (~excl)
+    segments: list[dict[str, Any]] = []
+    n = len(smooth)
+    i = 0
+    while i < n:
+        if not flat[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and flat[j + 1]:
+            j += 1
+        if j - i + 1 >= min_len:
+            seg = smooth[i : j + 1]
+            if (seg.max() - seg.min()) <= flat_tol:
+                segments.append(
+                    {
+                        "start_idx": i,
+                        "end_idx": j,
+                        "var_mean": float(np.nanmean(raw[i : j + 1])),
+                    }
+                )
+        i = j + 1
+    return segments
 
 
 def detect_vz_plateaus_from_bilat(
@@ -433,18 +607,57 @@ def _detect_mach_in_plateau(
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     """Detect Mach plateaus restricted to altitude-plateau rows only.
 
-    Mach values outside the altitude-plateau mask are set to NaN before
-    detection so detected segments cannot extend beyond cruise.  Detected
-    segments whose mean Mach is below ``min_mach_value`` are dropped
-    (aberrant/ghost-data guard).
+    Dispatches on ``cfg['mode']``:
+    - ``"bilateral_mach"`` (AXM-1689) — bilateral-smoothed detector with
+      altitude-plateau gate.
+    - ``"savgol_mach"`` — legacy detector: NaN out non-plateau rows then
+      run :func:`detect_constant_segments`.
     """
     if src_col not in df.columns:
         return df, []
+    cfg_norm = _normalize_cfg(cfg)
+    mode = cfg_norm.pop("mode", "savgol_mach")
+    if mode == "bilateral_mach":
+        kwargs = {k: cfg_norm[k] for k in _MACH_BILATERAL_KEYS if k in cfg_norm}
+        raw = df[src_col].to_numpy().astype(np.float64, copy=True)
+        segs = detect_mach_plateaus_bilat(raw, plateau_mask, **kwargs)
+        segs = [s for s in segs if s["var_mean"] >= min_mach_value]
+        return add_segment_column(df, segs, out_col), segs
     arr = df[src_col].to_numpy().astype(np.float64, copy=True)
     arr[~plateau_mask] = np.nan
-    segs = detect_constant_segments(arr, alt_values=alt_arr, **_normalize_cfg(cfg))
+    legacy_cfg = {k: v for k, v in cfg_norm.items() if k not in _MACH_BILATERAL_KEYS}
+    segs = detect_constant_segments(arr, alt_values=alt_arr, **legacy_cfg)
     segs = [s for s in segs if s["var_mean"] >= min_mach_value]
     return add_segment_column(df, segs, out_col), segs
+
+
+def _detect_cas_dispatch(
+    df: pl.DataFrame,
+    src_col: str,
+    out_col: str,
+    cfg: dict[str, Any],
+    mach_segs: list[dict[str, Any]],
+) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    """Detect CAS plateaus, dispatching on ``cfg['mode']``.
+
+    - ``"bilateral_cas"`` (AXM-1689) — Butterworth+bilateral detector.
+    - ``"savgol_cas"`` — legacy :func:`_detect_masked` path.
+    """
+    if src_col not in df.columns:
+        return df, []
+    cfg_norm = _normalize_cfg(cfg)
+    mode = cfg_norm.pop("mode", "savgol_cas")
+    if mode == "bilateral_cas":
+        n = len(df)
+        mach_mask = np.zeros(n, dtype=bool)
+        for seg in mach_segs:
+            mach_mask[seg["start_idx"] : seg["end_idx"] + 1] = True
+        kwargs = {k: cfg_norm[k] for k in _CAS_BILATERAL_KEYS if k in cfg_norm}
+        raw = df[src_col].to_numpy().astype(np.float64, copy=True)
+        segs = detect_cas_plateaus_bilat(raw, mach_mask, **kwargs)
+        return add_segment_column(df, segs, out_col), segs
+    legacy_cfg = {k: v for k, v in cfg_norm.items() if k not in _CAS_BILATERAL_KEYS}
+    return _detect_masked(df, src_col, out_col, legacy_cfg, [mach_segs])
 
 
 def _detect_masked(
@@ -714,6 +927,25 @@ def _detect_vz_sel(
 
 _BILATERAL_KEYS = {"sigma_s", "sigma_r", "n_passes", "tol_ftmin", "min_len"}
 
+_MACH_BILATERAL_KEYS = {
+    "sigma_s",
+    "sigma_r",
+    "n_passes",
+    "slope_tol",
+    "flat_tol",
+    "min_len",
+}
+
+_CAS_BILATERAL_KEYS = {
+    "cutoff_s",
+    "sigma_s",
+    "sigma_r",
+    "n_passes",
+    "slope_tol",
+    "flat_tol",
+    "min_len",
+}
+
 
 def _detect_alt_sel(
     df: pl.DataFrame,
@@ -953,6 +1185,76 @@ def _apply_transition_optimisation(
     return df.with_columns(pl.Series("fdm_cas_sel_kt", cas_sel))
 
 
+def _propagate_speed_plateaus(
+    df: pl.DataFrame,
+    mach_segs: list[dict[str, Any]],
+    cas_segs: list[dict[str, Any]],
+    alt_arr: np.ndarray,
+) -> pl.DataFrame:
+    """Pointwise-propagate speed plateaus across Mach/CAS/TAS columns.
+
+    Within each Mach plateau the constant Mach combined with the local
+    static temperature yields a varying TAS and CAS. Within each CAS
+    plateau the constant CAS combined with local altitude+temperature
+    yields a varying TAS and Mach. Existing per-segment values written
+    by :func:`add_segment_column` are overwritten with the pointwise
+    series so downstream consumers (``_build_tas_target``) see the full
+    physical envelope (AXM-1689).
+    """
+    n = len(df)
+    if n == 0 or (not mach_segs and not cas_segs):
+        return df
+    alt_m = np.asarray(alt_arr, dtype=np.float64) * _FT_TO_M
+    temp_k = _resolve_temp_k(df, alt_arr)
+
+    mach_sel = (
+        df["fdm_mach_sel"].to_numpy().astype(np.float64, copy=True)
+        if "fdm_mach_sel" in df.columns
+        else np.full(n, np.nan)
+    )
+    cas_sel = (
+        df["fdm_cas_sel_kt"].to_numpy().astype(np.float64, copy=True)
+        if "fdm_cas_sel_kt" in df.columns
+        else np.full(n, np.nan)
+    )
+    tas_sel = (
+        df["fdm_tas_sel_kt"].to_numpy().astype(np.float64, copy=True)
+        if "fdm_tas_sel_kt" in df.columns
+        else np.full(n, np.nan)
+    )
+
+    for seg in mach_segs:
+        s, e = seg["start_idx"], seg["end_idx"] + 1
+        mach_const = float(seg["var_mean"])
+        t_loc = temp_k[s:e]
+        h_loc = alt_m[s:e]
+        tas_ms = np.asarray(
+            mach_to_tas_real(np.full_like(t_loc, mach_const), t_loc), dtype=np.float64
+        )
+        cas_ms = np.asarray(tas_to_cas_real(tas_ms, h_loc, t_loc), dtype=np.float64)
+        cas_sel[s:e] = cas_ms * _MS_TO_KT
+        tas_sel[s:e] = tas_ms * _MS_TO_KT
+
+    for seg in cas_segs:
+        s, e = seg["start_idx"], seg["end_idx"] + 1
+        cas_const_ms = float(seg["var_mean"]) * _KT_TO_MS
+        t_loc = temp_k[s:e]
+        h_loc = alt_m[s:e]
+        cas_arr = np.full_like(t_loc, cas_const_ms)
+        tas_ms = np.asarray(cas_to_tas_real(cas_arr, h_loc, t_loc), dtype=np.float64)
+        a_local = np.sqrt(1.4 * 287.05287 * t_loc)
+        mach_sel[s:e] = tas_ms / a_local
+        tas_sel[s:e] = tas_ms * _MS_TO_KT
+
+    columns: list[pl.Series] = []
+    if "fdm_mach_sel" in df.columns or mach_segs or cas_segs:
+        columns.append(pl.Series("fdm_mach_sel", mach_sel))
+    if "fdm_cas_sel_kt" in df.columns or mach_segs or cas_segs:
+        columns.append(pl.Series("fdm_cas_sel_kt", cas_sel))
+    columns.append(pl.Series("fdm_tas_sel_kt", tas_sel))
+    return df.with_columns(*columns)
+
+
 def build_selected_params(
     df: pl.DataFrame,
     config: dict[str, Any],
@@ -1021,13 +1323,14 @@ def build_selected_params(
         plateau_mask,
         min_mach_value,
     )
-    df, cas_segs = _detect_masked(
+    df, cas_segs = _detect_cas_dispatch(
         df,
         cas_src_col,
         "fdm_cas_sel_kt",
         config.get("cas", {}),
-        [mach_segs],
+        mach_segs,
     )
+    df = _propagate_speed_plateaus(df, mach_segs, cas_segs, alt_arr)
     tas_cfg = config.get("tas")
     if tas_cfg is not None:
         df, _ = _detect_masked(

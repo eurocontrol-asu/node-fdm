@@ -72,20 +72,47 @@ class ComputingConfig(BaseModel, frozen=True):
 
 
 class MachFilterConfig(BaseModel, frozen=True):
-    """Mach-number selected-parameter filter."""
+    """Mach-number selected-parameter filter.
 
+    Two modes:
+    - ``"bilateral_mach"`` (default) — bilateral-smoothed Mach plateau
+      detector with altitude-plateau gate (AXM-1689).
+    - ``"savgol_mach"`` — legacy savgol detector.
+    """
+
+    mode: Literal["bilateral_mach", "savgol_mach"] = "bilateral_mach"
+    sigma_s: float = 8.0
+    sigma_r: float = 0.08
+    n_passes: int = 2
+    slope_tol: float = 6.5e-4
+    flat_tol: float = 5e-2
+    min_len: int = 15
+    # Legacy savgol_mach fields kept for backwards compatibility.
     tol: float = 0.0005
-    min_len: int = 120
     alt_threshold: float = 15000
     smooth_window: int = 30
     use_alt: bool = True
 
 
 class CasFilterConfig(BaseModel, frozen=True):
-    """CAS selected-parameter filter."""
+    """CAS selected-parameter filter.
 
+    Two modes:
+    - ``"bilateral_cas"`` (default) — Butterworth low-pass + bilateral
+      smoothing CAS plateau detector (AXM-1689).
+    - ``"savgol_cas"`` — legacy savgol detector.
+    """
+
+    mode: Literal["bilateral_cas", "savgol_cas"] = "bilateral_cas"
+    cutoff_s: float = 180.0
+    sigma_s: float = 8.0
+    sigma_r: float = 15.0
+    n_passes: int = 2
+    slope_tol: float = 0.25
+    flat_tol: float = 20.0
+    min_len: int = 5
+    # Legacy savgol_cas fields kept for backwards compatibility.
     tol: float = 0.75
-    min_len: int = 20
     use_alt: bool = False
     smooth_window: int = 20
     smooth_method: str = "savgol"
