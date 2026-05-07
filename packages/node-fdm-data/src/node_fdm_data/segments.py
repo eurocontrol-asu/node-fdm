@@ -172,6 +172,26 @@ def detect_alt_hold_from_vz(
     return segments
 
 
+def _validate_plateau_run(
+    y_bilat: np.ndarray,
+    s: int,
+    e_inclusive: int,
+    flat_tol: float,
+    min_len: int,
+    abs_min: float | None,
+) -> dict[str, Any] | None:
+    """Return a segment dict if ``[s, e_inclusive]`` satisfies tolerances."""
+    if e_inclusive - s + 1 < min_len:
+        return None
+    chunk = y_bilat[s : e_inclusive + 1]
+    if (chunk.max() - chunk.min()) > 2.0 * flat_tol:
+        return None
+    mean = float(np.mean(chunk))
+    if abs_min is not None and abs(mean) < abs_min:
+        return None
+    return {"start_idx": s, "end_idx": e_inclusive, "var_mean": mean}
+
+
 def _bilateral_plateau_runs(
     y_bilat: np.ndarray,
     flat: np.ndarray,
@@ -184,27 +204,22 @@ def _bilateral_plateau_runs(
     n = len(flat)
     start: int | None = None
 
-    def _try_emit(s: int, e_inclusive: int) -> None:
-        if e_inclusive - s + 1 < min_len:
-            return
-        chunk = y_bilat[s : e_inclusive + 1]
-        if (chunk.max() - chunk.min()) > 2.0 * flat_tol:
-            return
-        mean = float(np.mean(chunk))
-        if abs_min is not None and abs(mean) < abs_min:
-            return
-        segments.append({"start_idx": s, "end_idx": e_inclusive, "var_mean": mean})
-
     for i in range(n):
         if flat[i]:
             if start is None:
                 start = i
             continue
-        if start is not None:
-            _try_emit(start, i - 1)
-            start = None
+        if start is None:
+            continue
+        seg = _validate_plateau_run(y_bilat, start, i - 1, flat_tol, min_len, abs_min)
+        if seg is not None:
+            segments.append(seg)
+        start = None
+
     if start is not None:
-        _try_emit(start, n - 1)
+        seg = _validate_plateau_run(y_bilat, start, n - 1, flat_tol, min_len, abs_min)
+        if seg is not None:
+            segments.append(seg)
     return segments
 
 
