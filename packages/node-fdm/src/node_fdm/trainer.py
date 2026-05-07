@@ -65,9 +65,15 @@ class TrainingConfig(BaseModel):
         grad_clip_norm: Max gradient norm for clipping.
         alpha_dict: Per-variable loss weighting for ``x_cols``.
             Defaults to ``1.0`` for all variables when ``None``.
-        eta_min: Minimum learning rate for ``CosineAnnealingLR``. When
-            ``None`` (default) no scheduler is used and the lr stays at
-            ``lr`` for the whole run.
+        eta_min: Minimum learning rate at end of decay. When ``None``
+            (default) no scheduler is used and the lr stays at ``lr`` for
+            the whole run.
+        schedule: Decay shape after warmup. ``"linear"`` (default,
+            recommended for sequential/regression tasks per Bergsma 2024
+            "Straight to Zero") or ``"cosine"`` (legacy).
+        warmup_epochs: Number of epochs to linearly ramp the lr from
+            ``warmup_start_lr`` to ``lr``. ``0`` disables warmup.
+        warmup_start_lr: Initial lr at the start of the warmup ramp.
     """
 
     architecture_name: str
@@ -84,11 +90,14 @@ class TrainingConfig(BaseModel):
     val_batch_size: int = Field(default=10000, gt=0)
     num_workers: int = Field(default=4, ge=0)
     loss_name: str = "mse"
-    grad_clip_norm: float = Field(default=10.0, gt=0)
+    grad_clip_norm: float = Field(default=2.0, gt=0)
     alpha_dict: dict[str, float] | None = None
     lambda_tracking: float = Field(default=0.0, ge=0)
     huber_beta_per_col: dict[str, float] | None = None
     eta_min: float | None = None
+    schedule: str = Field(default="linear", pattern="^(linear|cosine)$")
+    warmup_epochs: int = Field(default=5, ge=0)
+    warmup_start_lr: float = Field(default=1e-5, gt=0)
 
 
 def _collate_flight_samples(
@@ -193,16 +202,9 @@ class ODETrainer:
             lr=config.lr,
             weight_decay=config.weight_decay,
         )
-        if config.eta_min is not None:
-            self.scheduler: torch.optim.lr_scheduler.CosineAnnealingLR | None = (
-                torch.optim.lr_scheduler.CosineAnnealingLR(
-                    self.optimizer,
-                    T_max=config.epochs,
-                    eta_min=config.eta_min,
-                )
-            )
-        else:
-            self.scheduler = None
+        # Scheduler is built in ``train()`` once we know the number of
+        # batches per epoch (step-wise scheduling).
+        self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
         self.best_val_loss = float("inf")
         self.loss_fn: nn.Module = get_loss(config.loss_name)
 
@@ -607,6 +609,60 @@ class ODETrainer:
 
         return loss
 
+    def _build_scheduler(
+        self, steps_per_epoch: int
+    ) -> torch.optim.lr_scheduler.LRScheduler | None:
+        """Build a step-wise LR scheduler: linear warmup + (linear|cosine) decay.
+
+        Returns ``None`` when ``eta_min`` is not set (constant lr).
+        """
+        cfg = self.config
+        if cfg.eta_min is None:
+            return None
+
+        warmup_steps = max(cfg.warmup_epochs, 0) * steps_per_epoch
+        total_steps = cfg.epochs * steps_per_epoch
+        decay_steps = max(total_steps - warmup_steps, 1)
+
+        schedulers: list[torch.optim.lr_scheduler.LRScheduler] = []
+        milestones: list[int] = []
+        if warmup_steps > 0:
+            start_factor = cfg.warmup_start_lr / cfg.lr
+            schedulers.append(
+                torch.optim.lr_scheduler.LinearLR(
+                    self.optimizer,
+                    start_factor=start_factor,
+                    end_factor=1.0,
+                    total_iters=warmup_steps,
+                )
+            )
+            milestones.append(warmup_steps)
+
+        end_factor = cfg.eta_min / cfg.lr
+        decay: torch.optim.lr_scheduler.LRScheduler
+        if cfg.schedule == "linear":
+            decay = torch.optim.lr_scheduler.LinearLR(
+                self.optimizer,
+                start_factor=1.0,
+                end_factor=end_factor,
+                total_iters=decay_steps,
+            )
+        else:
+            decay = torch.optim.lr_scheduler.CosineAnnealingLR(
+                self.optimizer,
+                T_max=decay_steps,
+                eta_min=cfg.eta_min,
+            )
+        schedulers.append(decay)
+
+        if len(schedulers) == 1:
+            return schedulers[0]
+        return torch.optim.lr_scheduler.SequentialLR(
+            self.optimizer,
+            schedulers=schedulers,
+            milestones=milestones,
+        )
+
     def train(self) -> list[dict[str, float]]:
         """Run the full training loop.
 
@@ -632,6 +688,8 @@ class ODETrainer:
         records: list[dict[str, float]] = []
         loss_csv_path = self.model_dir / "training_losses.csv"
 
+        self.scheduler = self._build_scheduler(steps_per_epoch=max(len(train_loader), 1))
+
         for epoch in range(1, epochs + 1):
             for cb in self.callbacks:
                 cb.on_epoch_start(epoch, epochs)
@@ -654,6 +712,8 @@ class ODETrainer:
                     max_norm=self.config.grad_clip_norm,
                 )
                 self.optimizer.step()
+                if self.scheduler is not None:
+                    self.scheduler.step()
                 total_loss += loss.item()
                 n_batches += 1
             avg_train = total_loss / max(n_batches, 1)
@@ -673,9 +733,6 @@ class ODETrainer:
             if is_best:
                 self.best_val_loss = avg_val
                 self.save_model(epoch)
-
-            if self.scheduler is not None:
-                self.scheduler.step()
 
             current_lr = self.optimizer.param_groups[0]["lr"]
             record = {

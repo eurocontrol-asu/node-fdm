@@ -31,7 +31,7 @@ format: fmt
 typecheck:
 	@for pkg in packages/*/; do \
 		echo "==> mypy $$pkg"; \
-		(cd $$pkg && uv run mypy src/) || exit 1; \
+		(cd $$pkg && uv run mypy src/ tests/) || exit 1; \
 	done
 	@echo "==> mypy scripts/"
 	uv run mypy

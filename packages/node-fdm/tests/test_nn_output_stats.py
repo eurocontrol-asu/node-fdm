@@ -16,6 +16,7 @@ Covers the data-driven replacement of the legacy hardcoded
 from __future__ import annotations
 
 import math
+from typing import Any
 
 import numpy as np
 import pytest
@@ -250,7 +251,7 @@ class _FakeStats:
 class TestCreateStructuredLayerPrecedence:
     """Scale is data-driven (p999); cap comes from nn_output_caps when set."""
 
-    def _build_training_model(self):
+    def _build_training_model(self) -> Any:
         """Helper: instantiate FlightDynamicsModel with a stats stub."""
         from node_fdm.models.fdm import FlightDynamicsModel
 

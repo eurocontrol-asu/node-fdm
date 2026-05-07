@@ -12,6 +12,7 @@ All commands require the ``[viz]`` extra: ``pip install node-fdm-pipeline[viz]``
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import structlog
 
@@ -44,38 +45,38 @@ _MIN_FINITE_ROWS: int = 2
 """Minimum number of finite-mask rows required to render a flight."""
 
 
-def _set_ylim(ax: object, true_vals: object) -> None:
+def _set_ylim(ax: Any, true_vals: Any) -> None:
     """Set y-axis limits with a 10% margin around finite values of ``true_vals``."""
     import numpy as np
 
-    valid = true_vals[np.isfinite(true_vals)]  # type: ignore[index]
+    valid = true_vals[np.isfinite(true_vals)]
     if len(valid) == 0:
         return
     ymin, ymax = valid.min(), valid.max()
     margin = (ymax - ymin) * 0.10 if ymax != ymin else abs(ymax) * 0.10 + 1.0
-    ax.set_ylim(ymin - margin, ymax + margin)  # type: ignore[attr-defined]
+    ax.set_ylim(ymin - margin, ymax + margin)
 
 
-def _shade_unknown(ax: object, t: object, mask: object, label: str) -> None:
+def _shade_unknown(ax: Any, t: Any, mask: Any, label: str) -> None:
     """Shade rows where target is absent (unknown / no detected segment)."""
-    if not mask.any():  # type: ignore[attr-defined]
+    if not mask.any():
         return
-    ymin, ymax = ax.get_ylim()  # type: ignore[attr-defined]
-    ax.fill_between(t, ymin, ymax, where=mask, alpha=0.08, color="gray", label=label)  # type: ignore[attr-defined]
-    ax.set_ylim(ymin, ymax)  # type: ignore[attr-defined]
+    ymin, ymax = ax.get_ylim()
+    ax.fill_between(t, ymin, ymax, where=mask, alpha=0.08, color="gray", label=label)
+    ax.set_ylim(ymin, ymax)
 
 
 def _integrate_ground_track(
     *,
     lat0: float,
     lon0: float,
-    heading_pred: object,
-    tas_pred: object,
-    gamma_pred: object,
-    u_wind: object,
-    v_wind: object,
+    heading_pred: Any,
+    tas_pred: Any,
+    gamma_pred: Any,
+    u_wind: Any,
+    v_wind: Any,
     step_s: float,
-) -> tuple[object, object]:
+) -> tuple[Any, Any]:
     """Integrate the predicted ground-track from heading + TAS + γ + wind.
 
     Wind triangle: ``ground_velocity = TAS_horiz * (sin ψ, cos ψ) + (u_wind, v_wind)``.
@@ -83,10 +84,10 @@ def _integrate_ground_track(
     import numpy as np
 
     r_earth_m = 6_371_000.0
-    n_p = len(heading_pred)  # type: ignore[arg-type]
-    tas_horiz = tas_pred * np.cos(gamma_pred)  # type: ignore[operator]
-    v_e = tas_horiz * np.sin(heading_pred) + u_wind[:n_p]  # type: ignore[index, operator]
-    v_n = tas_horiz * np.cos(heading_pred) + v_wind[:n_p]  # type: ignore[index, operator]
+    n_p = len(heading_pred)
+    tas_horiz = tas_pred * np.cos(gamma_pred)
+    v_e = tas_horiz * np.sin(heading_pred) + u_wind[:n_p]
+    v_n = tas_horiz * np.cos(heading_pred) + v_wind[:n_p]
     lat_pred = np.empty(n_p, dtype=np.float64)
     lon_pred = np.empty(n_p, dtype=np.float64)
     lat_pred[0] = lat0
@@ -132,14 +133,10 @@ def _plot_inference_figure(  # noqa: PLR0912
     gamma_known_idx = info.u_cols.index("fdm_gamma_target_known")  # type: ignore[attr-defined]
     gamma_known = u_arr[:, gamma_known_idx].copy()
 
-    # Match `_filter_nan_segments` (predict.py) which filters on x AND u AND e
-    # before writing the parquet. Re-applying the same combined mask lets us
-    # index the Delta arrays so they align with the predict parquet rows.
-    finite_mask = (
-        np.isfinite(x_arr).all(axis=1)
-        & np.isfinite(u_arr).all(axis=1)
-        & np.isfinite(e_arr).all(axis=1)
-    )
+    # Match `_filter_nan_segments` (predict.py): filter on x AND e only.
+    # u_cols are not constrained — sel/target columns can be NaN outside
+    # detected segments and the matching `_known` masks carry the info.
+    finite_mask = np.isfinite(x_arr).all(axis=1) & np.isfinite(e_arr).all(axis=1)
     if finite_mask.sum() < _MIN_FINITE_ROWS:
         log.warning("visualize_skip_no_finite_rows", flight_id=flight_id)
         return
@@ -231,8 +228,8 @@ def _plot_inference_figure(  # noqa: PLR0912
     cas_pred = tas_to_cas_real(pred_tas, pred_alt, temp_true)
     vz_pred = pred_tas * np.sin(pred_gamma)
 
-    lat_pred: object | None = None
-    lon_pred: object | None = None
+    lat_pred: Any = None
+    lon_pred: Any = None
     if has_lateral and pred_heading is not None and lat_arr is not None and lon_arr is not None:
         u_wind = e_arr[:, info.e0_cols.index("era_u_wind_ms")]  # type: ignore[attr-defined]
         v_wind = e_arr[:, info.e0_cols.index("era_v_wind_ms")]  # type: ignore[attr-defined]
@@ -360,10 +357,10 @@ def _plot_inference_figure(  # noqa: PLR0912
         if cartopy_available:
             proj = ccrs.PlateCarree()
             ax = fig.add_subplot(4, 2, 5, projection=proj)
-            lon_min = float(min(lon_arr.min(), lon_pred.min()))  # type: ignore[union-attr]
-            lon_max = float(max(lon_arr.max(), lon_pred.max()))  # type: ignore[union-attr]
-            lat_min = float(min(lat_arr.min(), lat_pred.min()))  # type: ignore[union-attr]
-            lat_max = float(max(lat_arr.max(), lat_pred.max()))  # type: ignore[union-attr]
+            lon_min = float(min(lon_arr.min(), lon_pred.min()))
+            lon_max = float(max(lon_arr.max(), lon_pred.max()))
+            lat_min = float(min(lat_arr.min(), lat_pred.min()))
+            lat_max = float(max(lat_arr.max(), lat_pred.max()))
             lon_margin = max(0.1, 0.10 * (lon_max - lon_min))
             lat_margin = max(0.1, 0.10 * (lat_max - lat_min))
             ax.set_extent(
@@ -529,7 +526,7 @@ def run_visualize(
     sel_cols = [
         c
         for c in df.columns
-        if c.startswith("fdm_") and "_sel_" in c and df.schema[c].is_numeric()
+        if c.startswith("fdm_") and "_sel" in c and df.schema[c] != pl.Boolean
     ]
     if sel_cols:
         df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])

@@ -75,7 +75,7 @@ class TestEvaluateTypecode:
         result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
-            predict_dir=tmp_path / "predict",
+            predict_acft_dir=tmp_path / "predict",
             bada_dir=tmp_path / "bada",
             variables={"raw_alt_m": "Altitude"},
         )
@@ -96,7 +96,7 @@ class TestEvaluateTypecode:
         result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
-            predict_dir=predict_dir,
+            predict_acft_dir=predict_dir,
             bada_dir=bada_dir,
             variables=variables,
         )
@@ -130,7 +130,7 @@ class TestEvaluateTypecode:
         result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
-            predict_dir=predict_dir,
+            predict_acft_dir=predict_dir,
             bada_dir=bada_dir,
             variables=variables,
         )
@@ -150,7 +150,7 @@ class TestEvaluateTypecode:
         result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
-            predict_dir=tmp_path / "predict",
+            predict_acft_dir=tmp_path / "predict",
             bada_dir=bada_dir,
             variables={"raw_alt_m": "Altitude"},
         )

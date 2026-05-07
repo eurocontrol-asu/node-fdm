@@ -7,7 +7,7 @@ the miss set and the per-kind fetcher is patched to observe calls.
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import pytest
 
@@ -73,7 +73,7 @@ def test_ensure_window_cached_force_ignores_cache(
         assert list(passed) == icao
 
 
-def _fake_history_flight() -> object:
+def _fake_history_flight() -> Any:
     """Build a minimal ADS-B-only Flight (no BDS columns) for decoder tests."""
     import pandas as pd
     from traffic.core import Flight

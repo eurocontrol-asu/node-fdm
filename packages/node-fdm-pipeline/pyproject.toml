@@ -24,7 +24,7 @@ dependencies = [
     "numpy>=2.0",
     "pandas<3.0",
     "polars>=1.0",
-    "pybada>=0.1",
+    "pybada==0.1.5",  # 0.1.10+ broken: TCL.py SpeedBrakes default + trajectorySegments Hp_final NameError
     "pydantic>=2.0",
     "structlog>=24.0",
     "pyyaml>=6.0",
@@ -115,7 +115,7 @@ module = ["node_fdm_pipeline.cli"]
 disallow_untyped_decorators = false
 
 [[tool.mypy.overrides]]
-module = ["pyBADA.*", "joblib.*", "fastmeteo.*", "pandas"]
+module = ["pyBADA.*", "joblib.*", "fastmeteo.*", "pandas", "cartopy", "cartopy.*"]
 ignore_missing_imports = true
 
 [[tool.mypy.overrides]]
