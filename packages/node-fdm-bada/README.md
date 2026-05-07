@@ -11,7 +11,7 @@ BADA 4.2 aircraft performance baseline for node-fdm.
 |---|---|
 | `utils` | CAS↔Mach, TAS→CAS conversions, flight phase inference |
 | `aircraft_mapping` | ICAO type code → BADA 4.2 identifier (68 aircraft) |
-| `predictor` | `process_single_flight` — pyBADA TCL wrapper for reference trajectories |
+| `predictor` | `process_single_flight` — pyBADA TCL wrapper for reference trajectories, with `turnMetrics` injection on `fdm_in_turn` segments (bank angle from `tan(φ)=ω·V/g`) |
 
 ## Installation
 

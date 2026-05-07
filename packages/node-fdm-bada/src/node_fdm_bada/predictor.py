@@ -52,11 +52,58 @@ except ImportError:
 # Constants
 # ---------------------------------------------------------------------------
 _NM_TO_MS: float = 1852.0 / 3600.0  # 1 kt in m/s
+_G: float = 9.80665  # m/s² — standard gravitational acceleration
+# Below this threshold, ``fdm_in_turn`` is treated as numerical noise and the
+# step is forwarded to pyBADA without ``turnMetrics`` overrides.
+_TURN_RATE_THRESHOLD_RADS: float = 1e-3
+
+
+def _bank_angle_for_turn(*, omega_rads: float, tas_ms: float) -> float:
+    """Bank angle (deg) from the coordinated-turn formula ``tan(φ) = ω·V/g``.
+
+    Computed locally to sidestep the pyBADA 0.1.5 ``Airplane.bankAngle``
+    AttributeError raised from ``geodesic.py:884`` when ``rateOfTurn`` is set
+    but ``bankAngle`` is left as the default zero.
+    """
+    return float(np.degrees(np.arctan(omega_rads * tas_ms / _G)))
+
+
+def _turn_direction(d_heading_rads: float) -> str | None:
+    """Map a signed heading rate to pyBADA's ``directionOfTurn`` string.
+
+    Heading is measured clockwise (standard nav convention), so a positive
+    rate means a right turn.
+    """
+    if d_heading_rads > 0:
+        return "RIGHT"
+    if d_heading_rads < 0:
+        return "LEFT"
+    return None
+
+
+def _step_turn_metrics(row: dict[str, Any], current_tas: float) -> tuple[float, float, str | None]:
+    """Return ``(turn_rate_dps, bank_angle_deg, turn_direction)`` for one step.
+
+    Below ``_TURN_RATE_THRESHOLD_RADS`` (or when ``fdm_in_turn`` is false), the
+    defaults ``(0.0, 0.0, None)`` are returned so pyBADA stays in its straight
+    flight regime.
+    """
+    d_heading_rads = float(row.get("fdm_d_heading_rads", 0.0))
+    if not (
+        bool(row.get("fdm_in_turn", False)) and abs(d_heading_rads) > _TURN_RATE_THRESHOLD_RADS
+    ):
+        return 0.0, 0.0, None
+    return (
+        float(np.degrees(abs(d_heading_rads))),
+        _bank_angle_for_turn(omega_rads=abs(d_heading_rads), tas_ms=current_tas),
+        _turn_direction(d_heading_rads),
+    )
 
 
 def _backfill_cas_sel(df: pl.DataFrame) -> pl.DataFrame:
     cas_sel = df["cas_sel_ms"].to_numpy().copy()
-    cas_sel[-1] = df["cas_ms"][-1]
+    if "cas_ms" in df.columns:
+        cas_sel[-1] = df["cas_ms"][-1]
     cas_sel[cas_sel == 0.0] = np.nan
     for i in range(len(cas_sel) - 2, -1, -1):
         if np.isnan(cas_sel[i]):
@@ -173,6 +220,8 @@ def process_single_flight(
             step_lat = current_lat if has_lateral else None
             step_lon = current_lon if has_lateral else None
 
+            turn_rate_dps, bank_angle_deg, turn_direction = _step_turn_metrics(row, current_tas)
+
             res = _run_bada_step(
                 ac=ac,
                 speed_type=speed_type,
@@ -189,6 +238,9 @@ def process_single_flight(
                 current_lat=step_lat,
                 current_lon=step_lon,
                 current_heading_deg=commanded_heading_deg,
+                turn_rate_dps=turn_rate_dps,
+                bank_angle_deg=bank_angle_deg,
+                turn_direction=turn_direction,
             )
 
             entry: dict[str, float] = {
@@ -271,6 +323,9 @@ def _run_bada_step(
     current_lat: float | None = None,
     current_lon: float | None = None,
     current_heading_deg: float | None = None,
+    turn_rate_dps: float = 0.0,
+    bank_angle_deg: float = 0.0,
+    turn_direction: str | None = None,
 ) -> Any:
     """Run a single BADA TCL step, selecting the appropriate TCL function.
 
@@ -278,6 +333,10 @@ def _run_bada_step(
     forwarded to pyBADA via ``initialHeading={'true': hdg,
     'constantHeading': True, 'magnetic': None}`` (loxodromic integration)
     along with ``Lat``/``Lon`` for lat/lon propagation.
+
+    When ``turn_rate_dps``/``bank_angle_deg``/``turn_direction`` are non-default,
+    they are forwarded to every TCL call as a ``turnMetrics`` dict shaped
+    ``{'rateOfTurn', 'bankAngle', 'directionOfTurn'}`` (pyBADA 0.1.5 contract).
     """
     step_length = 4
     length = 4
@@ -296,6 +355,11 @@ def _run_bada_step(
         "Lat": current_lat,
         "Lon": current_lon,
         "initialHeading": initial_heading,
+        "turnMetrics": {
+            "rateOfTurn": float(turn_rate_dps),
+            "bankAngle": float(bank_angle_deg),
+            "directionOfTurn": turn_direction,
+        },
     }
 
     if speed_diff_ratio < 0.04:
