@@ -1124,6 +1124,50 @@ def _apply_transition_optimisation(
     return df.with_columns(pl.Series("fdm_cas_sel_kt", cas_sel))
 
 
+def _load_speed_column(df: pl.DataFrame, col: str, n: int) -> np.ndarray:
+    """Return ``col`` as a writable float64 array, or NaN-filled length ``n``."""
+    if col in df.columns:
+        return df[col].to_numpy().astype(np.float64, copy=True)
+    return np.full(n, np.nan)
+
+
+def _apply_mach_plateau(
+    seg: dict[str, Any],
+    temp_k: np.ndarray,
+    alt_m: np.ndarray,
+    cas_sel: np.ndarray,
+    tas_sel: np.ndarray,
+) -> None:
+    """Fill CAS/TAS arrays in place from a constant-Mach plateau and local atmosphere."""
+    s, e = seg["start_idx"], seg["end_idx"] + 1
+    mach_const = float(seg["var_mean"])
+    t_loc = temp_k[s:e]
+    h_loc = alt_m[s:e]
+    tas_ms = np.asarray(mach_to_tas_real(np.full_like(t_loc, mach_const), t_loc), dtype=np.float64)
+    cas_ms = np.asarray(tas_to_cas_real(tas_ms, h_loc, t_loc), dtype=np.float64)
+    cas_sel[s:e] = cas_ms * _MS_TO_KT
+    tas_sel[s:e] = tas_ms * _MS_TO_KT
+
+
+def _apply_cas_plateau(
+    seg: dict[str, Any],
+    temp_k: np.ndarray,
+    alt_m: np.ndarray,
+    mach_sel: np.ndarray,
+    tas_sel: np.ndarray,
+) -> None:
+    """Fill Mach/TAS arrays in place from a constant-CAS plateau and local atmosphere."""
+    s, e = seg["start_idx"], seg["end_idx"] + 1
+    cas_const_ms = float(seg["var_mean"]) * _KT_TO_MS
+    t_loc = temp_k[s:e]
+    h_loc = alt_m[s:e]
+    cas_arr = np.full_like(t_loc, cas_const_ms)
+    tas_ms = np.asarray(cas_to_tas_real(cas_arr, h_loc, t_loc), dtype=np.float64)
+    a_local = np.sqrt(1.4 * 287.05287 * t_loc)
+    mach_sel[s:e] = tas_ms / a_local
+    tas_sel[s:e] = tas_ms * _MS_TO_KT
+
+
 def _propagate_speed_plateaus(
     df: pl.DataFrame,
     mach_segs: list[dict[str, Any]],
@@ -1146,52 +1190,37 @@ def _propagate_speed_plateaus(
     alt_m = np.asarray(alt_arr, dtype=np.float64) * _FT_TO_M
     temp_k = _resolve_temp_k(df, alt_arr)
 
-    mach_sel = (
-        df["fdm_mach_sel"].to_numpy().astype(np.float64, copy=True)
-        if "fdm_mach_sel" in df.columns
-        else np.full(n, np.nan)
-    )
-    cas_sel = (
-        df["fdm_cas_sel_kt"].to_numpy().astype(np.float64, copy=True)
-        if "fdm_cas_sel_kt" in df.columns
-        else np.full(n, np.nan)
-    )
-    tas_sel = (
-        df["fdm_tas_sel_kt"].to_numpy().astype(np.float64, copy=True)
-        if "fdm_tas_sel_kt" in df.columns
-        else np.full(n, np.nan)
-    )
+    mach_sel = _load_speed_column(df, "fdm_mach_sel", n)
+    cas_sel = _load_speed_column(df, "fdm_cas_sel_kt", n)
+    tas_sel = _load_speed_column(df, "fdm_tas_sel_kt", n)
 
     for seg in mach_segs:
-        s, e = seg["start_idx"], seg["end_idx"] + 1
-        mach_const = float(seg["var_mean"])
-        t_loc = temp_k[s:e]
-        h_loc = alt_m[s:e]
-        tas_ms = np.asarray(
-            mach_to_tas_real(np.full_like(t_loc, mach_const), t_loc), dtype=np.float64
-        )
-        cas_ms = np.asarray(tas_to_cas_real(tas_ms, h_loc, t_loc), dtype=np.float64)
-        cas_sel[s:e] = cas_ms * _MS_TO_KT
-        tas_sel[s:e] = tas_ms * _MS_TO_KT
-
+        _apply_mach_plateau(seg, temp_k, alt_m, cas_sel, tas_sel)
     for seg in cas_segs:
-        s, e = seg["start_idx"], seg["end_idx"] + 1
-        cas_const_ms = float(seg["var_mean"]) * _KT_TO_MS
-        t_loc = temp_k[s:e]
-        h_loc = alt_m[s:e]
-        cas_arr = np.full_like(t_loc, cas_const_ms)
-        tas_ms = np.asarray(cas_to_tas_real(cas_arr, h_loc, t_loc), dtype=np.float64)
-        a_local = np.sqrt(1.4 * 287.05287 * t_loc)
-        mach_sel[s:e] = tas_ms / a_local
-        tas_sel[s:e] = tas_ms * _MS_TO_KT
+        _apply_cas_plateau(seg, temp_k, alt_m, mach_sel, tas_sel)
 
+    columns = _collect_propagated_columns(
+        df, mach_sel, cas_sel, tas_sel, has_any_seg=bool(mach_segs or cas_segs)
+    )
+    return df.with_columns(*columns)
+
+
+def _collect_propagated_columns(
+    df: pl.DataFrame,
+    mach_sel: np.ndarray,
+    cas_sel: np.ndarray,
+    tas_sel: np.ndarray,
+    *,
+    has_any_seg: bool,
+) -> list[pl.Series]:
+    """Build the propagated speed columns to merge back into the frame."""
     columns: list[pl.Series] = []
-    if "fdm_mach_sel" in df.columns or mach_segs or cas_segs:
+    if "fdm_mach_sel" in df.columns or has_any_seg:
         columns.append(pl.Series("fdm_mach_sel", mach_sel))
-    if "fdm_cas_sel_kt" in df.columns or mach_segs or cas_segs:
+    if "fdm_cas_sel_kt" in df.columns or has_any_seg:
         columns.append(pl.Series("fdm_cas_sel_kt", cas_sel))
     columns.append(pl.Series("fdm_tas_sel_kt", tas_sel))
-    return df.with_columns(*columns)
+    return columns
 
 
 def build_selected_params(
