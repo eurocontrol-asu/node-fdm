@@ -62,3 +62,6 @@ scripts/debug/diag_*
 scripts/debug/bench_*
 scripts/debug/inverse_*
 scripts/debug/conditional_scaling_design.md
+scripts/debug/check_inference2.py
+scripts/debug/grad_norm_diag.py
+scripts/debug/wmm_vec.py
