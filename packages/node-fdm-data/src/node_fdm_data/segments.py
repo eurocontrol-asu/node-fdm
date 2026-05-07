@@ -1164,15 +1164,18 @@ def _apply_transition_optimisation(
     Skipped if no Mach plateau, no altitude plateau, no real TAS, or the
     plateau is within ``transition_margin`` of a flight edge.
     """
-    if "fdm_cas_sel_kt" not in df.columns or not alt_segs or not mach_segs:
-        return df
     n = len(df)
-    if n == 0 or "fdm_tas_from_cas_kt" not in df.columns:
+    if (
+        n == 0
+        or not alt_segs
+        or not mach_segs
+        or "fdm_cas_sel_kt" not in df.columns
+        or "fdm_tas_from_cas_kt" not in df.columns
+        or cas_src_col not in df.columns
+    ):
         return df
     tas_real = df["fdm_tas_from_cas_kt"].to_numpy().astype(np.float64)
     if not np.any(~np.isnan(tas_real)):
-        return df
-    if cas_src_col not in df.columns:
         return df
 
     deviation_kt = float(config.get("cas_deviation_kt", 5.0))
@@ -1191,28 +1194,58 @@ def _apply_transition_optimisation(
         (_descent_window(last_alt, n, search_window, margin), last_alt, +1),
     ]
     for window, alt_seg, direction in sides:
-        if window is None:
-            continue
-        mach_const = _mach_value_in_alt_seg(mach_segs, alt_seg)
-        if mach_const is None:
-            continue
-        boundary, win_start, win_end = window
-        _apply_one_transition_window(
+        _apply_transition_side(
+            window=window,
+            alt_seg=alt_seg,
+            direction=direction,
+            mach_segs=mach_segs,
             cas_sel=cas_sel,
             cas_real=cas_real,
             tas_real=tas_real,
             alt_m=alt_m,
             temp_k=temp_k,
-            mach_const=mach_const,
-            boundary_idx=boundary,
-            win_start=win_start,
-            win_end=win_end,
-            direction=direction,
             deviation_kt=deviation_kt,
             search_window=search_window,
         )
 
     return df.with_columns(pl.Series("fdm_cas_sel_kt", cas_sel))
+
+
+def _apply_transition_side(
+    *,
+    window: tuple[int, int, int] | None,
+    alt_seg: dict[str, Any],
+    direction: int,
+    mach_segs: list[dict[str, Any]],
+    cas_sel: np.ndarray,
+    cas_real: np.ndarray,
+    tas_real: np.ndarray,
+    alt_m: np.ndarray,
+    temp_k: np.ndarray,
+    deviation_kt: float,
+    search_window: int,
+) -> None:
+    """Apply the optimised CAS replacement on one transition side (climb or descent)."""
+    if window is None:
+        return
+    mach_const = _mach_value_in_alt_seg(mach_segs, alt_seg)
+    if mach_const is None:
+        return
+    boundary, win_start, win_end = window
+    _apply_one_transition_window(
+        cas_sel=cas_sel,
+        cas_real=cas_real,
+        tas_real=tas_real,
+        alt_m=alt_m,
+        temp_k=temp_k,
+        mach_const=mach_const,
+        boundary_idx=boundary,
+        win_start=win_start,
+        win_end=win_end,
+        direction=direction,
+        deviation_kt=deviation_kt,
+        search_window=search_window,
+    )
 
 
 def _load_speed_column(df: pl.DataFrame, col: str, n: int) -> np.ndarray:
