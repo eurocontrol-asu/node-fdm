@@ -79,6 +79,32 @@ def _make_segment(start: int, end_idx: int, y: np.ndarray) -> dict[str, Any]:
     }
 
 
+def _smooth_vz_bilateral(
+    vz: np.ndarray,
+    sigma_s: float,
+    sigma_r: float,
+    n_passes: int,
+) -> np.ndarray | None:
+    """Interpolate NaNs then apply ``n_passes`` of 1D bilateral smoothing.
+
+    Returns ``None`` if ``vz`` is fully NaN (no signal to recover).
+    """
+    nan_mask = np.isnan(vz)
+    if nan_mask.any():
+        if int((~nan_mask).sum()) == 0:
+            return None
+        vz = interpolate_nans(vz)
+    for _ in range(max(0, int(n_passes))):
+        vz = bilateral_1d(vz, sigma_s, sigma_r)
+    return vz
+
+
+def _below_tol_mask(values: np.ndarray, tol: float) -> np.ndarray:
+    """Boolean mask of samples whose absolute value is strictly below ``tol``."""
+    mask: np.ndarray = np.abs(values) < tol
+    return mask
+
+
 def detect_alt_hold_from_vz(
     vz_ftmin: np.ndarray,
     alt_ft: np.ndarray,
@@ -100,15 +126,10 @@ def detect_alt_hold_from_vz(
     """
     vz = np.asarray(vz_ftmin, dtype=np.float64).copy()
     alt = np.asarray(alt_ft, dtype=np.float64)
-    nan_mask = np.isnan(vz)
-    if nan_mask.any():
-        if int((~nan_mask).sum()) == 0:
-            return []
-        vz = interpolate_nans(vz)
-    vz_bilat = vz
-    for _ in range(max(0, int(n_passes))):
-        vz_bilat = bilateral_1d(vz_bilat, sigma_s, sigma_r)
-    mask = np.abs(vz_bilat) < tol_ftmin
+    vz_bilat = _smooth_vz_bilateral(vz, sigma_s, sigma_r, n_passes)
+    if vz_bilat is None:
+        return []
+    mask = _below_tol_mask(vz_bilat, tol_ftmin)
     segments: list[dict[str, Any]] = []
     start: int | None = None
     n = len(mask)
@@ -893,6 +914,13 @@ def _detect_alt_sel(
     alt_arr: np.ndarray,
     vz_col: str | None = None,
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
+    """Detect altitude-hold segments, dispatching on ``alt_cfg['mode']``.
+
+    - ``"bilateral_vz"`` — derive alt-hold from vertical speed via
+      :func:`detect_alt_hold_from_vz` (requires ``vz_col``).
+    - ``"savgol_alt"`` (default) — legacy :func:`detect_constant_segments`
+      on the altitude column with bilateral-only keys stripped.
+    """
     if alt_cfg is None or alt_col not in df.columns:
         return df, []
     cfg = _normalize_cfg(alt_cfg)
