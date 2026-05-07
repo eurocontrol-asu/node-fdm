@@ -55,7 +55,9 @@ def compute_errors_by_phase(
         "Descent": descent_mask,
     }
 
-    is_angle = "gamma" in pred_col.lower()
+    is_heading = "heading" in pred_col.lower()
+    is_gamma = "gamma" in pred_col.lower()
+    is_angle = is_heading or is_gamma
     results: list[tuple[str, float, float, float, float, float, float, int]] = []
 
     for phase, mask in phases.items():
@@ -67,12 +69,16 @@ def compute_errors_by_phase(
         if len(y_true) == 0:
             continue
 
-        if is_angle:
-            deg_factor = 180 / np.pi
+        deg_factor = 180 / np.pi
+        if is_heading:
+            err_rad = (y_pred - y_true + np.pi) % (2 * np.pi) - np.pi
+            err = err_rad * deg_factor
+        elif is_gamma:
             y_pred = y_pred * deg_factor
             y_true = y_true * deg_factor
-
-        err = y_pred - y_true
+            err = y_pred - y_true
+        else:
+            err = y_pred - y_true
         abs_err = np.abs(err)
 
         if is_angle:
@@ -195,6 +201,113 @@ def _metrics_for_variable(
     )
 
 
+def _position_metrics_for_model(
+    df_acft: pl.DataFrame,
+    acft: str,
+    prefix: str,
+) -> pl.DataFrame | None:
+    """Compute per-phase haversine position errors for one model.
+
+    Tagged with Aircraft/Variable="Position [m]"/Model.
+    """
+    lat_pred_col = f"{prefix}lat_deg"
+    lon_pred_col = f"{prefix}lon_deg"
+    metrics = compute_position_errors_by_phase(
+        df_acft,
+        lat_pred_col=lat_pred_col,
+        lon_pred_col=lon_pred_col,
+        lat_true_col="lat_deg",
+        lon_true_col="lon_deg",
+        vertical_rate_col="raw_vz_ms",
+    )
+    if metrics is None or len(metrics) == 0:
+        return None
+    return metrics.with_columns(
+        pl.lit(acft).alias("Aircraft"),
+        pl.lit("Position [m]").alias("Variable"),
+        pl.lit(prefix[:-1].upper()).alias("Model"),
+    )
+
+
+def compute_position_errors_by_phase(
+    df: pl.DataFrame,
+    lat_pred_col: str,
+    lon_pred_col: str,
+    lat_true_col: str,
+    lon_true_col: str,
+    vertical_rate_col: str = "vz_ms",
+) -> pl.DataFrame | None:
+    """Compute haversine position error metrics by flight phase.
+
+    Returns the same schema as ``compute_errors_by_phase``: per-phase MAE,
+    MAE_std, MAPE (NaN for distances), MAPE_std, ME, ME_std, Count. Returns
+    ``None`` if any of the required lat/lon/vz columns are missing.
+    """
+    required = (lat_pred_col, lon_pred_col, lat_true_col, lon_true_col, vertical_rate_col)
+    if any(col not in df.columns for col in required):
+        return None
+
+    earth_radius_m = 6_371_000.0
+    lat1 = np.radians(df[lat_pred_col].to_numpy())
+    lon1 = np.radians(df[lon_pred_col].to_numpy())
+    lat2 = np.radians(df[lat_true_col].to_numpy())
+    lon2 = np.radians(df[lon_true_col].to_numpy())
+    dlat = lat2 - lat1
+    dlon = lon2 - lon1
+    a = np.sin(dlat / 2.0) ** 2 + np.cos(lat1) * np.cos(lat2) * np.sin(dlon / 2.0) ** 2
+    distance = 2.0 * earth_radius_m * np.arcsin(np.minimum(1.0, np.sqrt(a)))
+
+    vz = df[vertical_rate_col].to_numpy()
+    climb_mask = vz > 1.0
+    descent_mask = vz < -1.0
+    level_mask = (~climb_mask) & (~descent_mask)
+    phases = {
+        "All phases": np.ones(len(df), dtype=bool),
+        "Climb": climb_mask,
+        "Level flight": level_mask,
+        "Descent": descent_mask,
+    }
+
+    results: list[tuple[str, float, float, float, float, float, float, int]] = []
+    for phase, mask in phases.items():
+        d = distance[mask]
+        d = d[np.isfinite(d)]
+        if len(d) == 0:
+            continue
+        abs_perc_err = np.full_like(d, np.nan)
+        with warnings.catch_warnings():
+            warnings.simplefilter("ignore", RuntimeWarning)
+            mape_mean = float(np.nanmean(abs_perc_err))
+            mape_std = float(np.nanstd(abs_perc_err))
+        results.append(
+            (
+                phase,
+                float(np.mean(d)),
+                float(np.std(d)),
+                mape_mean,
+                mape_std,
+                float(np.mean(d)),
+                float(np.std(d)),
+                len(d),
+            )
+        )
+
+    return pl.DataFrame(
+        results,
+        schema=[
+            ("Phase", pl.Utf8),
+            ("MAE", pl.Float64),
+            ("MAE_std", pl.Float64),
+            ("MAPE (%)", pl.Float64),
+            ("MAPE_std", pl.Float64),
+            ("ME", pl.Float64),
+            ("ME_std", pl.Float64),
+            ("Count", pl.Int64),
+        ],
+        orient="row",
+    )
+
+
 def evaluate_typecode(
     acft: str,
     *,
@@ -226,6 +339,10 @@ def evaluate_typecode(
             metrics = _metrics_for_variable(df_acft, acft, var, label, prefix)
             if metrics is not None:
                 results.append(metrics)
+    for prefix in ("bada_", "pred_"):
+        position_metrics = _position_metrics_for_model(df_acft, acft, prefix)
+        if position_metrics is not None:
+            results.append(position_metrics)
     return results
 
 
@@ -266,6 +383,7 @@ def run_evaluate(
         "raw_alt_m": "Altitude [m]",
         "era_tas_ms": "True airspeed [m/s]",
         "fdm_gamma_rad": "Flight path angle [deg]",
+        "fdm_heading_rad": "Heading [deg]",
     }
 
     all_results: list[pl.DataFrame] = []
