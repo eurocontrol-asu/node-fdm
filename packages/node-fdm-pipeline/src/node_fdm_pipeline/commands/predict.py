@@ -8,7 +8,7 @@ from __future__ import annotations
 
 from importlib.resources import files
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 import structlog
 
@@ -365,6 +365,90 @@ def run_predict(
     log.info("predict_done", typecodes=typecodes)
 
 
+def _run_predict_bada_typecode(
+    *,
+    acft: str,
+    df: Any,
+    bada_dir: Path,
+    bada_4_2_dir: Path,
+    processor: Any,
+    n_jobs: int,
+) -> None:
+    import tempfile
+
+    import polars as pl
+    from node_fdm_bada.aircraft_mapping import get_bada_identifier
+    from node_fdm_bada.predictor import process_single_flight
+
+    log.info("predict_bada_typecode", typecode=acft)
+    try:
+        bada_name = get_bada_identifier(acft)
+    except KeyError:
+        log.warning("predict_bada_no_mapping", typecode=acft)
+        return
+
+    try:
+        from pyBADA.bada4 import (
+            Bada4Aircraft,  # type: ignore[import-not-found,import-untyped,unused-ignore]
+        )
+
+        ac = Bada4Aircraft("4.2", filePath=str(bada_4_2_dir), acName=bada_name)
+    except Exception:  # noqa: BLE001
+        log.warning("predict_bada_load_failed", typecode=acft, bada_name=bada_name)
+        return
+
+    acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
+    if len(acft_df) == 0:
+        log.warning("predict_bada_empty_test_set", typecode=acft)
+        return
+
+    output_dir = bada_dir / acft
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    alias_exprs = [
+        pl.col("raw_alt_m").alias("alt_std_m"),
+        pl.col("era_tas_ms").alias("tas_ms"),
+        pl.col("era_temp_K").alias("temperature"),
+        pl.col("era_mach").alias("mach"),
+        pl.col("fdm_cas_ms").alias("cas_ms"),
+        pl.col("fdm_cas_sel_ms").alias("cas_sel_ms"),
+        pl.col("fdm_mach_sel").alias("mach_sel"),
+        pl.col("fdm_vz_sel_ms").alias("vz_sel_ms"),
+        pl.col("fdm_alt_target_m").alias("alt_sel_m"),
+        pl.col("fdm_long_wind_ms").alias("long_wind_ms"),
+    ]
+    if "fdm_heading_rad" in acft_df.columns:
+        alias_exprs.extend(
+            [
+                pl.col("fdm_heading_rad"),
+                pl.col("fdm_heading_target_rad"),
+                pl.col("fdm_heading_target_known"),
+            ]
+        )
+    acft_df = acft_df.with_columns(*alias_exprs)
+
+    flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
+    with tempfile.TemporaryDirectory() as tmp_dir:
+        filepaths: list[str] = []
+        for flight_df in flights:
+            fid = flight_df["meta_flight_id"][0]
+            fp = Path(tmp_dir) / f"{fid}.parquet"
+            flight_df.write_parquet(fp)
+            filepaths.append(str(fp))
+
+        from joblib import (  # type: ignore[import-not-found,import-untyped,unused-ignore]
+            Parallel,
+            delayed,
+        )
+
+        Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(process_single_flight)(fp, ac, processor=processor, output_dir=output_dir)
+            for fp in filepaths
+        )
+
+    log.info("predict_bada_typecode_done", typecode=acft)
+
+
 def run_predict_bada(
     *,
     config: Path,
@@ -382,11 +466,8 @@ def run_predict_bada(
         typecode: Single typecode to predict (default: all from config).
         jobs: Number of parallel workers (default: from config computing section).
     """
-    import tempfile
 
     import polars as pl
-    from node_fdm_bada.aircraft_mapping import get_bada_identifier
-    from node_fdm_bada.predictor import process_single_flight
     from node_fdm_data.delta import read_delta_table
     from node_fdm_data.preprocessing.opensky import flight_processing
     from node_fdm_data.processor import FlightProcessor
@@ -413,66 +494,13 @@ def run_predict_bada(
     log.info("predict_bada_start", typecodes=typecodes, jobs=n_jobs)
 
     for acft in typecodes:
-        log.info("predict_bada_typecode", typecode=acft)
-        try:
-            bada_name = get_bada_identifier(acft)
-        except KeyError:
-            log.warning("predict_bada_no_mapping", typecode=acft)
-            continue
-
-        try:
-            from pyBADA.bada4 import (
-                Bada4Aircraft,  # type: ignore[import-not-found,import-untyped,unused-ignore]
-            )
-
-            ac = Bada4Aircraft("4.2", filePath=str(bada_4_2_dir), acName=bada_name)
-        except Exception:  # noqa: BLE001
-            log.warning("predict_bada_load_failed", typecode=acft, bada_name=bada_name)
-            continue
-
-        acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
-        if len(acft_df) == 0:
-            log.warning("predict_bada_empty_test_set", typecode=acft)
-            continue
-
-        output_dir = bada_dir / acft
-        output_dir.mkdir(parents=True, exist_ok=True)
-
-        # Project v3 Delta columns into the legacy names expected by the
-        # BADA predictor (written against the pandas/v1 schema).
-        acft_df = acft_df.with_columns(
-            pl.col("raw_alt_m").alias("alt_std_m"),
-            pl.col("era_tas_ms").alias("tas_ms"),
-            pl.col("era_temp_K").alias("temperature"),
-            pl.col("era_mach").alias("mach"),
-            pl.col("fdm_cas_ms").alias("cas_ms"),
-            pl.col("fdm_cas_sel_ms").alias("cas_sel_ms"),
-            pl.col("fdm_mach_sel").alias("mach_sel"),
-            pl.col("fdm_vz_sel_ms").alias("vz_sel_ms"),
-            pl.col("fdm_alt_target_m").alias("alt_sel_m"),
-            pl.col("fdm_long_wind_ms").alias("long_wind_ms"),
+        _run_predict_bada_typecode(
+            acft=acft,
+            df=df,
+            bada_dir=bada_dir,
+            bada_4_2_dir=bada_4_2_dir,
+            processor=processor,
+            n_jobs=n_jobs,
         )
-
-        # Write per-flight parquets for BADA predictor interface
-        flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
-        with tempfile.TemporaryDirectory() as tmp_dir:
-            filepaths: list[str] = []
-            for flight_df in flights:
-                fid = flight_df["meta_flight_id"][0]
-                fp = Path(tmp_dir) / f"{fid}.parquet"
-                flight_df.write_parquet(fp)
-                filepaths.append(str(fp))
-
-            from joblib import (  # type: ignore[import-not-found,import-untyped,unused-ignore]
-                Parallel,
-                delayed,
-            )
-
-            Parallel(n_jobs=n_jobs, backend="loky")(
-                delayed(process_single_flight)(fp, ac, processor=processor, output_dir=output_dir)
-                for fp in filepaths
-            )
-
-        log.info("predict_bada_typecode_done", typecode=acft)
 
     log.info("predict_bada_done", typecodes=typecodes)

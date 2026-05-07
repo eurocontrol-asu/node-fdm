@@ -2876,7 +2876,7 @@ requires-dist = [
     { name = "pandas", specifier = "<3.0" },
     { name = "pandas", marker = "extra == 'traffic'", specifier = "<3.0" },
     { name = "polars", specifier = ">=1.0" },
-    { name = "pybada", specifier = ">=0.1" },
+    { name = "pybada", specifier = "==0.1.5" },
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pyyaml", specifier = ">=6.0" },
     { name = "structlog", specifier = ">=24.0" },
@@ -3705,19 +3705,18 @@ wheels = [
 
 [[package]]
 name = "pybada"
-version = "0.1.12"
+version = "0.1.5"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "numpy" },
     { name = "pandas" },
     { name = "scipy" },
     { name = "simplekml" },
-    { name = "xarray" },
     { name = "xlsxwriter" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/a2/de/7ebdec179d8280620df130b46a0dec48d251d090de0dc8057a7866bb027c/pybada-0.1.12.tar.gz", hash = "sha256:d5322c8bf62a0504c9e81884cffb8764c75d912b2488c6354f3c0a36cb4f83bf", size = 7325700, upload-time = "2026-03-25T21:04:29.415Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/5b/d1/7467ea326d2eb2c333f6212b7556e06a844adbfe3ee4d72ba63933961949/pybada-0.1.5.tar.gz", hash = "sha256:0fa2939e98133b2764f210473fa53a386adb333ad25ec38f525c741e7a69bda0", size = 1127335, upload-time = "2025-06-03T13:30:18.489Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/8a/b3/80042f376069cce4c06d9b291f8f9e50a76333bffe04e8141a1650c22825/pybada-0.1.12-py3-none-any.whl", hash = "sha256:d1ebd2beb4a2bfaabd057143e91881d743755658bf9e5bc8555e59e7f2a0f69c", size = 833098, upload-time = "2026-03-25T21:04:28.19Z" },
+    { url = "https://files.pythonhosted.org/packages/43/d9/a46ffe30a09865103b1b1025dbea39376a8a384a8b9febe9491848ba7ded/pybada-0.1.5-py3-none-any.whl", hash = "sha256:2d4b41b2f54077dae9d49b183bbc1d5d2ea127598efc49ecd31df38999df8a1d", size = 810251, upload-time = "2025-06-03T13:30:17.233Z" },
 ]
 
 [[package]]

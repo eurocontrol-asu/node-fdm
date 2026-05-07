@@ -135,24 +135,34 @@ def _load_flight_frame(
 def _collect_acft_frames(
     acft: str,
     flights: list[pl.DataFrame],
-    predict_dir: Path,
+    predict_acft_dir: Path,
     bada_dir: Path,
 ) -> list[pl.DataFrame]:
-    """Build per-flight evaluation frames for a typecode, skipping flights that error out."""
+    """Build per-flight evaluation frames for a typecode, skipping flights that error out.
+
+    When both prediction sources exist, restrict to flights predicted by
+    both (intersection) so NODE and BADA are evaluated on the same set.
+    """
+    bada_acft_dir = bada_dir / acft
+    require_both = predict_acft_dir.exists() and bada_acft_dir.exists()
     acft_frames: list[pl.DataFrame] = []
+    skipped = 0
     for flight_df in flights:
         fid = flight_df["meta_flight_id"][0]
         try:
             fname = f"{fid}.parquet"
-            f = _load_flight_frame(
-                flight_df,
-                predict_dir / acft / fname,
-                bada_dir / acft / fname,
-            )
+            pred_path = predict_acft_dir / fname
+            bada_path = bada_acft_dir / fname
+            if require_both and not (pred_path.exists() and bada_path.exists()):
+                skipped += 1
+                continue
+            f = _load_flight_frame(flight_df, pred_path, bada_path)
             if f is not None:
                 acft_frames.append(f)
         except Exception:  # noqa: BLE001
             log.debug("evaluate_flight_error", flight_id=fid)
+    if require_both and skipped:
+        log.info("evaluate_intersection", typecode=acft, skipped=skipped, kept=len(acft_frames))
     return acft_frames
 
 
@@ -189,7 +199,7 @@ def evaluate_typecode(
     acft: str,
     *,
     acft_df: pl.DataFrame,
-    predict_dir: Path,
+    predict_acft_dir: Path,
     bada_dir: Path,
     variables: dict[str, str],
 ) -> list[pl.DataFrame]:
@@ -198,14 +208,14 @@ def evaluate_typecode(
     Ground truth comes from the Delta Table (``acft_df``).  Prediction
     and BADA output files are matched by ``meta_flight_id``.
     """
-    if not (bada_dir / acft).exists() and not (predict_dir / acft).exists():
+    if not (bada_dir / acft).exists() and not predict_acft_dir.exists():
         log.info("evaluate_skip_typecode", typecode=acft, reason="no predictions")
         return []
 
     flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
     log.info("evaluate_typecode", typecode=acft, flights=len(flights))
 
-    acft_frames = _collect_acft_frames(acft, flights, predict_dir, bada_dir)
+    acft_frames = _collect_acft_frames(acft, flights, predict_acft_dir, bada_dir)
     if not acft_frames:
         return []
 
@@ -223,6 +233,7 @@ def run_evaluate(
     *,
     arch: str,
     config: Path,
+    model_name: str | None = None,
 ) -> None:
     """Compute prediction error metrics per flight phase.
 
@@ -239,7 +250,7 @@ def run_evaluate(
     from node_fdm_pipeline.resolver import resolve_architecture
 
     cfg = PipelineConfig.from_yaml(config)
-    _info = resolve_architecture(arch)
+    info = resolve_architecture(arch)
 
     delta_table = cfg.paths.resolve("delta_table")
     predict_dir = cfg.paths.resolve("predicted_dir")
@@ -263,10 +274,11 @@ def run_evaluate(
 
     for acft in cfg.typecodes:
         acft_df = df.filter(pl.col("meta_aircraft_type") == acft)
+        sub = model_name if model_name is not None else f"{info.name}_{acft}"
         results = evaluate_typecode(
             acft,
             acft_df=acft_df,
-            predict_dir=predict_dir,
+            predict_acft_dir=predict_dir / sub / acft,
             bada_dir=bada_dir,
             variables=variables,
         )
@@ -300,6 +312,17 @@ def run_evaluate(
         .drop("_phase_order")
     )
 
-    output = cfg.paths.data_dir / "performance.parquet"
+    out_sub = model_name if model_name is not None else info.name
+    output_dir = cfg.paths.data_dir / "model_performance" / out_sub
+    output_dir.mkdir(parents=True, exist_ok=True)
+    output = output_dir / "performance.parquet"
     final_df.write_parquet(output)
     log.info("evaluate_done", rows=len(final_df), output=str(output))
+
+    with pl.Config(
+        tbl_rows=-1,
+        tbl_cols=-1,
+        tbl_width_chars=200,
+        float_precision=3,
+    ):
+        print(final_df)  # noqa: T201
