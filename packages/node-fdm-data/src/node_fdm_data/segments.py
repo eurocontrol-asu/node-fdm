@@ -79,24 +79,49 @@ def _make_segment(start: int, end_idx: int, y: np.ndarray) -> dict[str, Any]:
     }
 
 
-def _smooth_vz_bilateral(
-    vz: np.ndarray,
+def _smooth_bilateral(
+    values: np.ndarray,
     sigma_s: float,
     sigma_r: float,
     n_passes: int,
 ) -> np.ndarray | None:
     """Interpolate NaNs then apply ``n_passes`` of 1D bilateral smoothing.
 
-    Returns ``None`` if ``vz`` is fully NaN (no signal to recover).
+    Returns ``None`` if ``values`` is fully NaN (no signal to recover).
     """
-    nan_mask = np.isnan(vz)
+    work = np.asarray(values, dtype=np.float64)
+    nan_mask = np.isnan(work)
     if nan_mask.any():
         if int((~nan_mask).sum()) == 0:
             return None
-        vz = interpolate_nans(vz)
+        work = interpolate_nans(work)
     for _ in range(max(0, int(n_passes))):
-        vz = bilateral_1d(vz, sigma_s, sigma_r)
-    return vz
+        work = bilateral_1d(work, sigma_s, sigma_r)
+    return work
+
+
+def _slope_flat_mask(values: np.ndarray, slope_tol: float) -> np.ndarray:
+    """Boolean mask of samples whose edge-prepended finite diff is below ``slope_tol``."""
+    mask: np.ndarray = np.abs(np.diff(values, prepend=values[0])) < slope_tol
+    return mask
+
+
+def _flat_runs(flat: np.ndarray, min_len: int) -> list[tuple[int, int]]:
+    """Inclusive ``[start, end]`` runs of True in ``flat`` with length >= ``min_len``."""
+    runs: list[tuple[int, int]] = []
+    n = len(flat)
+    i = 0
+    while i < n:
+        if not flat[i]:
+            i += 1
+            continue
+        j = i
+        while j + 1 < n and flat[j + 1]:
+            j += 1
+        if j - i + 1 >= min_len:
+            runs.append((i, j))
+        i = j + 1
+    return runs
 
 
 def _below_tol_mask(values: np.ndarray, tol: float) -> np.ndarray:
@@ -126,7 +151,7 @@ def detect_alt_hold_from_vz(
     """
     vz = np.asarray(vz_ftmin, dtype=np.float64).copy()
     alt = np.asarray(alt_ft, dtype=np.float64)
-    vz_bilat = _smooth_vz_bilateral(vz, sigma_s, sigma_r, n_passes)
+    vz_bilat = _smooth_bilateral(vz, sigma_s, sigma_r, n_passes)
     if vz_bilat is None:
         return []
     mask = _below_tol_mask(vz_bilat, tol_ftmin)
@@ -264,40 +289,26 @@ def detect_mach_plateaus_bilat(
     the run (not the bilateral-smoothed value).
     """
     raw = np.asarray(mach_raw, dtype=np.float64)
-    work = raw.copy()
-    nan_mask = np.isnan(work)
-    if nan_mask.any():
-        if int((~nan_mask).sum()) == 0:
-            return []
-        work = interpolate_nans(work)
-    smooth = work
-    for _ in range(max(0, int(n_passes))):
-        smooth = bilateral_1d(smooth, sigma_s, sigma_r)
-    dmach = np.abs(np.diff(smooth, prepend=smooth[0]))
-    flat = dmach < slope_tol
+    smooth = _smooth_bilateral(raw, sigma_s, sigma_r, n_passes)
+    if smooth is None:
+        return []
+    flat = _slope_flat_mask(smooth, slope_tol)
     alt_mask = np.asarray(alt_plateau_mask, dtype=bool)
     alt_segs = _mask_to_segments(alt_mask)
     segments: list[dict[str, Any]] = []
-    n = len(smooth)
-    i = 0
-    while i < n:
-        if not flat[i]:
-            i += 1
+    for i, j in _flat_runs(flat, min_len):
+        seg = smooth[i : j + 1]
+        if seg.max() - seg.min() > flat_tol:
             continue
-        j = i
-        while j + 1 < n and flat[j + 1]:
-            j += 1
-        if j - i + 1 >= min_len:
-            seg = smooth[i : j + 1]
-            if (seg.max() - seg.min()) <= flat_tol and _passes_alt_gate(i, j, alt_segs, alt_mask):
-                segments.append(
-                    {
-                        "start_idx": i,
-                        "end_idx": j,
-                        "var_mean": float(np.nanmean(raw[i : j + 1])),
-                    }
-                )
-        i = j + 1
+        if not _passes_alt_gate(i, j, alt_segs, alt_mask):
+            continue
+        segments.append(
+            {
+                "start_idx": i,
+                "end_idx": j,
+                "var_mean": float(np.nanmean(raw[i : j + 1])),
+            }
+        )
     return segments
 
 
