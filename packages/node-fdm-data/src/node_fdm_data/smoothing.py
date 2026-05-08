@@ -8,6 +8,7 @@ consumer can share the same edge-preserving / low-pass building blocks.
 from __future__ import annotations
 
 import numpy as np
+from numpy.lib.stride_tricks import sliding_window_view
 from scipy.signal import butter, filtfilt
 
 __all__ = ["bilateral_1d", "butter_lowpass", "interpolate_nans"]
@@ -19,19 +20,27 @@ def bilateral_1d(y: np.ndarray, sigma_s: float, sigma_r: float) -> np.ndarray:
     Spatial kernel ``sigma_s`` (samples) flattens homogeneous zones,
     range kernel ``sigma_r`` (y-units) preserves jumps.
     """
-    n = len(y)
+    y_arr = np.ascontiguousarray(y, dtype=np.float64)
+    n = len(y_arr)
     half = int(np.ceil(3 * sigma_s))
-    out = np.empty_like(y)
+    w = 2 * half + 1
+
+    pad = np.zeros(n + 2 * half, dtype=np.float64)
+    pad[half : half + n] = y_arr
+    windows = sliding_window_view(pad, w)
+
+    rel = np.arange(w)
+    abs_idx = np.arange(n)[:, None] - half + rel[None, :]
+    valid = (abs_idx >= 0) & (abs_idx < n)
+
     spatial = np.exp(-0.5 * (np.arange(-half, half + 1) / sigma_s) ** 2)
-    for i in range(n):
-        a = max(0, i - half)
-        b = min(n, i + half + 1)
-        ys = y[a:b]
-        sp_w = spatial[a - (i - half) : b - (i - half)]
-        rng_w = np.exp(-0.5 * ((ys - y[i]) / sigma_r) ** 2)
-        w = sp_w * rng_w
-        out[i] = float(np.sum(w * ys) / np.sum(w))
-    return out
+    diff = windows - y_arr[:, None]
+    rng_w = np.exp(-0.5 * (diff / sigma_r) ** 2)
+    weights = spatial[None, :] * rng_w * valid
+
+    num = np.sum(weights * windows, axis=1)
+    den = np.sum(weights, axis=1)
+    return num / den
 
 
 def interpolate_nans(y: np.ndarray) -> np.ndarray:
