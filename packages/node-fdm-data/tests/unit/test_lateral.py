@@ -345,80 +345,64 @@ class TestDetectTurnIntervals:
 
 
 # ---------------------------------------------------------------------------
-# segment_bounds
+# segment_bounds — V3 sémantique: takes (starts, ends, n) intervals
 # ---------------------------------------------------------------------------
 
 
-class TestSegmentBounds:
-    """Per-sample (A, B) enclosing-segment indices."""
+def test_segment_bounds_intervals_basic() -> None:
+    """AC1: head/middle/tail straight-segment bounds derived from intervals."""
+    starts = np.array([3, 9], dtype=np.intp)
+    ends = np.array([5, 10], dtype=np.intp)
+    a, b = segment_bounds(starts, ends, 15)
+    # Head (before first start): A=0, B=starts[0]=3.
+    assert (int(a[0]), int(b[0])) == (0, 3)
+    # Straight gap between turn1[3..5] and turn2[9..10]: A=ends[0]+1=6, B=starts[1]=9.
+    assert (int(a[6]), int(b[6])) == (6, 9)
+    # Tail after last end: A=ends[-1]+1=11, B=n-1=14.
+    assert (int(a[12]), int(b[12])) == (11, 14)
 
-    def test_no_turns(self) -> None:
-        """Empty turning_starts → A=0, B=n-1 for every sample."""
-        a, b = segment_bounds(np.empty(0, dtype=np.intp), 10)
-        assert np.all(a == 0)
-        assert np.all(b == 9)
 
-    def test_one_turn_in_middle(self) -> None:
-        """One turn at i=5 in n=10 → samples 0..4 have B=5, samples 5..9
-        have A=5 and B=n-1=9."""
-        a, b = segment_bounds(np.array([5], dtype=np.intp), 10)
-        assert a[0] == 0 and b[0] == 5
-        assert a[4] == 0 and b[4] == 5
-        assert a[5] == 5 and b[5] == 9
-        assert a[9] == 5 and b[9] == 9
+def test_segment_bounds_inside_interval() -> None:
+    """AC1: a sample inside a turn interval still receives a valid B (next start)."""
+    starts = np.array([3, 9], dtype=np.intp)
+    ends = np.array([5, 10], dtype=np.intp)
+    _, b = segment_bounds(starts, ends, 15)
+    # Sample 4 lies inside [3, 5]; the next straight segment starts at idx 9.
+    assert int(b[4]) == 9
 
-    def test_multiple_turns(self) -> None:
-        """Three turns → samples between turns enclosed by adjacent starts."""
-        starts = np.array([3, 6, 9], dtype=np.intp)
-        a, b = segment_bounds(starts, 12)
-        # Sample 4 sits in [3, 6)
-        assert a[4] == 3 and b[4] == 6
-        # Sample 7 sits in [6, 9)
-        assert a[7] == 6 and b[7] == 9
-        # Sample 10 is past the last turn → A=9, B=n-1=11
-        assert a[10] == 9 and b[10] == 11
-        # Sample 0 is before the first turn → A=0, B=3
-        assert a[0] == 0 and b[0] == 3
+
+def test_segment_bounds_empty_intervals() -> None:
+    """AC1: no intervals → A=0, B=n-1 everywhere."""
+    a, b = segment_bounds(np.empty(0, dtype=np.intp), np.empty(0, dtype=np.intp), 10)
+    assert np.all(a == 0)
+    assert np.all(b == 9)
 
 
 # ---------------------------------------------------------------------------
-# build_in_turn_mask
+# build_in_turn_mask — V3 sémantique: True iff inside [s_k, e_k]
 # ---------------------------------------------------------------------------
 
 
-class TestBuildInTurnMask:
-    """Mask of samples without a valid enclosing straight segment."""
+def test_build_in_turn_mask_intervals() -> None:
+    """AC2: mask True exactly on [s_k, e_k]; head/tail straight = False."""
+    starts = np.array([3, 9], dtype=np.intp)
+    ends = np.array([5, 10], dtype=np.intp)
+    mask = build_in_turn_mask(starts, ends, 15)
+    assert not mask[0] and not mask[1] and not mask[2]
+    assert mask[3] and mask[4] and mask[5]
+    assert not mask[6] and not mask[7] and not mask[8]
+    assert mask[9] and mask[10]
+    assert not mask[11] and not mask[12] and not mask[13] and not mask[14]
 
-    def test_no_turns_all_true(self) -> None:
-        """No turns → every sample is "outside any segment"."""
-        a = np.zeros(10, dtype=np.intp)
-        b = np.full(10, 9, dtype=np.intp)
-        mask = build_in_turn_mask(np.empty(0, dtype=np.intp), a, b, 10)
-        assert mask.all()
 
-    def test_head_and_tail_masked(self) -> None:
-        """Samples before the first turn and at/after the last are masked."""
-        starts = np.array([3, 7], dtype=np.intp)
-        a, b = segment_bounds(starts, 10)
-        mask = build_in_turn_mask(starts, a, b, 10)
-        # Head: 0..2 before first turn
-        assert mask[0] and mask[1] and mask[2]
-        # Body: 3..6 inside [3, 7) — straight, not masked
-        assert not mask[3] and not mask[6]
-        # Tail: 7..9 at/after last turn
-        assert mask[7] and mask[9]
-
-    def test_degenerate_zero_length_segment(self) -> None:
-        """A == B (degenerate) → masked, even mid-flight."""
-        a = np.array([0, 5, 5, 5, 9], dtype=np.intp)
-        b = np.array([5, 5, 9, 9, 9], dtype=np.intp)
-        mask = build_in_turn_mask(np.array([5, 9], dtype=np.intp), a, b, 5)
-        # Sample 1 has A == B == 5
-        assert mask[1]
+def test_build_in_turn_mask_empty_all_false() -> None:
+    """AC2: no intervals → mask is False everywhere (head+tail straight)."""
+    mask = build_in_turn_mask(np.empty(0, dtype=np.intp), np.empty(0, dtype=np.intp), 10)
+    assert not mask.any()
 
 
 # ---------------------------------------------------------------------------
-# augment_lateral (public API)
+# augment_lateral (public API) — V3 sémantique with bfill of track_ortho
 # ---------------------------------------------------------------------------
 
 
@@ -435,7 +419,8 @@ def _make_straight_flight(n: int = 100) -> pl.DataFrame:
 
 def _make_turning_flight() -> pl.DataFrame:
     """Synthetic flight with two 90° turns — produces a straight middle leg
-    enclosed by two detected turn-starts (so some samples are NOT in_turn)."""
+    enclosed by two detected turn intervals (so some samples are NOT in_turn).
+    """
     lat = np.concatenate(
         [
             np.linspace(45.0, 46.0, 40),  # leg 1: north
@@ -462,84 +447,93 @@ def _make_turning_flight() -> pl.DataFrame:
     return pl.DataFrame({"latitude": lat, "longitude": lon, "track": track})
 
 
-class TestAugmentLateral:
-    """Full lateral-augmentation pipeline emitting the 3 fdm_* columns."""
+def test_augment_lateral_straight_flight_no_in_turn() -> None:
+    """AC5/AC7: straight flight → no in_turn, ortho finite via global B=n-1."""
+    result = augment_lateral(_make_straight_flight(100))
+    in_turn = result["fdm_in_turn"].to_numpy()
+    ortho = result["fdm_track_ortho_deg"].to_numpy()
+    known = result["fdm_track_sel_known"].to_numpy()
+    assert not in_turn.any()
+    assert known.all()
+    assert np.isfinite(ortho).all()
 
-    def test_output_columns_exact(self) -> None:
-        """Adds exactly fdm_in_turn, fdm_track_ortho_deg, fdm_track_sel_known."""
-        df = _make_straight_flight()
-        result = augment_lateral(df)
-        added = set(result.columns) - set(df.columns)
-        assert added == {"fdm_in_turn", "fdm_track_ortho_deg", "fdm_track_sel_known"}
 
-    def test_output_dtypes(self) -> None:
-        """fdm_in_turn and fdm_track_sel_known are bool; fdm_track_ortho_deg is float."""
-        result = augment_lateral(_make_straight_flight())
-        assert result["fdm_in_turn"].dtype == pl.Boolean
-        assert result["fdm_track_sel_known"].dtype == pl.Boolean
-        assert result["fdm_track_ortho_deg"].dtype == pl.Float64
+def test_augment_lateral_turn_in_middle_in_turn_mask() -> None:
+    """AC5: turning flight has both in-turn samples and straight-leg samples."""
+    result = augment_lateral(_make_turning_flight())
+    in_turn = result["fdm_in_turn"].to_numpy()
+    assert in_turn.any()
+    assert (~in_turn).any()
 
-    def test_row_count_preserved(self) -> None:
-        """Output has same number of rows as input."""
-        df = _make_turning_flight()
-        result = augment_lateral(df)
-        assert len(result) == len(df)
 
-    def test_straight_flight_all_in_turn(self) -> None:
-        """Straight flight (no detected turn) → every sample is "no enclosing segment"."""
-        result = augment_lateral(_make_straight_flight())
-        # No turns detected → entire flight has no enclosing [A, B) segment.
-        assert result["fdm_in_turn"].to_numpy().all()
-        # Therefore no valid lateral target.
-        assert not result["fdm_track_sel_known"].to_numpy().any()
+def test_augment_lateral_ortho_finite_after_bfill() -> None:
+    """AC3/AC4: bfill+ffill make track_ortho finite on every sample."""
+    result = augment_lateral(_make_turning_flight())
+    ortho = result["fdm_track_ortho_deg"].to_numpy()
+    assert np.isfinite(ortho).all()
 
-    def test_turn_detected_in_middle(self) -> None:
-        """Flight with a turn → some samples are NOT in_turn (the straight legs)."""
-        result = augment_lateral(_make_turning_flight())
-        in_turn = result["fdm_in_turn"].to_numpy()
-        # At least the head (before first turn-start) is masked.
-        assert in_turn[0]
-        # And at least one sample mid-flight should be inside a straight segment.
-        assert (~in_turn).any()
 
-    def test_ortho_nan_iff_in_turn(self) -> None:
-        """fdm_track_ortho_deg is NaN exactly where fdm_in_turn is True."""
-        result = augment_lateral(_make_turning_flight())
-        in_turn = result["fdm_in_turn"].to_numpy()
-        ortho = result["fdm_track_ortho_deg"].to_numpy()
-        assert np.all(np.isnan(ortho[in_turn]))
-        # Outside in_turn, ortho is finite.
-        assert np.all(np.isfinite(ortho[~in_turn]))
+def test_augment_lateral_bfill_uses_next_segment_target() -> None:
+    """AC3: inside-turn samples receive the *next* straight segment's bearing.
 
-    def test_known_flag_consistency(self) -> None:
-        """fdm_track_sel_known == ~fdm_in_turn & isfinite(ortho)."""
-        result = augment_lateral(_make_turning_flight())
-        in_turn = result["fdm_in_turn"].to_numpy()
-        ortho = result["fdm_track_ortho_deg"].to_numpy()
-        known = result["fdm_track_sel_known"].to_numpy()
-        expected = (~in_turn) & np.isfinite(ortho)
-        assert np.array_equal(known, expected)
+    The fixture's leg 2 runs due east (constant latitude), so its great-circle
+    initial bearing target is ≈ 90°. Samples inside the first turn must be
+    back-filled with that value.
+    """
+    result = augment_lateral(_make_turning_flight())
+    in_turn = result["fdm_in_turn"].to_numpy()
+    ortho = result["fdm_track_ortho_deg"].to_numpy()
+    # Restrict to first-turn samples (they sit in the leg1→leg2 transition,
+    # well before the leg2→leg3 turn).
+    n = ortho.size
+    first_half = np.zeros(n, dtype=bool)
+    first_half[: n // 2] = True
+    inside_first_turn = in_turn & first_half
+    assert inside_first_turn.any(), "fixture must produce a detected first turn"
+    targets = ortho[inside_first_turn]
+    # Tolerance is loose: bearing varies along leg 2 because lon advances.
+    assert np.all(np.abs(targets - 90.0) < 5.0)
 
-    def test_ortho_in_degrees_range(self) -> None:
-        """Non-NaN ortho values are in [0, 360)."""
-        result = augment_lateral(_make_turning_flight())
-        ortho = result["fdm_track_ortho_deg"].to_numpy()
-        finite = ortho[np.isfinite(ortho)]
-        assert finite.size > 0
-        assert np.all((finite >= 0.0) & (finite < 360.0))
 
-    def test_too_short_returns_safe_defaults(self) -> None:
-        """Series shorter than Savgol window → all in_turn, no known target, ortho null."""
-        df = pl.DataFrame(
-            {
-                "latitude": [45.0, 46.0],
-                "longitude": [2.0, 3.0],
-                "track": [90.0, 90.0],
-            }
-        )
-        result = augment_lateral(df)
-        assert len(result) == 2
-        assert result["fdm_in_turn"].to_numpy().all()
-        assert not result["fdm_track_sel_known"].to_numpy().any()
-        # Ortho column exists and is fully null.
-        assert result["fdm_track_ortho_deg"].null_count() == 2
+def test_augment_lateral_known_flag_is_isfinite_ortho() -> None:
+    """AC6: fdm_track_sel_known = isfinite(track_ortho) (no longer ~in_turn)."""
+    result = augment_lateral(_make_turning_flight())
+    ortho = result["fdm_track_ortho_deg"].to_numpy()
+    known = result["fdm_track_sel_known"].to_numpy()
+    assert np.array_equal(known, np.isfinite(ortho))
+
+
+def test_augment_lateral_output_columns_unchanged() -> None:
+    """AC8: only the 3 fdm_* columns are appended; nothing else changes."""
+    df = _make_turning_flight()
+    result = augment_lateral(df)
+    added = set(result.columns) - set(df.columns)
+    assert added == {"fdm_in_turn", "fdm_track_ortho_deg", "fdm_track_sel_known"}
+
+
+def test_augment_lateral_dtypes_unchanged() -> None:
+    """AC8: dtypes of the three appended columns are stable."""
+    result = augment_lateral(_make_straight_flight())
+    assert result["fdm_in_turn"].dtype == pl.Boolean
+    assert result["fdm_track_sel_known"].dtype == pl.Boolean
+    assert result["fdm_track_ortho_deg"].dtype == pl.Float64
+
+
+def test_augment_lateral_too_short_safe_default() -> None:
+    """AC7 (defensive): below-Savgol-window inputs → no-target sentinel.
+
+    Even though AC7 says "empty intervals → no in_turn", a too-short signal
+    cannot run the V3 detector at all and falls back to the safe-default
+    branch: in_turn=True everywhere, no valid target.
+    """
+    df = pl.DataFrame(
+        {
+            "latitude": [45.0, 45.1],
+            "longitude": [2.0, 2.0],
+            "track": [0.0, 0.0],
+        }
+    )
+    result = augment_lateral(df)
+    assert len(result) == len(df)
+    assert result["fdm_in_turn"].to_numpy().all()
+    assert not result["fdm_track_sel_known"].to_numpy().any()

@@ -349,3 +349,20 @@ def test_lateral_target_in_principal_branch(straight_cruise_flight: pl.DataFrame
     finite = target_rad[np.isfinite(target_rad)]
     assert finite.size > 0
     assert np.abs(finite).max() <= np.pi + 1e-9
+
+
+def test_lateral_target_defined_inside_turn(straight_cruise_flight: pl.DataFrame) -> None:
+    """AC9: V3 bfill makes fdm_heading_target_known True inside detected turns.
+
+    Pre-V3 the flag was False on every in-turn sample (track_ortho was NaN). With
+    the new bfill, samples inside a turn inherit the next straight segment's
+    bearing, so target_known is True wherever heading_known holds.
+    """
+    out = derive_columns(straight_cruise_flight)
+    in_turn = out["fdm_in_turn"].to_numpy()
+    target_known = out["fdm_heading_target_known"].to_numpy()
+    heading_known = out["fdm_heading_known"].to_numpy()
+    # Fixture must actually exercise a detected turn for AC9 to be meaningful.
+    assert in_turn.any(), "fixture should produce at least one in-turn sample"
+    # AC9: at least one sample is both in-turn and has a known heading target.
+    assert (in_turn & heading_known & target_known).any()

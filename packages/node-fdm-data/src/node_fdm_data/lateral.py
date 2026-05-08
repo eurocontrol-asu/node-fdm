@@ -19,9 +19,11 @@ Algorithm ported verbatim from the legacy production module
 5. Great-circle bearing from current position C to segment end B
    gives ``track_ortho`` (the FMS-equivalent lateral target).
 
-The reference track is naturally NaN before the first detected turn and
-after the last (no enclosing segment).  Inside turns it is also set to
-NaN -- the FMS target is undefined while transitioning between legs.
+Inside turns the bearing is undefined while transitioning between legs;
+:func:`augment_lateral` back-fills those samples with the *next* straight
+segment's bearing (then forward-fills any leftover tail) so that
+``fdm_track_ortho_deg`` is finite on every sample of a non-degenerate
+flight and ``fdm_track_sel_known`` is True everywhere.
 
 Example::
 
@@ -260,6 +262,31 @@ def _unwrap_diff(d_track: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     return d_track
 
 
+def _bfill_then_ffill(arr: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
+    """Back-fill NaN with the next finite value, then forward-fill any leftovers."""
+    n = arr.size
+    valid = ~np.isnan(arr)
+    if not valid.any() or valid.all():
+        return arr.copy()
+
+    out = arr.copy()
+
+    sentinel = n
+    idx_right = np.where(valid, np.arange(n), sentinel)
+    next_valid = np.minimum.accumulate(idx_right[::-1])[::-1]
+    bfill_mask = ~valid & (next_valid < sentinel)
+    out[bfill_mask] = arr[next_valid[bfill_mask]]
+
+    valid2 = ~np.isnan(out)
+    if valid2.all():
+        return out
+    idx_left = np.where(valid2, np.arange(n), -1)
+    prev_valid = np.maximum.accumulate(idx_left)
+    ffill_mask = ~valid2 & (prev_valid >= 0)
+    out[ffill_mask] = out[prev_valid[ffill_mask]]
+    return out
+
+
 # ---------------------------------------------------------------------------
 # Public API
 # ---------------------------------------------------------------------------
@@ -276,13 +303,17 @@ def augment_lateral(
 
     Adds three columns:
 
-    - ``in_turn`` (bool) -- True when the sample has no enclosing
-      straight segment (head/tail of flight, or degenerate cases).
-    - ``track_ortho`` (deg) -- great-circle bearing from the current
-      position to the segment end ``B``.  This is the FMS-equivalent
-      lateral target.  NaN inside ``in_turn``.
-    - ``track_sel_known`` (bool) -- True iff ``track_ortho`` is finite
-      (analogous to ``fdm_tas_target_known``).
+    - ``fdm_in_turn`` (bool) -- True iff the sample sits inside a
+      detected turn interval ``[s_k, e_k]``.  Head and tail of the
+      flight are straight by construction and therefore False.
+    - ``fdm_track_ortho_deg`` (deg) -- great-circle bearing from the
+      current position to the next straight-segment end ``B``.  Inside
+      a turn, the value is back-filled with the *next* straight
+      segment's bearing so the FMS-equivalent target is defined
+      everywhere.
+    - ``fdm_track_sel_known`` (bool) -- equal to
+      ``np.isfinite(fdm_track_ortho_deg)``.  After bfill+ffill this is
+      True on every sample of a non-degenerate flight.
 
     Args:
         df: Single-flight eager DataFrame with ``latitude``,
@@ -307,14 +338,14 @@ def augment_lateral(
     lat = df["latitude"].to_numpy().astype(np.float64)
     lon = df["longitude"].to_numpy().astype(np.float64)
 
-    turning_starts, _, _, _ = detect_turn_intervals(
+    starts, ends, _, _ = detect_turn_intervals(
         track_raw,
         dt=dt,
         rate_threshold=threshold_deg_per_sec,
     )
 
-    a_idx, b_idx = segment_bounds(turning_starts, n)
-    in_turn = build_in_turn_mask(turning_starts, a_idx, b_idx, n)
+    _, b_idx = segment_bounds(starts, ends, n)
+    in_turn = build_in_turn_mask(starts, ends, n)
 
     phi_c = np.radians(lat)
     lam_c = np.radians(lon)
@@ -324,8 +355,9 @@ def augment_lateral(
     ortho_rad = orthodromic_bearing(phi_c, lam_c, phi_b, lam_b)
     ortho_deg = np.degrees(ortho_rad)
     ortho_deg[in_turn] = np.nan
+    ortho_deg = _bfill_then_ffill(ortho_deg)
 
-    known = ~in_turn & ~np.isnan(ortho_deg)
+    known = np.isfinite(ortho_deg)
 
     return df.with_columns(
         pl.Series("fdm_in_turn", in_turn),

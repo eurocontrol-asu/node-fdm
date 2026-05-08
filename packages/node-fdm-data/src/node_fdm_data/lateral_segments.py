@@ -22,60 +22,67 @@ __all__ = [
 
 
 def segment_bounds(
-    turning_starts: npt.NDArray[np.intp],
+    starts: npt.NDArray[np.intp],
+    ends: npt.NDArray[np.intp],
     n: int,
 ) -> tuple[npt.NDArray[np.intp], npt.NDArray[np.intp]]:
-    """Compute per-sample ``(A_idx, B_idx)`` -- enclosing segment bounds.
+    """Compute per-sample ``(A_idx, B_idx)`` -- enclosing straight-segment bounds.
 
-    For each sample ``i``, finds the nearest turning-start at or before
-    ``i`` (= ``A``, segment start) and the nearest turning-start strictly
-    after ``i`` (= ``B``, segment end).  When ``i`` is before the first
-    turn, ``A = 0``; after the last turn, ``B = n - 1``.
+    Given the turn intervals ``[s_k, e_k]`` produced by
+    :func:`node_fdm_data.lateral.detect_turn_intervals`, the straight legs
+    are everything *outside* those intervals.  For each sample ``i``:
 
-    Returns parallel arrays of length ``n``.
+    - ``B(i) = starts[k+1]`` when ``i ∈ [ends[k]+1, starts[k+1]-1]``
+      (gap between two turns).
+    - ``B(i) = n - 1`` when ``i > ends[-1]`` (tail).
+    - ``B(i) = starts[0]`` when ``i < starts[0]`` (head).
+    - For samples *inside* an interval, ``B`` still resolves to the next
+      ``start`` (or ``n - 1`` if no further turn exists), so callers can
+      safely compute a bearing before the back-fill step rewrites these
+      positions.
+    - ``A`` mirrors the construction with ``ends[k] + 1`` (or ``0`` before
+      the first start).
+
+    Returns parallel arrays of length ``n`` and dtype ``np.intp``.
     """
-    if turning_starts.size == 0:
+    if starts.size == 0:
         a = np.zeros(n, dtype=np.intp)
         b = np.full(n, n - 1, dtype=np.intp)
         return a, b
 
     pivots = np.arange(n, dtype=np.intp)
-    idx_end = np.searchsorted(turning_starts, pivots, side="right")
-    idx_start = idx_end - 1
 
-    a = np.where(
-        idx_start < 0,
-        np.intp(0),
-        turning_starts[np.clip(idx_start, 0, len(turning_starts) - 1)],
-    ).astype(np.intp)
+    next_start_idx = np.searchsorted(starts, pivots, side="right")
+    has_next = next_start_idx < starts.size
     b = np.where(
-        idx_end >= len(turning_starts),
+        has_next,
+        starts[np.clip(next_start_idx, 0, starts.size - 1)],
         np.intp(n - 1),
-        turning_starts[np.clip(idx_end, 0, len(turning_starts) - 1)],
+    ).astype(np.intp)
+
+    last_end_idx = np.searchsorted(ends, pivots, side="left") - 1
+    has_prev = last_end_idx >= 0
+    a = np.where(
+        has_prev,
+        ends[np.clip(last_end_idx, 0, ends.size - 1)] + 1,
+        np.intp(0),
     ).astype(np.intp)
     return a, b
 
 
 def build_in_turn_mask(
-    turning_starts: npt.NDArray[np.intp],
-    a_idx: npt.NDArray[np.intp],
-    b_idx: npt.NDArray[np.intp],
+    starts: npt.NDArray[np.intp],
+    ends: npt.NDArray[np.intp],
     n: int,
 ) -> npt.NDArray[np.bool_]:
-    """Mark samples that sit before the first turn or after the last as
-    "outside any segment" -- treated like in_turn for masking purposes.
+    """Mark samples sitting inside any ``[s_k, e_k]`` turn interval.
 
-    Within identified segments, samples are straight by construction
-    (turns are point-events in this algorithm, not intervals).  The
-    ``in_turn`` flag we expose is therefore "no valid enclosing segment":
-    True for the head and tail of the flight where ortho is undefined.
+    V3 sémantique: ``in_turn`` is True iff the sample falls inside a
+    detected turn interval (inclusive bounds).  The leading head (before
+    the first start) and the trailing tail (after the last end) are
+    *straight* segments and therefore False.
     """
     in_turn = np.zeros(n, dtype=np.bool_)
-    if turning_starts.size == 0:
-        in_turn[:] = True
-        return in_turn
-    in_turn[: turning_starts[0]] = True
-    last_start = int(turning_starts[-1])
-    in_turn[last_start:] = True
-    in_turn |= a_idx == b_idx
+    for s, e in zip(starts, ends, strict=True):
+        in_turn[int(s) : int(e) + 1] = True
     return in_turn
