@@ -14,6 +14,7 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import polars as pl
 import structlog
 import torch
 import torch.nn as nn
@@ -32,6 +33,7 @@ from node_fdm.models.projected_integrator import (
     ClampedRK4,
     _clamp_columns,
 )
+from node_fdm.training.weighting import boot_mode_weights
 
 __all__ = [
     "ODETrainer",
@@ -90,7 +92,7 @@ class TrainingConfig(BaseModel):
     val_batch_size: int = Field(default=10000, gt=0)
     num_workers: int = Field(default=4, ge=0)
     loss_name: str = "mse"
-    grad_clip_norm: float = Field(default=2.0, gt=0)
+    grad_clip_norm: float = Field(default=10.0, gt=0)
     alpha_dict: dict[str, float] | None = None
     lambda_tracking: float = Field(default=0.0, ge=0)
     huber_beta_per_col: dict[str, float] | None = None
@@ -98,6 +100,7 @@ class TrainingConfig(BaseModel):
     schedule: str = Field(default="linear", pattern="^(linear|cosine)$")
     warmup_epochs: int = Field(default=5, ge=0)
     warmup_start_lr: float = Field(default=1e-5, gt=0)
+    use_mode_weights: bool = False
 
 
 def _collate_flight_samples(
@@ -132,6 +135,13 @@ class ODETrainer:
         val_dataset: Validation dataset.
         model_dir: Base directory for checkpoints and metadata.
         callbacks: Optional list of training callbacks.
+        device: Torch device string.
+        train_df: Optional in-RAM training DataFrame. When paired with
+            ``config.use_mode_weights=True``, the trainer computes per-label
+            effective-number weights from ``fdm_mode_label`` and stores the
+            DataFrame plus the new ``fdm_train_weight`` column on
+            ``self.train_df``. Val/test splits and any persisted Delta are
+            untouched.
     """
 
     def __init__(
@@ -142,9 +152,13 @@ class ODETrainer:
         model_dir: Path,
         callbacks: Sequence[TrainingCallback] | None = None,
         device: str = "cpu",
+        train_df: pl.DataFrame | None = None,
     ) -> None:
         self.config = config
         self.device = torch.device(device)
+        self.train_df: pl.DataFrame | None = train_df
+        if config.use_mode_weights and train_df is not None:
+            self.train_df = boot_mode_weights(train_df)
 
         self.spec: ArchitectureSpec = get(config.architecture_name)
         self.model_dir = model_dir / config.model_name

@@ -57,6 +57,10 @@ addopts = [
     "--cov-fail-under=0",
 ]
 filterwarnings = ["error"]
+markers = [
+    "integration: integration tests with real I/O or public-API scenarios",
+    "e2e: end-to-end subprocess/CLI tests",
+]
 
 [tool.mypy]
 python_version = "3.12"
