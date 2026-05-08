@@ -165,7 +165,7 @@ class AltFilterConfig(BaseModel, frozen=True):
     sigma_s: float = 6.0
     sigma_r: float = 350.0
     n_passes: int = 2
-    tol_ftmin: float = 400.0
+    tol_ftmin: float = 150.0
     min_len: int = 6
     tol: float = 25
     use_alt: bool = False
@@ -287,11 +287,10 @@ class SelectedParamConfig(BaseModel, frozen=True):
     alt: AltFilterConfig = AltFilterConfig()
     gamma: GammaFilterConfig = GammaFilterConfig()
 
-    # Crossover-aware Mach/CAS detection knobs (see node_fdm_data.segments)
-    cas_deviation_kt: float = 5.0
+    # Mach detection knob (see node_fdm_data.segments). The Mach detector
+    # discards plateaus whose mean Mach is below this threshold (low-Mach
+    # plateaus during taxi/climb are not cruise-Mach captures).
     mach_min_value: float = 0.5
-    transition_margin: int = 30
-    cas_search_window: int = 60
 
 
 class PipelineConfig(BaseModel, frozen=True):

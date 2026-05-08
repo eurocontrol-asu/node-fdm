@@ -152,3 +152,129 @@ def test_flight_with_empty_bds_keys_preserves_existing_columns() -> None:
     assert list(out.data["TAS"]) == [450.0, 451.0]
     for key in data_mod._BDS_SOURCE_KEYS:
         assert key in out.data.columns
+
+
+def _make_synthetic_flight(invalid_idx: list[int]) -> tuple[Any, Any]:
+    """Build a 3-phase climb/cruise/descent synthetic flight (300 rows).
+
+    Returns ``(flight_df, valid_mask)``. Cruise at Mach 0.78 (idx 100..199);
+    climb/descent at CAS 280/270 kt.
+    """
+    import numpy as np
+    import polars as pl
+    from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas
+
+    n_climb, n_cruise, n_descent = 100, 100, 100
+    n = n_climb + n_cruise + n_descent
+    ft_to_m = 0.3048
+    kt_to_ms = 0.514444
+    ms_to_kt = 1.0 / kt_to_ms
+    alt_ft = np.empty(n, dtype=np.float64)
+    alt_ft[:n_climb] = np.linspace(5_000.0, 35_000.0, n_climb)
+    alt_ft[n_climb : n_climb + n_cruise] = 35_000.0
+    alt_ft[n_climb + n_cruise :] = np.linspace(35_000.0, 5_000.0, n_descent)
+    alt_m = alt_ft * ft_to_m
+    mach = np.full(n, np.nan)
+    mach[n_climb : n_climb + n_cruise] = 0.78
+    cas_kt = np.full(n, np.nan)
+    cas_kt[:n_climb] = 280.0
+    cas_kt[n_climb + n_cruise :] = 270.0
+    tas_ms = np.full(n, np.nan)
+    tas_ms[:n_climb] = np.asarray(cas_to_tas(cas_kt[:n_climb] * kt_to_ms, alt_m[:n_climb]))
+    tas_ms[n_climb : n_climb + n_cruise] = np.asarray(
+        mach_to_tas(0.78, alt_m[n_climb : n_climb + n_cruise])
+    )
+    tas_ms[n_climb + n_cruise :] = np.asarray(
+        cas_to_tas(cas_kt[n_climb + n_cruise :] * kt_to_ms, alt_m[n_climb + n_cruise :])
+    )
+    vz_ftmin = np.zeros(n, dtype=np.float64)
+    vz_ftmin[:n_climb] = 1500.0
+    vz_ftmin[n_climb + n_cruise :] = -1500.0
+    valid = np.ones(n, dtype=bool)
+    valid[np.array(invalid_idx)] = False
+    flight_df = pl.DataFrame(
+        {
+            "raw_timestamp": np.arange(n, dtype=np.int64) * 4,
+            "raw_alt_ft": alt_ft,
+            "raw_vz_ftmin": vz_ftmin,
+            "bds_mach_clean": mach,
+            "bds_ias_kt_clean": cas_kt,
+            "fdm_tas_from_cas_kt": tas_ms * ms_to_kt,
+            "fdm_flag_valid": valid,
+        }
+    )
+    return flight_df, valid
+
+
+def test_build_selected_params_with_valid_filter_preserves_row_count() -> None:
+    """Fix A: row count is preserved and produced columns are NaN on invalid rows."""
+    import numpy as np
+
+    from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
+    from node_fdm_pipeline.config import SelectedParamConfig
+
+    flight_df, valid = _make_synthetic_flight([5, 12, 25, 60, 130, 145, 170, 240, 260, 295])
+    out = _build_selected_params_with_valid_filter(flight_df, SelectedParamConfig().model_dump())
+
+    assert len(out) == len(flight_df)
+    invalid_pos = ~valid
+    expected_produced = ("fdm_alt_sel_ft", "fdm_mach_sel", "fdm_cas_sel_kt", "fdm_tas_sel_kt")
+    for col in expected_produced:
+        assert col in out.columns, f"missing produced column {col}"
+        arr = out[col].to_numpy()
+        finite_on_invalid = int(np.isfinite(arr[invalid_pos]).sum())
+        assert finite_on_invalid == 0, f"{col}: {finite_on_invalid} finite values on invalid rows"
+
+    # Detector ran on the cruise: at least one valid cruise row has a Mach
+    # plateau value, confirming detection actually fired.
+    mach_sel = out["fdm_mach_sel"].to_numpy()
+    cruise_valid = np.zeros(len(flight_df), dtype=bool)
+    cruise_valid[100:200] = True
+    cruise_valid &= valid
+    assert int(np.isfinite(mach_sel[cruise_valid]).sum()) > 0
+
+
+def test_build_selected_params_with_valid_filter_idempotent() -> None:
+    """Fix A: re-running the helper on its own output yields the same values
+    (overwrite path triggers when produced columns already exist)."""
+    import numpy as np
+
+    from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
+    from node_fdm_pipeline.config import SelectedParamConfig
+
+    flight_df, _ = _make_synthetic_flight([5, 12, 25, 60, 130, 145, 170, 240, 260, 295])
+    cfg = SelectedParamConfig().model_dump()
+    out1 = _build_selected_params_with_valid_filter(flight_df, cfg)
+    out2 = _build_selected_params_with_valid_filter(out1, cfg)
+    for col in ("fdm_alt_sel_ft", "fdm_mach_sel", "fdm_cas_sel_kt", "fdm_tas_sel_kt"):
+        a = out1[col].to_numpy()
+        b = out2[col].to_numpy()
+        finite = np.isfinite(a) & np.isfinite(b)
+        assert np.allclose(a[finite], b[finite], atol=1e-10), f"{col} not stable across re-runs"
+        assert np.array_equal(np.isnan(a), np.isnan(b)), f"{col} NaN mask drifted"
+
+
+def test_build_selected_params_with_valid_filter_no_flag_column_passthrough() -> None:
+    """Without ``fdm_flag_valid`` the helper falls back to plain build_selected_params."""
+    import numpy as np
+    import polars as pl
+
+    from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
+    from node_fdm_pipeline.config import SelectedParamConfig
+
+    n = 60
+    flight_df = pl.DataFrame(
+        {
+            "raw_timestamp": np.arange(n, dtype=np.int64) * 4,
+            "raw_alt_ft": np.linspace(5_000.0, 30_000.0, n),
+            "raw_vz_ftmin": np.full(n, 1000.0),
+            "bds_mach_clean": np.full(n, np.nan),
+            "bds_ias_kt_clean": np.full(n, 250.0),
+            "fdm_tas_from_cas_kt": np.full(n, 300.0),
+        }
+    )
+    out = _build_selected_params_with_valid_filter(flight_df, SelectedParamConfig().model_dump())
+    assert len(out) == n
+    # Detector must have produced at least one new fdm_*_sel* column.
+    new_cols = [c for c in out.columns if c.startswith("fdm_") and "_sel" in c]
+    assert new_cols, "no fdm_*_sel* columns produced"

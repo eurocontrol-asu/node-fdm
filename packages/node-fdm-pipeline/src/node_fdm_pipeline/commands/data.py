@@ -1171,6 +1171,111 @@ def clean_speeds(
     )
 
 
+def _build_selected_params_with_valid_filter(
+    flight_df: pl.DataFrame,
+    sel_config: dict[str, Any],
+) -> pl.DataFrame:
+    """Run :func:`build_selected_params` on rows where ``fdm_flag_valid`` is true.
+
+    The reference detection scripts in ``data/figures/new_idea_segment``
+    pre-filter on ``fdm_flag_valid`` BEFORE running detection. To match
+    that behaviour without changing the Delta row count, we:
+
+    1. Filter the per-flight DataFrame to valid rows (if the column exists).
+    2. Run ``build_selected_params`` on the filtered slice.
+    3. Identify the columns the detector PRODUCED (computed as the set
+       difference between the output columns and the filtered-input columns),
+       then scatter their values back into full-length arrays indexed by the
+       original valid-row positions. Invalid rows receive NaN (numeric) or
+       ``None`` (non-numeric).
+
+    Pre-existing columns of the same name in ``flight_df`` (from a prior
+    segments run) are dropped before merge so the freshly-produced versions
+    take their place — matching the behaviour of the previous in-place call
+    to ``build_selected_params``.
+
+    When ``fdm_flag_valid`` is absent (e.g. unit-test fixtures) the function
+    is run directly on the input — preserving backward compatibility.
+
+    Args:
+        flight_df: Single-flight DataFrame (sorted by time).
+        sel_config: Selected-parameter config dict (passed through).
+
+    Returns:
+        DataFrame with the same row count as ``flight_df`` and all columns
+        produced by ``build_selected_params`` merged in (NaN/null on invalid
+        rows).
+    """
+    import numpy as np
+    import polars as pl
+    from node_fdm_data.segments import build_selected_params
+
+    # Backward-compatible path: no flag column -> behave as before.
+    if "fdm_flag_valid" not in flight_df.columns:
+        return build_selected_params(flight_df, sel_config)
+
+    n_full = len(flight_df)
+    valid_mask = flight_df["fdm_flag_valid"].to_numpy()
+    valid_idx = np.flatnonzero(valid_mask)
+
+    # Fully-invalid flight, or filtered slice too short for the bilateral /
+    # Butterworth detectors (filtfilt requires len > padlen ~ 15): skip
+    # detection entirely. ``pl.concat(diagonal_relaxed)`` null-pads any
+    # missing produced columns relative to other flights.
+    min_valid_rows_for_detection = 32
+    if valid_idx.size < min_valid_rows_for_detection:
+        return flight_df
+
+    filtered = flight_df.filter(pl.col("fdm_flag_valid"))
+    filtered_input_cols = set(filtered.columns)
+    produced = build_selected_params(filtered, sel_config)
+
+    # Columns the detector added (set difference) plus any pre-existing
+    # ``fdm_*_sel*`` / ``fdm_*_target*`` columns that the detector rewrites
+    # in-place (same name in input and output, but the values come from the
+    # detector). Treating the latter as "produced" ensures stale values from
+    # a prior segments run are overwritten on the full-length frame, not
+    # left in place by the merge-back step.
+    detector_overwritten = {
+        c
+        for c in produced.columns
+        if c.startswith("fdm_") and ("_sel" in c or "_target" in c) and not c.endswith("_known")
+    }
+    # Also include the boolean "_known" companion produced by the detector
+    # (e.g. ``fdm_tas_target_known``).
+    detector_overwritten |= {
+        c for c in produced.columns if c.startswith("fdm_") and c.endswith("_target_known")
+    }
+    new_cols = [
+        c for c in produced.columns if c not in filtered_input_cols or c in detector_overwritten
+    ]
+    if not new_cols:
+        return flight_df
+
+    expansions: list[pl.Series] = []
+    for col in new_cols:
+        src = produced[col]
+        dtype = src.dtype
+        if dtype.is_numeric():
+            src_np = src.to_numpy().astype(np.float64, copy=False)
+            full = np.full(n_full, np.nan, dtype=np.float64)
+            full[valid_idx] = src_np
+            expansions.append(pl.Series(col, full).cast(dtype))
+        else:
+            src_list = src.to_list()
+            full_list: list[Any] = [None] * n_full
+            for pos, val in zip(valid_idx, src_list, strict=True):
+                full_list[int(pos)] = val
+            expansions.append(pl.Series(col, full_list, dtype=dtype))
+
+    # Drop any same-named pre-existing columns before merge so the produced
+    # versions replace them cleanly.
+    drop_cols = [c for c in new_cols if c in flight_df.columns]
+    if drop_cols:
+        flight_df = flight_df.drop(drop_cols)
+    return flight_df.with_columns(expansions)
+
+
 def segments(
     *,
     config: Path,
@@ -1188,7 +1293,6 @@ def segments(
     """
     import polars as pl
     from node_fdm_data.delta import read_delta_table, write_columns
-    from node_fdm_data.segments import build_selected_params
 
     from node_fdm_pipeline.config import PipelineConfig
 
@@ -1214,11 +1318,13 @@ def segments(
         log.info("segments_drop_existing", columns=sel_existing)
         df = df.drop(sel_existing)
 
-    # Segment detection is per-flight (row-iterative)
+    # Segment detection is per-flight (row-iterative). The detector is run
+    # on rows passing ``fdm_flag_valid`` only; invalid-row outputs are
+    # NaN-merged back so the Delta row count is preserved.
     flights = df.partition_by("meta_flight_id", maintain_order=True)
     processed: list[pl.DataFrame] = []
     for flight_df in flights:
-        flight_df = build_selected_params(flight_df, sel_config)
+        flight_df = _build_selected_params_with_valid_filter(flight_df, sel_config)
         processed.append(flight_df)
 
     df = pl.concat(processed, how="diagonal_relaxed")
@@ -1246,7 +1352,6 @@ def _segments_run(*, input_path: str, output_path: str) -> None:
     """
     import deltalake
     import polars as pl
-    from node_fdm_data.segments import build_selected_params
 
     from node_fdm_pipeline.config import SelectedParamConfig
 
@@ -1262,7 +1367,9 @@ def _segments_run(*, input_path: str, output_path: str) -> None:
     flights = (
         df.partition_by(partition_col, maintain_order=True) if partition_col is not None else [df]
     )
-    processed = [build_selected_params(flight, sel_config) for flight in flights]
+    processed = [
+        _build_selected_params_with_valid_filter(flight, sel_config) for flight in flights
+    ]
     out = pl.concat(processed, how="diagonal_relaxed")
 
     deltalake.write_deltalake(output_path, out.to_arrow(), mode="overwrite")

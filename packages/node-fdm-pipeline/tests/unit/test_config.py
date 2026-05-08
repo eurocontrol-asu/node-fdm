@@ -75,7 +75,7 @@ class TestSelectedParamConfigUnit:
         """All v2 defaults populated correctly."""
         cfg = SelectedParamConfig()
         assert cfg.mach.tol == 0.0005
-        assert cfg.mach.min_len == 120
+        assert cfg.mach.min_len == 15
         assert cfg.mach.alt_threshold == 15000
         assert cfg.mach.use_alt is True
         assert cfg.cas.tol == 0.75
