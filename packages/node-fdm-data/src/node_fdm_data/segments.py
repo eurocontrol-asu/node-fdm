@@ -1424,7 +1424,16 @@ def build_selected_params(
     )
     df = _propagate_speed_plateaus(df, mach_segs, cas_segs, alt_arr)
     tas_cfg = config.get("tas")
-    if tas_cfg is not None:
+    # The legacy ``_detect_masked`` path overwrites ``fdm_tas_sel_kt`` with the
+    # segment-detector output via :func:`add_segment_column`. When
+    # :func:`_propagate_speed_plateaus` has already produced the physically
+    # consistent pointwise TAS within Mach/CAS plateau spans (via
+    # ``mach_to_tas_real``/``cas_to_tas_real``), running the legacy detector
+    # would clobber that field — typically with NaN, since `fdm_tas_from_cas_kt`
+    # rarely yields its own plateau. Only fall back to the legacy detector when
+    # neither Mach nor CAS plateaus were found (then it can still try to detect
+    # a stand-alone TAS plateau on ``fdm_tas_from_cas_kt``).
+    if tas_cfg is not None and not (mach_segs or cas_segs):
         df, _ = _detect_masked(
             df,
             tas_col,

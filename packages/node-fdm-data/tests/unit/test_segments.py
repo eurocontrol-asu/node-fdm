@@ -608,7 +608,10 @@ class TestTasSelected:
         assert (~result["fdm_tas_sel_kt"].is_nan()).sum() > 0
 
     def test_tas_sel_masks_mach_zones(self) -> None:
-        """TAS segments are NOT detected inside Mach-constant regions."""
+        """Inside a Mach plateau, TAS is populated by ``_propagate_speed_plateaus``
+        (constant Mach * local temperature -> varying TAS), not by the legacy
+        detector. The legacy ``_detect_masked`` path no longer runs when a
+        Mach/CAS plateau exists (it would clobber the propagated values)."""
         n = 200
         alt = np.full(n, 35000.0)
         # Mach plateau in the middle
@@ -634,10 +637,11 @@ class TestTasSelected:
         }
         result = build_selected_params(df, config)
         assert "fdm_tas_sel_kt" in result.columns
-        # Inside the Mach plateau (rows 50-149), TAS should be NaN (masked)
-        mach_zone = result["fdm_tas_sel_kt"][50:150]
-        assert mach_zone.is_nan().sum() == len(mach_zone), (
-            "TAS segments must not be detected inside Mach-constant zones"
+        # Inside the Mach plateau (rows 50-149), TAS is populated with the
+        # propagated physical TAS (Mach * ISA temperature).
+        mach_zone = result["fdm_tas_sel_kt"][50:150].to_numpy()
+        assert (~np.isnan(mach_zone)).all(), (
+            "TAS must be populated inside the Mach plateau by _propagate_speed_plateaus"
         )
 
     def test_tas_sel_masks_cas_zones(self) -> None:
@@ -676,10 +680,14 @@ class TestTasSelected:
         }
         result = build_selected_params(df, config)
         assert "fdm_tas_sel_kt" in result.columns
-        # Inside the CAS plateau (rows 0-99), TAS should be NaN (masked)
-        cas_zone = result["fdm_tas_sel_kt"][:100]
-        assert cas_zone.is_nan().sum() == len(cas_zone), (
-            "TAS segments must not be detected inside CAS-constant zones"
+        # Inside the CAS plateau (rows 0-99), TAS is populated by
+        # ``_propagate_speed_plateaus`` (constant CAS + altitude/temperature
+        # → varying TAS), not NaN. The legacy detector no longer runs when
+        # a CAS plateau exists.
+        cas_zone = result["fdm_tas_sel_kt"][:100].to_numpy()
+        # First sample may be NaN (diff-based segment start at idx 1).
+        assert (~np.isnan(cas_zone[1:])).all(), (
+            "TAS must be populated inside the CAS plateau by _propagate_speed_plateaus"
         )
 
     def test_tas_sel_no_config(self) -> None:
@@ -700,7 +708,10 @@ class TestTasSelected:
         assert np.isfinite(result["fdm_tas_sel_kt"].to_numpy()[1:]).all()
 
     def test_tas_sel_all_nan(self) -> None:
-        """All-NaN era_tas_kt produces no crash and no TAS segments."""
+        """All-NaN ``fdm_tas_from_cas_kt`` produces no crash. With a Mach
+        plateau present, ``_propagate_speed_plateaus`` still populates
+        ``fdm_tas_sel_kt`` via ``mach_to_tas`` (it does not consume
+        ``fdm_tas_from_cas_kt``)."""
         n = 50
         df = pl.DataFrame(
             {
@@ -715,7 +726,10 @@ class TestTasSelected:
         }
         result = build_selected_params(df, config)
         assert "fdm_tas_sel_kt" in result.columns
-        assert result["fdm_tas_sel_kt"].is_nan().sum() == n
+        # With Mach plateau detected, propagation populates TAS pointwise;
+        # only the very first sample (segment-start gap) may remain NaN.
+        n_non_nan = int((~result["fdm_tas_sel_kt"].is_nan()).sum())
+        assert n_non_nan >= n - 1
 
     def test_tas_sel_short_flight(self) -> None:
         """Flight with fewer points than min_len produces no TAS segments."""
@@ -1218,6 +1232,121 @@ class TestBuildSelectedParamsEmpty:
         ):
             assert col in out.columns
         assert len(out) == 0
+
+
+class TestPropagatedTasSelNotOverwritten:
+    """AXM regression: legacy ``_detect_masked`` must not clobber TAS already
+    populated pointwise by :func:`_propagate_speed_plateaus` within
+    Mach/CAS plateau spans."""
+
+    def test_propagated_tas_sel_not_overwritten_by_legacy_detector(self) -> None:
+        from node_fdm_pipeline.config import SelectedParamConfig
+
+        from node_fdm_data.physics.isa import isa_temperature
+        from node_fdm_data.physics.speed import mach_to_tas_real
+
+        n = 250
+        # Long enough Mach plateau (>= MachFilterConfig.min_len = 15) gated on
+        # an altitude plateau. Build alt as: short climb, long cruise, short
+        # descent so Mach plateau detection finds a single plateau in cruise.
+        n_climb, n_cruise, n_descent = 30, 190, 30
+        assert n_climb + n_cruise + n_descent == n
+        cruise_ft = 35000.0
+        alt_ft = np.empty(n, dtype=np.float64)
+        alt_ft[:n_climb] = np.linspace(30000.0, cruise_ft, n_climb)
+        alt_ft[n_climb : n_climb + n_cruise] = cruise_ft
+        alt_ft[n_climb + n_cruise :] = np.linspace(cruise_ft, 28000.0, n_descent)
+
+        mach = np.full(n, 0.78)
+        cas = np.full(n, np.nan)
+        # ERA temperature ~ ISA - 5K so we exercise the real-air path.
+        alt_m = alt_ft * _BSP_FT_TO_M
+        temp_k = np.asarray(isa_temperature(alt_m), dtype=np.float64) - 5.0
+
+        # ``fdm_tas_from_cas_kt`` is used by the legacy detector. Make it
+        # noisy/non-plateau-like so the legacy detector finds NOTHING and
+        # would otherwise overwrite ``fdm_tas_sel_kt`` with NaN.
+        rng = np.random.default_rng(0)
+        tas_noisy_kt = 450.0 + rng.normal(0, 50.0, n)
+
+        df = _bsp_flight(
+            alt_ft=alt_ft,
+            mach=mach,
+            cas=cas,
+            tas_kt=tas_noisy_kt,
+            era_temp_K=temp_k,
+        )
+
+        # SelectedParamConfig() carries the same defaults as
+        # PipelineConfig().selected_params (including TasFilterConfig()), so
+        # ``cfg["tas"]`` is a non-None dict — exactly the production path
+        # that triggered the bug (commands/data.py:1158).
+        cfg = SelectedParamConfig().model_dump()
+
+        out = build_selected_params(df, cfg)
+        tas_sel = out["fdm_tas_sel_kt"].to_numpy()
+
+        # At least the Mach plateau span (cruise) must be populated. We allow
+        # some leeway at the boundaries (alt-plateau gating may shave a few
+        # points), so >= 100 is a robust lower bound. Pre-fix the legacy
+        # detector overwrote the propagated values with NaN, leaving 0/250.
+        n_non_nan = int((~np.isnan(tas_sel)).sum())
+        assert n_non_nan >= 100, (
+            f"fdm_tas_sel_kt should remain populated within the Mach plateau "
+            f"after _propagate_speed_plateaus (got {n_non_nan} non-NaN of {n})"
+        )
+
+        # Pointwise correctness within the cruise span: TAS = mach_to_tas_real
+        # (Mach=0.78, T) * MS_TO_KT, ±0.5 kt.
+        cruise_slice = slice(n_climb, n_climb + n_cruise)
+        expected_kt = np.asarray(mach_to_tas_real(0.78, temp_k[cruise_slice])) * _BSP_MS_TO_KT
+        actual = tas_sel[cruise_slice]
+        idx = np.where(~np.isnan(actual))[0]
+        assert idx.size > 0
+        diff = np.abs(actual[idx] - expected_kt[idx])
+        assert np.all(diff <= 0.5), f"TAS pointwise propagation drift: max={diff.max():.3f} kt"
+
+    def test_legacy_tas_detector_runs_when_no_mach_or_cas_segments(self) -> None:
+        """When neither Mach nor CAS plateau is detected, the fallback legacy
+        ``_detect_masked`` path on ``fdm_tas_from_cas_kt`` must still run.
+
+        We provide wildly varying Mach/CAS so the bilateral detectors return
+        no segments, but a stable ``fdm_tas_from_cas_kt`` plateau. The legacy
+        detector should populate ``fdm_tas_sel_kt`` from that.
+        """
+        n = 200
+        rng = np.random.default_rng(1)
+        # Constant cruise altitude (so alt plateau exists, but Mach/CAS noise
+        # prevents Mach/CAS plateau detection).
+        alt_ft = np.full(n, 35000.0)
+        # Wildly varying Mach and CAS — no plateau.
+        mach = 0.5 + rng.normal(0.0, 0.1, n)
+        cas = 280.0 + rng.normal(0.0, 30.0, n)
+        # Stable TAS plateau.
+        tas_kt = np.full(n, 460.0) + rng.normal(0.0, 0.05, n)
+
+        df = _bsp_flight(alt_ft=alt_ft, mach=mach, cas=cas, tas_kt=tas_kt)
+
+        # Use legacy-style config so detectors run their savgol/legacy paths
+        # and definitely return [] on the noisy inputs. Then a TAS legacy
+        # config triggers the fallback.
+        cfg: dict[str, Any] = {
+            "mach": {"min_length": 30, "tolerance": 0.001},
+            "cas": {"min_length": 30, "tolerance": 0.5},
+            "vz": {"min_length": 10, "tolerance": 50.0},
+            "alt": {"min_length": 30, "tolerance": 50.0},
+            "tas": {"tol": 1.0, "min_len": 20, "use_alt": False},
+        }
+
+        out = build_selected_params(df, cfg)
+        tas_sel = out["fdm_tas_sel_kt"].to_numpy()
+        # mach_segs/cas_segs were [] -> legacy detector ran on tas_kt and
+        # should have produced a plateau covering most of the flight.
+        n_non_nan = int((~np.isnan(tas_sel)).sum())
+        assert n_non_nan >= 100, (
+            f"Legacy TAS detector should populate fdm_tas_sel_kt when no "
+            f"Mach/CAS plateau is found (got {n_non_nan}/{n})"
+        )
 
 
 # === Merged from test_gamma_from_alt.py: AXM-802 (altitude-plateau gamma=0) ===
