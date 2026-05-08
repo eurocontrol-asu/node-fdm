@@ -108,6 +108,16 @@ Multi-pass Hampel filter, ERA-deviation cap, and short-gap interpolation for BDS
       show_root_full_path: false
       show_source: true
 
+### Preprocessing — Mode Labelling
+
+Attaches the per-sample `fdm_mode_label` column (TURN + 12 vert×long classes) consumed by the Cui 2019 per-mode loss weighting. Resolution priority `TURN > vertical (ALT > VZ > GAMMA > UNKVERT) > longitudinal (MACH > CAS > UNK)`; the longitudinal regime is computed per `meta_flight_id` from constant sub-runs (length ≥ 2) of `fdm_mach_sel` and `fdm_cas_sel_kt`.
+
+::: node_fdm_data.preprocessing.label_modes
+    options:
+      show_root_heading: true
+      show_root_full_path: false
+      show_source: true
+
 ### Dataset Splitting
 
 Stratified splitting by ICAO aircraft type.

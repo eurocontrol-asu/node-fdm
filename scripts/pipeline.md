@@ -126,6 +126,16 @@ uv run fdm derive --config config.yaml
 
 ---
 
+## 8b. label-modes
+
+Attaches the `fdm_mode_label` column (TURN + 12 vert×long classes used by the Cui 2019 per-mode loss weighting). Reads `flights.delta`, applies `node_fdm_data.preprocessing.label_modes.label_modes`, and writes the column back. Idempotent (re-running drops the existing column first); `--dry-run` validates the config without I/O.
+
+```bash
+uv run fdm label-modes --config config.yaml
+```
+
+---
+
 ## 9. segments
 
 Detects constant segments on `bds_mach_clean`, `bds_ias_kt_clean`,

@@ -63,13 +63,13 @@ SAMPLE_SIZE  ?= 100
 START_DATE   ?= 2025-09-01
 END_DATE     ?= 2025-09-08
 
-.PHONY: pipeline clean-data aircraft download decode identify preprocess flag enrich derive segments convert split
+.PHONY: pipeline clean-data aircraft download decode identify preprocess flag enrich derive label-modes segments convert split
 
 ## Run full data pipeline from scratch: clean → split
 ## Note: `download` auto-chains `decode` (raw cache → Delta) by default,
 ## so the `decode` target is not listed here. Invoke `make decode` standalone
 ## to rebuild `data/flights.delta` from the existing `data/raw/` cache.
-pipeline: clean-data aircraft download identify preprocess flag enrich clean-speeds derive segments convert split
+pipeline: clean-data aircraft download identify preprocess flag enrich clean-speeds derive label-modes segments convert split
 
 ## Remove Delta table, aircraft CSV, and preprocessed parquet
 ## (the system-owned `data/raw/` cache is preserved — `rm -rf data/raw/` to wipe it)
@@ -112,6 +112,10 @@ clean-speeds:
 ## Step 7: Compute derived physics columns
 derive:
 	uv run fdm derive --config $(CONFIG)
+
+## Step 7b: Label per-sample mode (TURN + 12 vert×long classes)
+label-modes:
+	uv run fdm label-modes --config $(CONFIG)
 
 ## Step 8: Detect selected-parameter segments
 segments:

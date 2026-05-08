@@ -1060,6 +1060,57 @@ def derive(
     )
 
 
+def label_modes(
+    *,
+    config: Path,
+    dry_run: bool = False,
+) -> None:
+    """Attach the per-sample mode label column (étape 5).
+
+    Reads the Delta Table, applies
+    :func:`node_fdm_data.preprocessing.label_modes.label_modes`, and writes
+    the resulting ``fdm_mode_label`` column back via
+    :func:`node_fdm_data.delta.write_columns`.  Re-running drops the
+    existing column first (idempotent).
+
+    Args:
+        config: Path to the YAML config file.
+        dry_run: Validate config without modifying the Delta Table.
+    """
+    from node_fdm_data.delta import read_delta_table, write_columns
+    from node_fdm_data.preprocessing.label_modes import (
+        MODE_LABEL_COLUMN,
+    )
+    from node_fdm_data.preprocessing.label_modes import (
+        label_modes as label_modes_fn,
+    )
+
+    from node_fdm_pipeline.config import PipelineConfig
+
+    cfg = PipelineConfig.from_yaml(config)
+    delta_table = cfg.paths.resolve("delta_table")
+
+    log.info("label_modes_start", table=str(delta_table))
+
+    if dry_run:
+        log.info(
+            "label_modes_dry_run",
+            msg="Config valid, would label modes",
+            table=str(delta_table),
+        )
+        return
+
+    df = read_delta_table(delta_table)
+    if MODE_LABEL_COLUMN in df.columns:
+        log.info("label_modes_drop_existing", column=MODE_LABEL_COLUMN)
+        df = df.drop(MODE_LABEL_COLUMN)
+
+    df = label_modes_fn(df)
+    write_columns(df.select(["meta_flight_id", MODE_LABEL_COLUMN]), delta_table)
+
+    log.info("label_modes_done", rows=len(df))
+
+
 def _derive_typecode_partitioned(cfg: object) -> None:
     """Run derive on a typecode-partitioned Delta layout.
 

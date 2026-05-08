@@ -466,6 +466,24 @@ def derive(
     derive_fn(config=config, dry_run=dry_run)
 
 
+@app.command(name="label-modes")
+def label_modes(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to YAML config file"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
+    ] = False,
+) -> None:
+    """Attach the per-sample mode label (TURN + 12 vert x long classes) — étape 5."""
+    from node_fdm_pipeline.commands.data import label_modes as label_modes_fn
+
+    label_modes_fn(config=config, dry_run=dry_run)
+
+
 @app.command(name="clean-speeds")
 def clean_speeds(
     *,

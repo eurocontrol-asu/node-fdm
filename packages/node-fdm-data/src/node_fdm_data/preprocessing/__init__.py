@@ -7,6 +7,7 @@ __all__ = [
     "convert",
     "derive",
     "flags",
+    "label_modes",
     "opensky",
     "qar",
     "resample",
