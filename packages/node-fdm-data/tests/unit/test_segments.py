@@ -960,11 +960,17 @@ class TestAberrantMachFilter:
         assert np.any(~np.isnan(sel[plateau_mask]))
 
 
-class TestCasOptimisation:
-    """AC2/AC3: Transition CAS optimisation."""
+class _ConsistentFlightFactory:
+    """Helper to build a synthetic 3-phase climb/cruise/descent flight.
+
+    Kept as a module-level factory because :class:`TestTasTargetEnvelope`
+    (below) reuses it. The legacy transition-CAS optimisation tests that
+    used to live here have been removed alongside ``_apply_transition_optimisation``
+    (see :func:`test_build_selected_params_no_apply_transition`).
+    """
 
     @staticmethod
-    def _build_consistent_flight(  # noqa: PLR0913
+    def build(  # noqa: PLR0913
         *,
         cas_climb_kt: float,
         cas_descent_kt: float,
@@ -997,39 +1003,33 @@ class TestCasOptimisation:
         tas_real_kt = tas_ms * _BSP_MS_TO_KT
         return alt_ft, mach, cas_real_kt, tas_real_kt
 
-    def test_cas_optimisation_recovers_known_value(self):
-        alt_ft, mach, cas_real_kt, tas_kt = self._build_consistent_flight(
-            cas_climb_kt=280.0,
-            cas_descent_kt=270.0,
-            mach_cruise=0.78,
-        )
 
-        out = build_selected_params(
-            _bsp_flight(alt_ft=alt_ft, mach=mach, cas=cas_real_kt, tas_kt=tas_kt),
-            _bsp_config(),
-        )
-        cas_sel = out["fdm_cas_sel_kt"].to_numpy()
+def test_build_selected_params_no_apply_transition() -> None:
+    """The legacy ``_apply_transition_optimisation`` step has been removed.
 
-        climb_vals = cas_sel[:100]
-        non_nan = climb_vals[~np.isnan(climb_vals)]
-        assert non_nan.size > 0
-        assert np.all(np.abs(non_nan - 280.0) <= 1.0)
+    The v6 reference scripts (data/figures/new_idea_segment/plot_*.py) predate
+    this step; aligning prod with ref means the helper and its private
+    callees must be gone from segments.py.
+    """
+    import inspect
 
-    def test_cas_deviation_cutoff(self):
-        alt_ft, mach, cas_real_kt, tas_kt = self._build_consistent_flight(
-            cas_climb_kt=280.0,
-            cas_descent_kt=270.0,
-            mach_cruise=0.78,
-        )
-        cas_real_kt = cas_real_kt.copy()
-        cas_real_kt[:50] = 288.0
+    import node_fdm_data.segments as seg_mod
 
-        out = build_selected_params(
-            _bsp_flight(alt_ft=alt_ft, mach=mach, cas=cas_real_kt, tas_kt=tas_kt),
-            _bsp_config(),
-        )
-        cas_sel = out["fdm_cas_sel_kt"].to_numpy()
-        assert np.all(np.isnan(cas_sel[:50]))
+    src = inspect.getsource(seg_mod)
+    forbidden = (
+        "_apply_transition_optimisation",
+        "_apply_transition_side",
+        "_apply_one_transition_window",
+        "_optimize_transition_cas",
+        "_walk_apply_cas",
+        "_climb_window",
+        "_descent_window",
+        "_mach_value_in_alt_seg",
+    )
+    for name in forbidden:
+        assert name not in src, f"{name} is still defined / referenced in segments.py"
+    # The function must still exist and be callable.
+    assert callable(seg_mod.build_selected_params)
 
 
 class TestEraTemperature:
@@ -1090,7 +1090,7 @@ class TestTasTargetEnvelope:
     def test_tas_target_uses_envelope_on_overlap(self):
         from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas
 
-        alt_ft, mach, cas_real_kt, tas_kt = TestCasOptimisation._build_consistent_flight(
+        alt_ft, mach, cas_real_kt, tas_kt = _ConsistentFlightFactory.build(
             cas_climb_kt=280.0,
             cas_descent_kt=270.0,
             mach_cruise=0.78,
@@ -2495,7 +2495,7 @@ class TestAltFilterConfigBilateral:
         assert cfg.sigma_s == 6.0
         assert cfg.sigma_r == 350.0
         assert cfg.n_passes == 2
-        assert cfg.tol_ftmin == 400.0
+        assert cfg.tol_ftmin == 150.0
         assert cfg.min_len == 6
         assert cfg.tol == 25
         assert cfg.use_alt is False

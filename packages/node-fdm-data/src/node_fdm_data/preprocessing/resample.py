@@ -36,6 +36,8 @@ BDS_COLS: list[str] = [
     "bds_hdg_deg",
     "bds_mcp_alt_sel_ft",
     "bds_fms_alt_sel_ft",
+    "bds_roll_deg",
+    "bds_track_rate_dps",
 ]
 
 # (columns_to_interpolate, reference_columns_for_subsegment_detection)

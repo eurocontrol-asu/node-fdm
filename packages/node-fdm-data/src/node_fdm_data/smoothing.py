@@ -40,7 +40,7 @@ def bilateral_1d(y: np.ndarray, sigma_s: float, sigma_r: float) -> np.ndarray:
 
     num = np.sum(weights * windows, axis=1)
     den = np.sum(weights, axis=1)
-    return num / den
+    return np.asarray(num / den, dtype=np.float64)
 
 
 def interpolate_nans(y: np.ndarray) -> np.ndarray:

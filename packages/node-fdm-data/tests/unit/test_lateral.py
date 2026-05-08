@@ -14,6 +14,7 @@ import pytest
 
 from node_fdm_data.lateral import (
     augment_lateral,
+    detect_turn_intervals,
     detect_turning_starts,
     orthodromic_bearing,
 )
@@ -108,6 +109,8 @@ class TestDetectTurningStarts:
         [
             pytest.param(np.full(100, 90.0), id="straight_flight"),
             pytest.param(
+                # Single NaN sample: V3 forward-fills before bilateral so the
+                # gap collapses to ~0 rotation rate -> still no turn detected.
                 np.where(np.arange(100) == 50, np.nan, 90.0),
                 id="handles_nan_input",
             ),
@@ -137,7 +140,9 @@ class TestDetectTurningStarts:
         starts = detect_turning_starts(track)
         assert starts.size >= 1
         # The turn region is samples 40..60; start should land before its peak.
-        assert 30 <= int(starts[0]) <= 50
+        # V3 bilateral smoothing shifts the threshold-crossing slightly so the
+        # tolerated window is widened from 30..50 to 25..55.
+        assert 25 <= int(starts[0]) <= 55
 
     def test_multiple_turns(self) -> None:
         """Two 90° turns → at least two distinct starts, in order."""
@@ -174,6 +179,169 @@ class TestDetectTurningStarts:
         track = np.full(100, 0.0)
         starts = detect_turning_starts(track)
         assert starts.dtype == np.intp
+
+
+# ---------------------------------------------------------------------------
+# detect_turn_intervals (V3: bilateral + symmetric threshold)
+# ---------------------------------------------------------------------------
+
+
+def _make_turning_track() -> np.ndarray:
+    """Synthetic single 90 deg turn: 40 flat, 20 ramp, 40 flat."""
+    return np.concatenate(
+        [
+            np.full(40, 0.0),
+            np.linspace(0.0, 90.0, 20),
+            np.full(40, 90.0),
+        ]
+    )
+
+
+class TestDetectTurnIntervals:
+    """V3 bilateral + symmetric-threshold turn-interval detection."""
+
+    def test_intervals_returns_5_arrays(self) -> None:
+        """AC1: returns a 4-tuple of ndarrays."""
+        track = np.full(100, 90.0)
+        result = detect_turn_intervals(track)
+        assert isinstance(result, tuple)
+        assert len(result) == 4
+        for arr in result:
+            assert isinstance(arr, np.ndarray)
+
+    def test_intervals_dtype_intp(self) -> None:
+        """AC4: starts and ends arrays are np.intp."""
+        track = _make_turning_track()
+        starts, ends, _, _ = detect_turn_intervals(track)
+        assert starts.dtype == np.intp
+        assert ends.dtype == np.intp
+
+    def test_intervals_starts_le_ends(self) -> None:
+        """AC4: every start <= matching end."""
+        track = _make_turning_track()
+        starts, ends, _, _ = detect_turn_intervals(track)
+        assert np.all(starts <= ends)
+
+    def test_intervals_sorted_unique(self) -> None:
+        """AC4: starts strictly increasing (sorted, no duplicates)."""
+        # Two well-separated turns guarantee >1 interval to exercise diff.
+        track = np.concatenate(
+            [
+                np.full(40, 0.0),
+                np.linspace(0.0, 90.0, 20),
+                np.full(60, 90.0),
+                np.linspace(90.0, 180.0, 20),
+                np.full(40, 180.0),
+            ]
+        )
+        starts, _, _, _ = detect_turn_intervals(track)
+        if starts.size > 1:
+            assert np.all(np.diff(starts) > 0)
+
+    def test_intervals_single_turn_brackets_peak(self) -> None:
+        """AC2: a single 90 deg turn yields one [start, end] enclosing the ramp."""
+        track = np.concatenate(
+            [
+                np.full(40, 0.0),
+                np.linspace(0.0, 90.0, 20),
+                np.full(40, 90.0),
+            ]
+        )
+        starts, ends, _, _ = detect_turn_intervals(track)
+        assert starts.size == 1
+        assert ends.size == 1
+        assert 30 <= int(starts[0]) < 50 <= int(ends[0]) <= 70
+
+    def test_intervals_two_distinct_turns(self) -> None:
+        """AC2/AC3: two well-separated turns are not merged."""
+        track = np.concatenate(
+            [
+                np.full(40, 0.0),
+                np.linspace(0.0, 90.0, 20),
+                np.full(60, 90.0),
+                np.linspace(90.0, 180.0, 20),
+                np.full(40, 180.0),
+            ]
+        )
+        starts, ends, _, _ = detect_turn_intervals(track)
+        assert starts.size == 2
+        assert ends[0] < starts[1]
+
+    def test_intervals_overlapping_turns_merged(self) -> None:
+        """AC3: nearby turns whose walk-forward/walk-back overlap collapse to one."""
+        track = np.concatenate(
+            [
+                np.full(20, 0.0),
+                np.linspace(0.0, 45.0, 15),
+                np.full(5, 45.0),
+                np.linspace(45.0, 90.0, 15),
+                np.full(20, 90.0),
+            ]
+        )
+        starts, ends, _, _ = detect_turn_intervals(track)
+        assert starts.size == 1
+        assert ends.size == 1
+
+    def test_intervals_too_short(self) -> None:
+        """AC5: signal shorter than Savgol window -> empty starts/ends, zero rates."""
+        track = np.array([0.0, 10.0, 20.0])
+        starts, ends, abs_rate, abs_rate_bilat = detect_turn_intervals(track)
+        assert starts.size == 0
+        assert ends.size == 0
+        assert abs_rate.shape == (3,)
+        assert abs_rate_bilat.shape == (3,)
+        assert np.all(abs_rate == 0.0)
+        assert np.all(abs_rate_bilat == 0.0)
+
+    def test_intervals_all_nan(self) -> None:
+        """AC5: fully NaN signal -> empty starts/ends, smoothed array of length n."""
+        track = np.full(50, np.nan)
+        starts, ends, _, abs_rate_bilat = detect_turn_intervals(track)
+        assert starts.size == 0
+        assert ends.size == 0
+        assert abs_rate_bilat.shape == (50,)
+
+    def test_intervals_bilateral_flattens_noise(self) -> None:
+        """AC2: 2 passes of bilateral suppress sub-threshold IID noise."""
+        rng = np.random.default_rng(0)
+        track = 90.0 + rng.normal(0.0, 0.001, 200).cumsum()
+        _, _, _, abs_rate_bilat = detect_turn_intervals(track)
+        assert abs_rate_bilat.max() < 0.05
+
+    def test_intervals_threshold_param_respected(self) -> None:
+        """AC2: rate_threshold gates both find_peaks and walk-back/forward."""
+        # 90 deg over 281 samples * dt=4s -> peak rate ~= 0.08 deg/s.
+        track = np.concatenate(
+            [
+                np.full(50, 0.0),
+                np.linspace(0.0, 90.0, 281),
+                np.full(50, 90.0),
+            ]
+        )
+        starts_low, _, _, _ = detect_turn_intervals(track, rate_threshold=0.05)
+        starts_high, _, _, _ = detect_turn_intervals(track, rate_threshold=0.10)
+        assert starts_low.size == 1
+        assert starts_high.size == 0
+
+    def test_legacy_detect_turning_starts_shim(self) -> None:
+        """AC7: legacy shim returns the same starts as the new function."""
+        track = _make_turning_track()
+        with pytest.warns(DeprecationWarning):
+            legacy = detect_turning_starts(track)
+        new_starts = detect_turn_intervals(track)[0]
+        assert np.array_equal(legacy, new_starts)
+
+    def test_legacy_emits_deprecation_warning(self) -> None:
+        """AC7: calling legacy entry-point raises DeprecationWarning."""
+        track = _make_turning_track()
+        with pytest.warns(DeprecationWarning):
+            detect_turning_starts(track)
+
+    def test_lateral_all_exports_new_symbol(self) -> None:
+        """AC8: new symbol is part of the module's __all__."""
+        import node_fdm_data.lateral as m
+
+        assert "detect_turn_intervals" in m.__all__
 
 
 # ---------------------------------------------------------------------------

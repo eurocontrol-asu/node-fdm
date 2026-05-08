@@ -32,6 +32,7 @@ Example::
 
 from __future__ import annotations
 
+import warnings
 from typing import Any
 
 import numpy as np
@@ -40,9 +41,11 @@ import polars as pl
 from scipy.signal import find_peaks, savgol_filter
 
 from node_fdm_data.lateral_segments import build_in_turn_mask, segment_bounds
+from node_fdm_data.smoothing import bilateral_1d
 
 __all__ = [
     "augment_lateral",
+    "detect_turn_intervals",
     "detect_turning_starts",
     "orthodromic_bearing",
 ]
@@ -55,6 +58,10 @@ _SAVGOL_POLY: int = 3
 _PEAK_DISTANCE: int = 10
 _DEFAULT_THRESHOLD: float = 0.05
 _DEFAULT_NOISE_FLOOR: float = 0.005
+_DEFAULT_RATE_THRESHOLD: float = 0.05
+_BILAT_SIGMA_S: float = 8.0
+_BILAT_SIGMA_R: float = 0.01
+_BILAT_PASSES: int = 2
 _HALF_TURN_DEG: float = 180.0
 _FULL_TURN_DEG: float = 360.0
 
@@ -84,8 +91,118 @@ def orthodromic_bearing(
 
 
 # ---------------------------------------------------------------------------
-# Turn detection (Savgol + find_peaks + backtrack, legacy production algo)
+# Turn detection (V3: Savgol + bilateral + symmetric-threshold intervals)
 # ---------------------------------------------------------------------------
+
+
+def detect_turn_intervals(
+    track_deg: npt.NDArray[np.floating[Any]],
+    *,
+    dt: float = 4.0,
+    rate_threshold: float = _DEFAULT_RATE_THRESHOLD,
+) -> tuple[
+    npt.NDArray[np.intp],
+    npt.NDArray[np.intp],
+    npt.NDArray[np.float64],
+    npt.NDArray[np.float64],
+]:
+    """Detect ``(start, end)`` index intervals for every turn in a track signal.
+
+    V3 algorithm: smooth the track with Savitzky-Golay, derive
+    ``|d_savgol(track)/dt|``, then apply two passes of
+    :func:`bilateral_1d` to flatten sub-threshold noise while preserving
+    jumps.  ``find_peaks`` locates turn centres; a single
+    ``rate_threshold`` is then walked back AND forward from each peak
+    to define the symmetric ``[start, end]`` bracket.  Overlapping
+    intervals are merged.
+
+    Args:
+        track_deg: Track angle in degrees (may wrap at 0/360).
+        dt: Sampling interval in seconds (constant grid).
+        rate_threshold: Single threshold used for both peak height and
+            the symmetric walk-back/walk-forward boundaries.
+
+    Returns:
+        ``(starts, ends, abs_rate_raw, abs_rate_bilat)`` where ``starts``
+        and ``ends`` are sorted, merged ``np.intp`` index arrays
+        (``starts <= ends``, strictly increasing), ``abs_rate_raw`` is
+        the pre-smoothing absolute rotation rate, and ``abs_rate_bilat``
+        is the bilateral-smoothed rate used for peak detection.
+    """
+    n = len(track_deg)
+    if n < _SAVGOL_WINDOW:
+        empty = np.empty(0, dtype=np.intp)
+        zeros = np.zeros(n, dtype=np.float64)
+        return empty, empty, zeros, zeros
+
+    track_filled, all_nan = _forward_fill_track(track_deg)
+    if all_nan:
+        empty = np.empty(0, dtype=np.intp)
+        zeros = np.zeros(n, dtype=np.float64)
+        return empty, empty, zeros, zeros
+
+    smoothed = savgol_filter(track_filled, _SAVGOL_WINDOW, _SAVGOL_POLY)
+    d_track = _unwrap_diff(np.diff(smoothed, prepend=smoothed[0]))
+    abs_rate = np.abs(d_track / dt)
+
+    abs_rate_bilat = abs_rate.copy()
+    for _ in range(_BILAT_PASSES):
+        abs_rate_bilat = bilateral_1d(abs_rate_bilat, _BILAT_SIGMA_S, _BILAT_SIGMA_R)
+
+    peaks, _ = find_peaks(
+        abs_rate_bilat,
+        height=rate_threshold,
+        distance=_PEAK_DISTANCE,
+    )
+    if peaks.size == 0:
+        empty = np.empty(0, dtype=np.intp)
+        return empty, empty, abs_rate, abs_rate_bilat
+
+    starts_list = [_walk_back_below(abs_rate_bilat, int(p), rate_threshold) for p in peaks]
+    ends_list = [_walk_forward_below(abs_rate_bilat, int(p), rate_threshold) for p in peaks]
+
+    starts_arr = np.asarray(starts_list, dtype=np.intp)
+    ends_arr = np.asarray(ends_list, dtype=np.intp)
+    order = np.argsort(starts_arr)
+    starts_arr = starts_arr[order]
+    ends_arr = ends_arr[order]
+
+    merged_s: list[int] = [int(starts_arr[0])]
+    merged_e: list[int] = [int(ends_arr[0])]
+    for s, e in zip(starts_arr[1:], ends_arr[1:], strict=True):
+        if int(s) <= merged_e[-1]:
+            merged_e[-1] = max(merged_e[-1], int(e))
+        else:
+            merged_s.append(int(s))
+            merged_e.append(int(e))
+
+    return (
+        np.asarray(merged_s, dtype=np.intp),
+        np.asarray(merged_e, dtype=np.intp),
+        abs_rate,
+        abs_rate_bilat,
+    )
+
+
+def _walk_back_below(abs_rate: npt.NDArray[np.float64], peak: int, threshold: float) -> int:
+    """Walk left from ``peak`` until rate falls below ``threshold``."""
+    i = int(peak)
+    while i > 0:
+        i -= 1
+        if abs_rate[i] < threshold:
+            return i + 1
+    return 0
+
+
+def _walk_forward_below(abs_rate: npt.NDArray[np.float64], peak: int, threshold: float) -> int:
+    """Walk right from ``peak`` until rate falls below ``threshold``."""
+    n = abs_rate.size
+    j = int(peak)
+    while j < n - 1:
+        j += 1
+        if abs_rate[j] < threshold:
+            return j - 1
+    return n - 1
 
 
 def detect_turning_starts(
@@ -95,48 +212,20 @@ def detect_turning_starts(
     threshold_deg_per_sec: float = _DEFAULT_THRESHOLD,
     noise_threshold_deg_per_sec: float = _DEFAULT_NOISE_FLOOR,
 ) -> npt.NDArray[np.intp]:
-    """Detect the **start index** of every turn in a track signal.
+    """Deprecated shim: use :func:`detect_turn_intervals` instead.
 
-    Mirrors ``detect_start_of_turning_points`` from the legacy production
-    module.  Smooths the track with Savitzky-Golay, computes rotation
-    rate, picks peaks above ``threshold_deg_per_sec`` then walks
-    backwards from each peak until the rate falls below
-    ``noise_threshold_deg_per_sec``.
-
-    Args:
-        track_deg: Track angle in degrees (may wrap at 0/360).
-        dt: Sampling interval in seconds (constant grid).
-        threshold_deg_per_sec: Peak height for ``find_peaks``.
-        noise_threshold_deg_per_sec: Backtrack stops when rate drops
-            below this -- defines the practical "start of turn".
-
-    Returns:
-        Sorted unique array of indices marking turn-starts.  Empty if
-        the signal is shorter than the Savgol window or contains no
-        peaks.
+    ``noise_threshold_deg_per_sec`` is accepted but ignored: V3 uses a
+    single symmetric threshold (``threshold_deg_per_sec``) for both peak
+    detection and the start/end walk-back/walk-forward.
     """
-    n = len(track_deg)
-    if n < _SAVGOL_WINDOW:
-        return np.empty(0, dtype=np.intp)
-
-    track_filled, all_nan = _forward_fill_track(track_deg)
-    if all_nan:
-        return np.empty(0, dtype=np.intp)
-
-    smoothed = savgol_filter(track_filled, _SAVGOL_WINDOW, _SAVGOL_POLY)
-    d_track = _unwrap_diff(np.diff(smoothed, prepend=smoothed[0]))
-    abs_rate = np.abs(d_track / dt)
-
-    peaks, _ = find_peaks(
-        abs_rate,
-        height=threshold_deg_per_sec,
-        distance=_PEAK_DISTANCE,
+    warnings.warn(
+        "detect_turning_starts is deprecated; use detect_turn_intervals instead. "
+        "noise_threshold_deg_per_sec is ignored under the V3 symmetric-threshold algorithm.",
+        DeprecationWarning,
+        stacklevel=2,
     )
-
-    starts = _backtrack_starts(abs_rate, peaks, noise_threshold_deg_per_sec)
-    if not starts:
-        return np.empty(0, dtype=np.intp)
-    return np.unique(np.asarray(starts, dtype=np.intp))
+    starts, _, _, _ = detect_turn_intervals(track_deg, dt=dt, rate_threshold=threshold_deg_per_sec)
+    return starts
 
 
 def _forward_fill_track(
@@ -169,31 +258,6 @@ def _unwrap_diff(d_track: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
     d_track = np.where(d_track > _HALF_TURN_DEG, d_track - _FULL_TURN_DEG, d_track)
     d_track = np.where(d_track < -_HALF_TURN_DEG, d_track + _FULL_TURN_DEG, d_track)
     return d_track
-
-
-def _backtrack_starts(
-    abs_rate: npt.NDArray[np.float64],
-    peaks: npt.NDArray[np.intp],
-    noise_threshold_deg_per_sec: float,
-) -> list[int]:
-    """Walk back from each peak until rate drops below the noise floor."""
-    starts: list[int] = []
-    for peak in peaks:
-        i = int(peak)
-        while i > 0:
-            i -= 1
-            if abs_rate[i] < noise_threshold_deg_per_sec:
-                starts.append(i + 1)
-                break
-            if i == 0:
-                starts.append(0)
-                break
-    return starts
-
-
-# ---------------------------------------------------------------------------
-# Segment endpoint assignment
-# ---------------------------------------------------------------------------
 
 
 # ---------------------------------------------------------------------------
@@ -243,11 +307,10 @@ def augment_lateral(
     lat = df["latitude"].to_numpy().astype(np.float64)
     lon = df["longitude"].to_numpy().astype(np.float64)
 
-    turning_starts = detect_turning_starts(
+    turning_starts, _, _, _ = detect_turn_intervals(
         track_raw,
         dt=dt,
-        threshold_deg_per_sec=threshold_deg_per_sec,
-        noise_threshold_deg_per_sec=noise_threshold_deg_per_sec,
+        rate_threshold=threshold_deg_per_sec,
     )
 
     a_idx, b_idx = segment_bounds(turning_starts, n)

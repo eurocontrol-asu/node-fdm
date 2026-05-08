@@ -72,7 +72,10 @@ addopts = [
     "--cov-report=term-missing",
     "--cov-fail-under=0",
 ]
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    "ignore:detect_turning_starts is deprecated.*:DeprecationWarning",
+]
 markers = [
     "integration: integration tests requiring real I/O (filesystem, network, deltalake)",
     "e2e: end-to-end tests via subprocess/CLI",
