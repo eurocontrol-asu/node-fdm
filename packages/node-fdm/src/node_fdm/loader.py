@@ -85,6 +85,7 @@ def _load_and_window(
                 log.warning("e1_column_missing", column=col)
 
     has_distance_flag = "fdm_flag_distance_ok" in flights_df.columns
+    has_weight_col = "fdm_train_weight" in flights_df.columns
 
     flight_ids = flights_df.get_column("meta_flight_id").unique().sort().to_list()
     if flight_limit is not None:
@@ -114,6 +115,10 @@ def _load_and_window(
         dist_ok: np.ndarray | None = None
         if has_distance_flag:
             dist_ok = df.get_column("fdm_flag_distance_ok").to_numpy()
+
+        w_arr: np.ndarray | None = None
+        if has_weight_col:
+            w_arr = df.get_column("fdm_train_weight").to_numpy().astype(np.float32)
 
         for start in range(0, n_rows - seq_len + 1, shift):
             end = start + seq_len
@@ -147,6 +152,10 @@ def _load_and_window(
             if e1_arr is not None:
                 e1_tensor = torch.from_numpy(e1_arr[start:end].copy())
 
+            w_tensor: torch.Tensor | None = None
+            if w_arr is not None:
+                w_tensor = torch.from_numpy(w_arr[start:end].copy())
+
             samples.append(
                 FlightSample(
                     x=torch.from_numpy(x_arr[start:end].copy()),
@@ -154,6 +163,7 @@ def _load_and_window(
                     e=torch.from_numpy(e_arr[start:end].copy()),
                     dx=torch.from_numpy(dx_arr[start:end].copy()),
                     e1=e1_tensor,
+                    w=w_tensor,
                 )
             )
 

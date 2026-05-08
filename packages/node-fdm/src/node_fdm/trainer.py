@@ -33,7 +33,7 @@ from node_fdm.models.projected_integrator import (
     ClampedRK4,
     _clamp_columns,
 )
-from node_fdm.training.weighting import boot_mode_weights
+from node_fdm.training.weighting import boot_mode_weights, compute_segment_weights
 
 __all__ = [
     "ODETrainer",
@@ -111,14 +111,18 @@ def _collate_flight_samples(
     Returns a 4-tuple ``(x, u, e, dx)`` when no ``e1`` data is present,
     or a 5-tuple ``(x, u, e, dx, e1)`` when samples carry tracking targets.
     """
-    base = (
+    base: tuple[torch.Tensor, ...] = (
         torch.stack([s.x for s in batch]),
         torch.stack([s.u for s in batch]),
         torch.stack([s.e for s in batch]),
         torch.stack([s.dx for s in batch]),
     )
     if batch[0].e1 is not None:
-        return (*base, torch.stack([s.e1 for s in batch]))  # type: ignore[misc]
+        e1_stack = torch.stack([s.e1 for s in batch if s.e1 is not None])
+        base = (*base, e1_stack)
+    if batch[0].w is not None:
+        w_stack = torch.stack([s.w for s in batch if s.w is not None])
+        base = (*base, w_stack)
     return base
 
 
@@ -450,7 +454,15 @@ class ODETrainer:
         """
         tensors = tuple(t.to(self.device) for t in batch)
         x_seq, u_seq, e_seq = tensors[0], tensors[1], tensors[2]
-        _ = tensors[4] if len(tensors) == 5 else None  # e1_seq reserved for future use
+        # The collate output may carry e1 and/or w in trailing slots. The
+        # last tensor whose last dim equals seq_len is treated as ``w``
+        # (per-sample weights, shape (batch, seq_len)). e1 has shape
+        # (batch, seq_len, n_e1) so its ndim is 3.
+        w_tensor: torch.Tensor | None = None
+        for t in tensors[4:]:
+            if t.ndim == 2:
+                w_tensor = t
+                break
 
         seq_len = x_seq.shape[1]
         x0 = x_seq[:, 0, :]
@@ -529,28 +541,57 @@ class ODETrainer:
         true_norm = (true - self._norm_mean) / self._norm_std
 
         if self._huber_beta_per_col is None:
-            loss: torch.Tensor = self.loss_fn(
-                residual_weighted,
-                torch.zeros_like(residual_weighted),
-            )
+            if w_tensor is None:
+                loss: torch.Tensor = self.loss_fn(
+                    residual_weighted,
+                    torch.zeros_like(residual_weighted),
+                )
+            else:
+                # Per-segment MSE then weight then mean over batch.
+                # Note: the spec keeps the trajectory-loss reweighting only;
+                # lambda_tracking term below is intentionally unweighted.
+                per_segment = (residual_weighted**2).mean(dim=(1, 2))
+                w_seg = compute_segment_weights(w_tensor)
+                loss = (w_seg * per_segment).mean()
         else:
             # Per-column SmoothL1 with calibrated betas where provided;
             # MSE on columns with NaN beta (no override). Result averaged
             # across all elements to match the previous reduction='mean'.
             target_zero = torch.zeros_like(residual_weighted)
-            per_col_means = []
-            for i in range(residual_weighted.shape[-1]):
-                col_res = residual_weighted[..., i]
-                col_zero = target_zero[..., i]
-                beta = self._huber_beta_per_col[i]
-                if torch.isnan(beta):
-                    col_loss = torch.nn.functional.mse_loss(col_res, col_zero, reduction="mean")
-                else:
-                    col_loss = torch.nn.functional.smooth_l1_loss(
-                        col_res, col_zero, reduction="mean", beta=beta.item()
-                    )
-                per_col_means.append(col_loss)
-            loss = torch.stack(per_col_means).mean()
+            if w_tensor is None:
+                per_col_means = []
+                for i in range(residual_weighted.shape[-1]):
+                    col_res = residual_weighted[..., i]
+                    col_zero = target_zero[..., i]
+                    beta = self._huber_beta_per_col[i]
+                    if torch.isnan(beta):
+                        col_loss = torch.nn.functional.mse_loss(
+                            col_res, col_zero, reduction="mean"
+                        )
+                    else:
+                        col_loss = torch.nn.functional.smooth_l1_loss(
+                            col_res, col_zero, reduction="mean", beta=beta.item()
+                        )
+                    per_col_means.append(col_loss)
+                loss = torch.stack(per_col_means).mean()
+            else:
+                # Per-segment per-column reduction with reduction='none', mean over
+                # (seq_len, n_x) → (batch,), multiply by w_seg, mean over batch.
+                per_col_segment = []
+                for i in range(residual_weighted.shape[-1]):
+                    col_res = residual_weighted[..., i]
+                    col_zero = target_zero[..., i]
+                    beta = self._huber_beta_per_col[i]
+                    if torch.isnan(beta):
+                        elem = torch.nn.functional.mse_loss(col_res, col_zero, reduction="none")
+                    else:
+                        elem = torch.nn.functional.smooth_l1_loss(
+                            col_res, col_zero, reduction="none", beta=beta.item()
+                        )
+                    per_col_segment.append(elem.mean(dim=1))
+                per_segment = torch.stack(per_col_segment, dim=-1).mean(dim=-1)
+                w_seg = compute_segment_weights(w_tensor)
+                loss = (w_seg * per_segment).mean()
 
         # --- Tracking loss on autopilot targets ---
         # Compares predicted states with target consignes from U_COLS.

@@ -33,6 +33,7 @@ class _TrainOverrides:
     shift: int | None
     model_name: str | None
     lambda_tracking: float | None
+    use_mode_weights: bool | None
 
 
 @dataclass(frozen=True)
@@ -45,6 +46,7 @@ class _TrainContext:
     models_dir: Path
     device: str
     overrides: _TrainOverrides
+    cfg_use_mode_weights: bool = False
 
 
 def _load_delta_df(cfg: Any) -> tuple[Any, Path]:
@@ -70,6 +72,9 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
 
     ov = ctx.overrides
     effective_seq_len = ov.seq_len or 60
+    use_mode_weights = (
+        ov.use_mode_weights if ov.use_mode_weights is not None else ctx.cfg_use_mode_weights
+    )
     return TrainingConfig(
         architecture_name=ctx.info.name,
         model_name=ov.model_name or f"{ctx.info.name}_{acft}",
@@ -92,6 +97,7 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
             "era_tas_ms": 1.02e-1,
         },
         eta_min=1e-5,
+        use_mode_weights=use_mode_weights,
     )
 
 
@@ -155,6 +161,7 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
         val_dataset=val_ds,
         model_dir=ctx.models_dir,
         device=ctx.device,
+        train_df=data_df if training_config.use_mode_weights else None,
     )
     trainer.train()
     log.info("train_typecode_done", typecode=acft)
@@ -174,6 +181,7 @@ def run_training(
     device: str = "cpu",
     model_name: str | None = None,
     lambda_tracking: float | None = None,
+    use_mode_weights: bool | None = None,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
 
@@ -189,6 +197,9 @@ def run_training(
         shift: Override shift between windows (defaults to seq_len).
         device: PyTorch device string (e.g. ``"cpu"``, ``"cuda:0"``).
         model_name: Custom model name (default: ``{arch}_{typecode}``).
+        use_mode_weights: Optional CLI override. ``None`` defers to
+            ``cfg.training.use_mode_weights``; otherwise the explicit value
+            wins (precedence: CLI > YAML > default ``False``).
     """
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
@@ -215,7 +226,9 @@ def run_training(
             shift=shift,
             model_name=model_name,
             lambda_tracking=lambda_tracking,
+            use_mode_weights=use_mode_weights,
         ),
+        cfg_use_mode_weights=cfg.training.use_mode_weights,
     )
 
     log.info("train_start", arch=arch, typecodes=typecodes, device=device)

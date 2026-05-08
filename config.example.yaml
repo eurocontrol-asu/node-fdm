@@ -28,6 +28,14 @@ typecodes:
 computing:
   default_cpu_count: 35
 
+# Training-time toggles forwarded to node_fdm.trainer.TrainingConfig.
+# Why: rebalances the trajectory loss across flight modes (TURN vs straight
+# segments) using effective-number sample weights when modes are imbalanced.
+# How: enable when training data is heavily skewed toward cruise; the CLI
+# flag --use-mode-weights / --no-use-mode-weights overrides this value.
+training:
+  use_mode_weights: false
+
 bada:
   bada_4_2_dir: "/path/to/BADA/4.2.1"  # ← CHANGE THIS (if using BADA)
 

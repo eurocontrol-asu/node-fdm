@@ -95,6 +95,18 @@ def train(
             help="Tracking loss weight on autopilot targets (0=disabled)",
         ),
     ] = None,
+    use_mode_weights: Annotated[
+        bool | None,
+        cyclopts.Parameter(
+            name="--use-mode-weights",
+            negative="--no-use-mode-weights",
+            negative_none=(),
+            help=(
+                "Override cfg.training.use_mode_weights. When unset (default), "
+                "the YAML value is used; CLI flag wins over YAML."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
     from node_fdm_pipeline.commands.train import run_training
@@ -112,6 +124,7 @@ def train(
         device=device,
         model_name=model_name,
         lambda_tracking=lambda_tracking,
+        use_mode_weights=use_mode_weights,
     )
 
 
@@ -185,6 +198,18 @@ def resume(
             help="Aircraft typecode (overrides parsing from model dir name)",
         ),
     ] = None,
+    use_mode_weights: Annotated[
+        bool | None,
+        cyclopts.Parameter(
+            name="--use-mode-weights",
+            negative="--no-use-mode-weights",
+            negative_none=(),
+            help=(
+                "Override cfg.training.use_mode_weights. When unset (default), "
+                "the YAML value is used; CLI flag wins over YAML."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Resume training from an existing model checkpoint."""
     from node_fdm_pipeline.commands.resume import run_resume
@@ -204,6 +229,7 @@ def resume(
         lambda_tracking=lambda_tracking,
         reset_loss=reset_loss,
         typecode=typecode,
+        use_mode_weights=use_mode_weights,
     )
 
 

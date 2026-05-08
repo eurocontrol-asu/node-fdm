@@ -23,6 +23,7 @@ __all__ = [
     "PreprocessConfig",
     "SelectedParamConfig",
     "TasFilterConfig",
+    "TrainingPipelineConfig",
     "VzFilterConfig",
 ]
 
@@ -293,6 +294,18 @@ class SelectedParamConfig(BaseModel, frozen=True):
     mach_min_value: float = 0.5
 
 
+class TrainingPipelineConfig(BaseModel, frozen=True):
+    """Training-time pipeline knobs forwarded to ``node_fdm.trainer.TrainingConfig``.
+
+    Currently exposes the mode-rebalancing toggle (``use_mode_weights``).
+    The ``fdm train`` and ``fdm resume`` CLIs accept a runtime override
+    flag (``--use-mode-weights / --no-use-mode-weights``); when unset the
+    value here is used. Default ``False`` preserves pre-ticket numerics.
+    """
+
+    use_mode_weights: bool = False
+
+
 class PipelineConfig(BaseModel, frozen=True):
     """Root configuration model — replaces raw YAML dict access.
 
@@ -313,6 +326,7 @@ class PipelineConfig(BaseModel, frozen=True):
     selected_params: SelectedParamConfig = SelectedParamConfig()
     clean_speeds: CleanSpeedsConfig = CleanSpeedsConfig()
     lateral_detection: LateralDetectionConfig = LateralDetectionConfig()
+    training: TrainingPipelineConfig = TrainingPipelineConfig()
 
     @field_validator("typecodes", mode="before")
     @classmethod

@@ -36,12 +36,14 @@ from typing import Any
 
 import polars as pl
 import structlog
+import torch
 
 __all__ = [
     "attach_sample_weights",
     "auto_beta",
     "boot_mode_weights",
     "compute_mode_weights",
+    "compute_segment_weights",
     "cui_beta",
 ]
 
@@ -51,6 +53,22 @@ _BETA_LO = 0.99
 _BETA_HI = 0.9999
 _LABEL_COL = "fdm_mode_label"
 _WEIGHT_COL = "fdm_train_weight"
+
+
+def compute_segment_weights(weights_per_sample: torch.Tensor) -> torch.Tensor:
+    """Aggregate per-sample weights into per-segment weights via mean.
+
+    The spec requires arithmetic mean over the time axis (not majority
+    vote, not ``any``) so that 50/50 batches resolve to the average of
+    both modes' weights.
+
+    Args:
+        weights_per_sample: Tensor of shape ``(batch, seq_len)``.
+
+    Returns:
+        Tensor of shape ``(batch,)`` with one weight per segment.
+    """
+    return weights_per_sample.mean(dim=-1)
 
 
 def auto_beta(counts: dict[str, int]) -> float:

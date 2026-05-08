@@ -31,6 +31,7 @@ class _Overrides:
     method: str | None = None
     model_name: str | None = None
     lambda_tracking: float | None = None
+    use_mode_weights: bool | None = None
 
 
 def _load_meta(model: Path) -> Any:
@@ -79,12 +80,21 @@ def _load_data(delta_table: Path, typecode_suffix: str) -> pl.DataFrame:
     return data_df
 
 
-def _build_training_config(meta: Any, model_name: str, ov: _Overrides) -> Any:
+def _build_training_config(
+    meta: Any,
+    model_name: str,
+    ov: _Overrides,
+    *,
+    cfg_use_mode_weights: bool = False,
+) -> Any:
     """Build a TrainingConfig from saved meta values overlaid with CLI overrides."""
     from node_fdm.trainer import TrainingConfig
 
     effective_seq_len = ov.seq_len or meta.seq_len
     effective_shift = ov.shift or effective_seq_len
+    use_mode_weights = (
+        ov.use_mode_weights if ov.use_mode_weights is not None else cfg_use_mode_weights
+    )
     return TrainingConfig(
         architecture_name=meta.architecture_name,
         model_name=model_name,
@@ -106,6 +116,7 @@ def _build_training_config(meta: Any, model_name: str, ov: _Overrides) -> Any:
             "era_tas_ms": 1.02e-1,
         },
         eta_min=1e-5,
+        use_mode_weights=use_mode_weights,
     )
 
 
@@ -125,6 +136,7 @@ def run_resume(
     lambda_tracking: float | None = None,
     reset_loss: bool = False,
     typecode: str | None = None,
+    use_mode_weights: bool | None = None,
 ) -> None:
     """Resume training from a saved model checkpoint."""
     from node_fdm.loader import get_train_val_data
@@ -148,8 +160,11 @@ def run_resume(
         method=method,
         model_name=model_name,
         lambda_tracking=lambda_tracking,
+        use_mode_weights=use_mode_weights,
     )
-    training_config = _build_training_config(meta, model.name, overrides)
+    training_config = _build_training_config(
+        meta, model.name, overrides, cfg_use_mode_weights=cfg.training.use_mode_weights
+    )
 
     dx_col_names = [col for _, col in info.dx_cols]
     train_ds, val_ds = get_train_val_data(
@@ -183,6 +198,7 @@ def run_resume(
         val_dataset=val_ds,
         model_dir=models_dir,
         device=device,
+        train_df=data_df if training_config.use_mode_weights else None,
     )
     trainer.load_model_weights(reset_loss=reset_loss)
     trainer.load_optimizer_state()
