@@ -58,12 +58,6 @@ R_EARTH_M: float = 6_371_000.0
 _SAVGOL_WINDOW: int = 9
 _SAVGOL_POLY: int = 3
 _PEAK_DISTANCE: int = 10
-_DEFAULT_THRESHOLD: float = 0.05
-_DEFAULT_NOISE_FLOOR: float = 0.005
-_DEFAULT_RATE_THRESHOLD: float = 0.05
-_BILAT_SIGMA_S: float = 8.0
-_BILAT_SIGMA_R: float = 0.01
-_BILAT_PASSES: int = 2
 _HALF_TURN_DEG: float = 180.0
 _FULL_TURN_DEG: float = 360.0
 
@@ -97,11 +91,14 @@ def orthodromic_bearing(
 # ---------------------------------------------------------------------------
 
 
-def detect_turn_intervals(
+def detect_turn_intervals(  # noqa: PLR0913
     track_deg: npt.NDArray[np.floating[Any]],
     *,
     dt: float = 4.0,
-    rate_threshold: float = _DEFAULT_RATE_THRESHOLD,
+    rate_threshold: float = 0.05,
+    bilateral_sigma_s: float = 8.0,
+    bilateral_sigma_r: float = 0.01,
+    bilateral_passes: int = 2,
 ) -> tuple[
     npt.NDArray[np.intp],
     npt.NDArray[np.intp],
@@ -148,8 +145,8 @@ def detect_turn_intervals(
     abs_rate = np.abs(d_track / dt)
 
     abs_rate_bilat = abs_rate.copy()
-    for _ in range(_BILAT_PASSES):
-        abs_rate_bilat = bilateral_1d(abs_rate_bilat, _BILAT_SIGMA_S, _BILAT_SIGMA_R)
+    for _ in range(bilateral_passes):
+        abs_rate_bilat = bilateral_1d(abs_rate_bilat, bilateral_sigma_s, bilateral_sigma_r)
 
     peaks, _ = find_peaks(
         abs_rate_bilat,
@@ -211,8 +208,8 @@ def detect_turning_starts(
     track_deg: npt.NDArray[np.floating[Any]],
     *,
     dt: float = 4.0,
-    threshold_deg_per_sec: float = _DEFAULT_THRESHOLD,
-    noise_threshold_deg_per_sec: float = _DEFAULT_NOISE_FLOOR,
+    threshold_deg_per_sec: float = 0.05,
+    noise_threshold_deg_per_sec: float = 0.005,
 ) -> npt.NDArray[np.intp]:
     """Deprecated shim: use :func:`detect_turn_intervals` instead.
 
@@ -292,12 +289,14 @@ def _bfill_then_ffill(arr: npt.NDArray[np.float64]) -> npt.NDArray[np.float64]:
 # ---------------------------------------------------------------------------
 
 
-def augment_lateral(
+def augment_lateral(  # noqa: PLR0913
     df: pl.DataFrame,
     *,
     dt: float = 4.0,
-    threshold_deg_per_sec: float = _DEFAULT_THRESHOLD,
-    noise_threshold_deg_per_sec: float = _DEFAULT_NOISE_FLOOR,
+    rate_threshold: float = 0.05,
+    bilateral_sigma_s: float = 8.0,
+    bilateral_sigma_r: float = 0.01,
+    bilateral_passes: int = 2,
 ) -> pl.DataFrame:
     """Augment a flight DataFrame with a lateral reference track.
 
@@ -320,8 +319,11 @@ def augment_lateral(
             ``longitude``, and ``track`` columns (degrees).  Sampling is
             assumed uniform at ``dt`` seconds.
         dt: Sampling interval in seconds.
-        threshold_deg_per_sec: Peak detection threshold.
-        noise_threshold_deg_per_sec: Backtrack stops below this rate.
+        rate_threshold: Peak detection threshold (deg/s) — see
+            :func:`detect_turn_intervals`.
+        bilateral_sigma_s: Spatial sigma of the bilateral smoother.
+        bilateral_sigma_r: Range sigma of the bilateral smoother.
+        bilateral_passes: Number of bilateral smoothing passes.
 
     Returns:
         DataFrame with the three lateral columns appended.
@@ -341,7 +343,10 @@ def augment_lateral(
     starts, ends, _, _ = detect_turn_intervals(
         track_raw,
         dt=dt,
-        rate_threshold=threshold_deg_per_sec,
+        rate_threshold=rate_threshold,
+        bilateral_sigma_s=bilateral_sigma_s,
+        bilateral_sigma_r=bilateral_sigma_r,
+        bilateral_passes=bilateral_passes,
     )
 
     _, b_idx = segment_bounds(starts, ends, n)

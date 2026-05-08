@@ -42,3 +42,11 @@ bada:
 #     tol: 0.75
 #   vz:
 #     min_abs_value: 75
+
+# V3 turn-detector hyperparameters (AXM-1706). Defaults reproduce the
+# pre-config behaviour bit-for-bit; uncomment to override.
+# lateral_detection:
+#   bilateral_sigma_s: 8.0    # spatial sigma of the bilateral smoother (samples)
+#   bilateral_sigma_r: 0.01   # range sigma of the bilateral smoother (deg/s)
+#   bilateral_passes: 2       # number of bilateral smoothing passes (>= 1)
+#   rate_threshold: 0.05      # peak detection threshold (deg/s)

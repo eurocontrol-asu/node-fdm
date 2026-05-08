@@ -7,6 +7,8 @@ departure/arrival airports.
 
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import numpy as np
 import polars as pl
 
@@ -21,7 +23,25 @@ from node_fdm_data.preprocessing.lateral_state import (
     compute_wind_std,
 )
 
+
+@dataclass(frozen=True, slots=True)
+class LateralDetectionParams:
+    """Lateral turn-detector hyperparameters consumed by ``derive_columns``.
+
+    Boundary type between ``node_fdm_pipeline`` (which owns the canonical
+    Pydantic ``LateralDetectionConfig``) and ``node_fdm_data`` (which has
+    no upstream dependency).  Pipeline-side: build via
+    ``LateralDetectionConfig.to_params()``.
+    """
+
+    bilateral_sigma_s: float = 8.0
+    bilateral_sigma_r: float = 0.01
+    bilateral_passes: int = 2
+    rate_threshold: float = 0.05
+
+
 __all__ = [
+    "LateralDetectionParams",
     "derive_columns",
 ]
 
@@ -33,6 +53,7 @@ def derive_columns(
     df: pl.DataFrame,
     *,
     airport_coords: dict[str, tuple[float, float]] | None = None,
+    lateral_cfg: LateralDetectionParams | None = None,
 ) -> pl.DataFrame:
     """Compute derived physics columns for étape 4.
 
@@ -59,24 +80,34 @@ def derive_columns(
     # TAS source = fdm_tas_from_cas_kt (clean BDS-derived TAS) instead of raw
     # era_tas_kt: keeps fdm_gamma_rad / fdm_long_wind_kt consistent with the
     # speeds produced by the clean-speeds stage.
-    vz_ms = pl.col("raw_vz_ftmin") * FTMIN
-    tas_ms = pl.col("fdm_tas_from_cas_kt") * KT
-    ratio = (vz_ms / tas_ms.clip(lower_bound=1e-6)).clip(-1.0, 1.0)
-
-    df = df.with_columns(
-        ratio.arcsin().alias("fdm_gamma_rad"),
-        (pl.col("fdm_tas_from_cas_kt") - pl.col("raw_gs_kt")).alias("fdm_long_wind_kt"),
-        (pl.col("bds_mcp_alt_sel_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
-    )
+    cols = set(df.columns)
+    long_inputs = {
+        "raw_vz_ftmin",
+        "fdm_tas_from_cas_kt",
+        "raw_gs_kt",
+        "bds_mcp_alt_sel_ft",
+        "raw_alt_ft",
+    }
+    if long_inputs.issubset(cols):
+        vz_ms = pl.col("raw_vz_ftmin") * FTMIN
+        tas_ms = pl.col("fdm_tas_from_cas_kt") * KT
+        ratio = (vz_ms / tas_ms.clip(lower_bound=1e-6)).clip(-1.0, 1.0)
+        df = df.with_columns(
+            ratio.arcsin().alias("fdm_gamma_rad"),
+            (pl.col("fdm_tas_from_cas_kt") - pl.col("raw_gs_kt")).alias("fdm_long_wind_kt"),
+            (pl.col("bds_mcp_alt_sel_ft") - pl.col("raw_alt_ft")).alias("fdm_alt_diff_ft"),
+        )
 
     # --- Cumulative distance (per flight) ---
-    df = _cumulative_distance_per_flight(df)
+    if {"raw_lat_deg", "raw_lon_deg", "meta_flight_id"}.issubset(cols):
+        df = _cumulative_distance_per_flight(df)
 
     # --- Airport distances ---
-    df = _airport_distances(df, airport_coords)
+    if {"raw_lat_deg", "raw_lon_deg"}.issubset(cols):
+        df = _airport_distances(df, airport_coords)
 
     # --- Lateral channel columns (per flight) ---
-    df = _augment_lateral_per_flight(df)
+    df = _augment_lateral_per_flight(df, lateral_cfg=lateral_cfg)
 
     return df
 
@@ -154,13 +185,39 @@ def _airport_distances(
     return df
 
 
-def _augment_lateral_per_flight(df: pl.DataFrame) -> pl.DataFrame:
+def _call_augment_lateral(
+    df: pl.DataFrame, lateral_cfg: LateralDetectionParams | None
+) -> pl.DataFrame:
+    """Invoke ``augment_lateral`` with hyperparameters from ``lateral_cfg``.
+
+    When ``lateral_cfg`` is ``None``, the module-level defaults of
+    ``augment_lateral`` are used (bit-identical to pre-AXM-1706 behaviour).
+    """
+    cfg = lateral_cfg or LateralDetectionParams()
+    return augment_lateral(
+        df,
+        rate_threshold=cfg.rate_threshold,
+        bilateral_sigma_s=cfg.bilateral_sigma_s,
+        bilateral_sigma_r=cfg.bilateral_sigma_r,
+        bilateral_passes=cfg.bilateral_passes,
+    )
+
+
+def _augment_lateral_per_flight(
+    df: pl.DataFrame,
+    *,
+    lateral_cfg: LateralDetectionParams | None = None,
+) -> pl.DataFrame:
     """Add lateral-channel columns (``fdm_heading_*``, ``track_ortho``, ...).
 
     Operates per ``meta_flight_id`` (turn detection and reference track
     are inherently per-flight) and concatenates results.  When BDS heading
     or wind data are missing, ``fdm_heading_known`` is set to False and
     the heading falls back to NaN.
+
+    If only the bare lateral inputs (``latitude``, ``longitude``, ``track``)
+    are present, the function still computes the three lateral columns
+    (``fdm_in_turn``, ``fdm_track_ortho_deg``, ``fdm_track_sel_known``).
     """
     needed = {
         "raw_track_deg",
@@ -174,22 +231,7 @@ def _augment_lateral_per_flight(df: pl.DataFrame) -> pl.DataFrame:
     }
     missing = needed - set(df.columns)
     if missing:
-        # Fall back to NaN/False columns so the downstream schema does not
-        # break.  Practical case: very early pipeline stages without full ERA
-        # enrichment (caller is expected to ensure all columns are present).
-        return df.with_columns(
-            pl.lit(None, dtype=pl.Float64).alias("fdm_track_clean_deg"),
-            pl.lit(None, dtype=pl.Float64).alias("fdm_declination_deg"),
-            pl.lit(None, dtype=pl.Float64).alias("fdm_drift_deg"),
-            pl.lit(None, dtype=pl.Float64).alias("fdm_wind_std_ms"),
-            pl.lit(None, dtype=pl.Float64).alias("fdm_heading_deg"),
-            pl.lit(None, dtype=pl.Float64).alias("fdm_heading_target_deg"),
-            pl.lit(False).alias("fdm_heading_known"),
-            pl.lit(False).alias("fdm_heading_target_known"),
-            pl.lit(True).alias("fdm_in_turn"),
-            pl.lit(None, dtype=pl.Float64).alias("fdm_track_ortho_deg"),
-            pl.lit(False).alias("fdm_track_sel_known"),
-        )
+        return _augment_lateral_minimal(df, lateral_cfg=lateral_cfg)
 
     # Pick a TAS source consistent with the longitudinal channel:
     # fdm_tas_from_cas_kt is the cleaned TAS used by clean-speeds; fallback
@@ -208,7 +250,7 @@ def _augment_lateral_per_flight(df: pl.DataFrame) -> pl.DataFrame:
 
     parts: list[pl.DataFrame] = []
     for (_flight_id,), flight_df in df.group_by("meta_flight_id", maintain_order=True):
-        parts.append(_lateral_columns_for_flight(flight_df))
+        parts.append(_lateral_columns_for_flight(flight_df, lateral_cfg=lateral_cfg))
 
     if not parts:
         return df.drop("_lateral_tas_kt")
@@ -217,7 +259,61 @@ def _augment_lateral_per_flight(df: pl.DataFrame) -> pl.DataFrame:
     return out
 
 
-def _lateral_columns_for_flight(flight: pl.DataFrame) -> pl.DataFrame:
+def _augment_lateral_minimal(
+    df: pl.DataFrame,
+    *,
+    lateral_cfg: LateralDetectionParams | None,
+) -> pl.DataFrame:
+    """Lateral path for inputs without full BDS/ERA enrichment.
+
+    Pads the heading/wind ``fdm_*`` columns with NaN/False (downstream
+    schema invariance).  When the bare lateral inputs (``latitude``,
+    ``longitude``, ``track``) are present, computes ``fdm_in_turn``,
+    ``fdm_track_ortho_deg``, ``fdm_track_sel_known`` per flight; else
+    falls back to ``in_turn=True`` and unknown targets.
+    """
+    has_lateral_inputs = {"latitude", "longitude", "track"}.issubset(df.columns)
+    if not has_lateral_inputs:
+        return df.with_columns(
+            pl.lit(None, dtype=pl.Float64).alias("fdm_track_clean_deg"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_declination_deg"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_drift_deg"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_wind_std_ms"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_heading_deg"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_heading_target_deg"),
+            pl.lit(False).alias("fdm_heading_known"),
+            pl.lit(False).alias("fdm_heading_target_known"),
+            pl.lit(True).alias("fdm_in_turn"),
+            pl.lit(None, dtype=pl.Float64).alias("fdm_track_ortho_deg"),
+            pl.lit(False).alias("fdm_track_sel_known"),
+        )
+
+    group_col = "meta_flight_id" if "meta_flight_id" in df.columns else None
+    if group_col is None:
+        out = _call_augment_lateral(df, lateral_cfg)
+    else:
+        parts = [
+            _call_augment_lateral(flight_df, lateral_cfg)
+            for (_fid,), flight_df in df.group_by(group_col, maintain_order=True)
+        ]
+        out = pl.concat(parts, how="vertical") if parts else df
+    return out.with_columns(
+        pl.lit(None, dtype=pl.Float64).alias("fdm_track_clean_deg"),
+        pl.lit(None, dtype=pl.Float64).alias("fdm_declination_deg"),
+        pl.lit(None, dtype=pl.Float64).alias("fdm_drift_deg"),
+        pl.lit(None, dtype=pl.Float64).alias("fdm_wind_std_ms"),
+        pl.lit(None, dtype=pl.Float64).alias("fdm_heading_deg"),
+        pl.lit(None, dtype=pl.Float64).alias("fdm_heading_target_deg"),
+        pl.lit(False).alias("fdm_heading_known"),
+        pl.lit(False).alias("fdm_heading_target_known"),
+    )
+
+
+def _lateral_columns_for_flight(
+    flight: pl.DataFrame,
+    *,
+    lateral_cfg: LateralDetectionParams | None = None,
+) -> pl.DataFrame:
     """Compute lateral columns for a single flight DataFrame."""
     n = flight.height
     if n == 0:
@@ -234,7 +330,7 @@ def _lateral_columns_for_flight(flight: pl.DataFrame) -> pl.DataFrame:
             "_lateral_tas_kt": "TAS",
         }
     )
-    augmented = augment_lateral(renamed)
+    augmented = _call_augment_lateral(renamed, lateral_cfg)
     in_turn = augmented["fdm_in_turn"].to_numpy()
     track_ortho = augmented["fdm_track_ortho_deg"].to_numpy().astype(np.float64)
     track_sel_known = augmented["fdm_track_sel_known"].to_numpy()

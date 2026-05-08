@@ -5,9 +5,16 @@ from __future__ import annotations
 from pathlib import Path
 
 import pytest
+import yaml
 from pydantic import ValidationError
 
-from node_fdm_pipeline.config import GammaFilterConfig, PathsConfig, SelectedParamConfig
+from node_fdm_pipeline.config import (
+    GammaFilterConfig,
+    LateralDetectionConfig,
+    PathsConfig,
+    PipelineConfig,
+    SelectedParamConfig,
+)
 
 
 class TestPathsConfig:
@@ -78,3 +85,62 @@ class TestSelectedParamConfigUnit:
         assert cfg.alt.min_len == 6
         assert cfg.gamma.tol == 0.002
         assert cfg.gamma.smooth_window == 5
+
+
+class TestLateralDetectionConfigUnit:
+    """Unit tests for LateralDetectionConfig — V3 turn-detector hyperparams."""
+
+    def test_lateral_detection_defaults(self) -> None:
+        """AC1: default field values match the V3 baseline numerics."""
+        cfg = LateralDetectionConfig()
+        assert cfg.bilateral_sigma_s == 8.0
+        assert cfg.bilateral_sigma_r == 0.01
+        assert cfg.bilateral_passes == 2
+        assert cfg.rate_threshold == 0.05
+
+    def test_lateral_detection_negative_rejected(self) -> None:
+        """AC8: negative rate_threshold raises ValidationError mentioning the field."""
+        with pytest.raises(ValidationError) as exc_info:
+            LateralDetectionConfig(rate_threshold=-0.1)
+        assert "rate_threshold" in str(exc_info.value)
+
+    def test_lateral_detection_zero_passes_rejected(self) -> None:
+        """AC8: zero bilateral_passes raises ValidationError (passes >= 1)."""
+        with pytest.raises(ValidationError):
+            LateralDetectionConfig(bilateral_passes=0)
+
+    def test_lateral_detection_zero_sigma_rejected(self) -> None:
+        """AC8: zero bilateral_sigma_s raises ValidationError (must be > 0)."""
+        with pytest.raises(ValidationError):
+            LateralDetectionConfig(bilateral_sigma_s=0.0)
+
+
+class TestPipelineConfigLateralBlock:
+    """Round-trip: PipelineConfig with / without lateral_detection block."""
+
+    @staticmethod
+    def _minimal_yaml(extra: dict[str, object] | None = None) -> dict[str, object]:
+        data: dict[str, object] = {
+            "paths": {"data_dir": "/tmp/data"},
+            "typecodes": ["A320"],
+        }
+        if extra:
+            data.update(extra)
+        return data
+
+    def test_pipeline_config_block_optional(self) -> None:
+        """AC7: omitting lateral_detection yields the documented defaults."""
+        raw = yaml.safe_dump(self._minimal_yaml())
+        cfg = PipelineConfig.model_validate(yaml.safe_load(raw))
+        assert cfg.lateral_detection.rate_threshold == 0.05
+        assert cfg.lateral_detection.bilateral_sigma_s == 8.0
+        assert cfg.lateral_detection.bilateral_sigma_r == 0.01
+        assert cfg.lateral_detection.bilateral_passes == 2
+
+    def test_pipeline_config_block_overrides(self) -> None:
+        """AC7: overriding rate_threshold preserves other defaults."""
+        raw = yaml.safe_dump(self._minimal_yaml({"lateral_detection": {"rate_threshold": 0.10}}))
+        cfg = PipelineConfig.model_validate(yaml.safe_load(raw))
+        assert cfg.lateral_detection.rate_threshold == 0.10
+        assert cfg.lateral_detection.bilateral_sigma_s == 8.0
+        assert cfg.lateral_detection.bilateral_passes == 2

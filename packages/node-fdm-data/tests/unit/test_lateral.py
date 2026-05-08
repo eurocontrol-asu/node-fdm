@@ -537,3 +537,49 @@ def test_augment_lateral_too_short_safe_default() -> None:
     assert len(result) == len(df)
     assert result["fdm_in_turn"].to_numpy().all()
     assert not result["fdm_track_sel_known"].to_numpy().any()
+
+
+# ---------------------------------------------------------------------------
+# AXM-1706: V3 turn-detector hyperparam plumbing
+# ---------------------------------------------------------------------------
+
+
+def test_augment_lateral_kwargs_forwarded() -> None:
+    """AC2: a very high rate_threshold suppresses every detection.
+
+    Proves the kwarg reaches detect_turn_intervals — without forwarding,
+    the module-level default (0.05) would still detect the turns.
+    """
+    df = _make_turning_flight()
+    result = augment_lateral(df, rate_threshold=10.0)
+    assert not result["fdm_in_turn"].to_numpy().any()
+
+
+def test_augment_lateral_default_kwargs_bit_identical() -> None:
+    """AC2: calling with no kwargs equals the pre-AXM-1706 behaviour."""
+    df = _make_turning_flight()
+    a = augment_lateral(df)
+    b = augment_lateral(
+        df,
+        bilateral_sigma_s=8.0,
+        bilateral_sigma_r=0.01,
+        bilateral_passes=2,
+        rate_threshold=0.05,
+    )
+    assert np.array_equal(a["fdm_in_turn"].to_numpy(), b["fdm_in_turn"].to_numpy())
+
+
+def test_detect_turn_intervals_bilateral_passes_kwarg() -> None:
+    """AC3: bilateral_passes is plumbed — different passes → different smoothing."""
+    track = _make_turning_track()
+    _, _, _, bilat_one = detect_turn_intervals(track, bilateral_passes=1)
+    _, _, _, bilat_two = detect_turn_intervals(track, bilateral_passes=2)
+    assert not np.array_equal(bilat_one, bilat_two)
+
+
+def test_detect_turn_intervals_bilateral_sigma_s_kwarg() -> None:
+    """AC3: bilateral_sigma_s is plumbed — sigma changes the smoothed array."""
+    track = _make_turning_track()
+    _, _, _, sm_small = detect_turn_intervals(track, bilateral_sigma_s=2.0)
+    _, _, _, sm_large = detect_turn_intervals(track, bilateral_sigma_s=20.0)
+    assert not np.array_equal(sm_small, sm_large)

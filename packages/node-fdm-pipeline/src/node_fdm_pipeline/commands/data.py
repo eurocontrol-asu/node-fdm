@@ -79,6 +79,8 @@ _BDS_RENAME: dict[str, str] = {
     "TAS": "bds_tas_kt",
     "Mach": "bds_mach",
     "heading": "bds_hdg_deg",
+    "roll": "bds_roll_deg",
+    "track_rate": "bds_track_rate_dps",
 }
 
 # OpenSky raw-cache columns whose dtype varies across (date, icao24) parquets
@@ -1017,6 +1019,13 @@ def derive(
         log.info("derive_dry_run", msg="Config valid, would compute derived columns")
         return
 
+    if not delta_table.exists():
+        # Fallback: typecode-partitioned layout (preprocess_dir/<typecode> ->
+        # process_dir/<typecode>).  Used by light pipelines and the e2e
+        # config-threading harness.
+        _derive_typecode_partitioned(cfg)
+        return
+
     df = read_delta_table(delta_table)
 
     # Drop existing derived columns to allow re-derivation (preserve fdm_flag_*
@@ -1033,7 +1042,11 @@ def derive(
     # Build airport coordinate lookup (soft dependency on traffic)
     airport_coords = _build_airport_coords(df)
 
-    df = derive_columns(df, airport_coords=airport_coords)
+    df = derive_columns(
+        df,
+        airport_coords=airport_coords,
+        lateral_cfg=cfg.lateral_detection.to_params(),
+    )
 
     write_columns(df, delta_table)
 
@@ -1045,6 +1058,32 @@ def derive(
         rows=len(df),
         derived_cols=derived_cols,
     )
+
+
+def _derive_typecode_partitioned(cfg: object) -> None:
+    """Run derive on a typecode-partitioned Delta layout.
+
+    Reads ``preprocess_dir/<typecode>`` for each ``cfg.typecodes`` entry,
+    computes derived columns, and writes the result to
+    ``process_dir/<typecode>``.
+    """
+    import polars as pl
+    from node_fdm_data.preprocessing.derive import derive_columns
+
+    preprocess_root = cfg.paths.resolve("preprocess_dir")  # type: ignore[attr-defined]
+    process_root = cfg.paths.resolve("process_dir")  # type: ignore[attr-defined]
+    process_root.mkdir(parents=True, exist_ok=True)
+
+    for typecode in cfg.typecodes:  # type: ignore[attr-defined]
+        in_path = preprocess_root / typecode
+        if not in_path.exists():
+            log.warning("derive_typecode_missing_input", typecode=typecode, path=str(in_path))
+            continue
+        df = pl.read_delta(str(in_path))
+        df = derive_columns(df, lateral_cfg=cfg.lateral_detection.to_params())  # type: ignore[attr-defined]
+        out_path = process_root / typecode
+        df.write_delta(str(out_path), mode="overwrite")
+        log.info("derive_typecode_done", typecode=typecode, rows=len(df))
 
 
 def clean_speeds(
@@ -1363,6 +1402,8 @@ _BDS_SOURCE_DTYPES: dict[str, str] = {
     "TAS": "Float64",
     "Mach": "Float64",
     "heading": "Float64",
+    "roll": "Float64",
+    "track_rate": "Float64",
 }
 
 

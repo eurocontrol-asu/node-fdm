@@ -5,7 +5,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Literal, Self
 
-from pydantic import BaseModel, field_validator
+from node_fdm_data.preprocessing.derive import LateralDetectionParams
+from pydantic import BaseModel, Field, field_validator
 
 __all__ = [
     "AltFilterConfig",
@@ -15,6 +16,7 @@ __all__ = [
     "ComputingConfig",
     "FlagConfig",
     "GammaFilterConfig",
+    "LateralDetectionConfig",
     "MachFilterConfig",
     "PathsConfig",
     "PipelineConfig",
@@ -244,6 +246,30 @@ class FlagConfig(BaseModel, frozen=True):
     distance_upper_thr: float = 3000.0
 
 
+class LateralDetectionConfig(BaseModel, frozen=True):
+    """V3 turn-detector hyperparameters (AXM-1706).
+
+    Forwarded to ``node_fdm_data.lateral.detect_turn_intervals`` and
+    ``node_fdm_data.lateral.augment_lateral`` via the ``derive`` stage.
+    Defaults match the V3 numerics established by AXM-1704 / AXM-1705 —
+    omitting the block keeps behaviour bit-identical.
+    """
+
+    bilateral_sigma_s: float = Field(default=8.0, gt=0.0)
+    bilateral_sigma_r: float = Field(default=0.01, gt=0.0)
+    bilateral_passes: int = Field(default=2, ge=1)
+    rate_threshold: float = Field(default=0.05, gt=0.0)
+
+    def to_params(self) -> LateralDetectionParams:
+        """Convert to the boundary type consumed by ``derive_columns``."""
+        return LateralDetectionParams(
+            bilateral_sigma_s=self.bilateral_sigma_s,
+            bilateral_sigma_r=self.bilateral_sigma_r,
+            bilateral_passes=self.bilateral_passes,
+            rate_threshold=self.rate_threshold,
+        )
+
+
 class SelectedParamConfig(BaseModel, frozen=True):
     """Selected-parameter filter configuration.
 
@@ -287,6 +313,7 @@ class PipelineConfig(BaseModel, frozen=True):
     flag: FlagConfig = FlagConfig()
     selected_params: SelectedParamConfig = SelectedParamConfig()
     clean_speeds: CleanSpeedsConfig = CleanSpeedsConfig()
+    lateral_detection: LateralDetectionConfig = LateralDetectionConfig()
 
     @field_validator("typecodes", mode="before")
     @classmethod
