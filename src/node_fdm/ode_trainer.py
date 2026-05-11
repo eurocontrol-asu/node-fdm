@@ -439,7 +439,7 @@ class ODETrainer:
             )
 
             print(
-                f"Epoch {epoch+1}/{epochs} | train loss: {avg_train_loss:.5f} | val loss: {avg_val_loss:.5f}"
+                f"Epoch {epoch + 1}/{epochs} | train loss: {avg_train_loss:.5f} | val loss: {avg_val_loss:.5f}"
             )
 
             # --- SAVE BEST MODEL ---

@@ -76,7 +76,7 @@ def split_by_icao_counts(
     df["filepath"] = df["file"].apply(lambda f: str(output_dir_path / f))
 
     print(
-        f"{output_dir_path.name}: test={len(df[df.split=='test'])}, val={len(df[df.split=='val'])}, train={len(df[df.split=='train'])}"
+        f"{output_dir_path.name}: test={len(df[df.split == 'test'])}, val={len(df[df.split == 'val'])}, train={len(df[df.split == 'train'])}"
     )
 
     return df[["filepath", "aircraft_type", "split"]]
