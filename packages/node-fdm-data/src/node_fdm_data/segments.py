@@ -807,16 +807,9 @@ def _build_tas_target(df: pl.DataFrame, alt_arr: np.ndarray) -> pl.DataFrame:
         target[gap] = sel[gap]
 
     known = ~np.isnan(target)
-    df = df.with_columns(
+    return df.with_columns(
         pl.Series("fdm_tas_target_kt", target),
         pl.Series("fdm_tas_target_known", known),
-    )
-    return df.with_columns(
-        pl.col("fdm_tas_target_kt")
-        .fill_nan(None)
-        .forward_fill()
-        .backward_fill()
-        .fill_null(pl.lit(float("nan")))
     )
 
 

@@ -359,6 +359,13 @@ def augment_lateral(  # noqa: PLR0913
 
     ortho_rad = orthodromic_bearing(phi_c, lam_c, phi_b, lam_b)
     ortho_deg = np.degrees(ortho_rad)
+    # Degenerate bearing: when the current sample sits at (or extremely close to)
+    # its target B, atan2(0, 0) returns 0 — a spurious "north" target. ADS-B
+    # repeats and stalled positions trigger this, polluting fdm_heading_target.
+    # Mark these samples NaN so bfill/ffill recovers them from neighbouring valid
+    # bearings instead of propagating 0°.
+    same_pos = np.isclose(phi_c, phi_b, atol=1e-9) & np.isclose(lam_c, lam_b, atol=1e-9)
+    ortho_deg[same_pos] = np.nan
     ortho_deg[in_turn] = np.nan
     ortho_deg = _bfill_then_ffill(ortho_deg)
 

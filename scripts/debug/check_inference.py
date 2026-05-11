@@ -18,6 +18,7 @@ Output: ``data/figures/inference_check_{flight_id}.png``.
 
 from __future__ import annotations
 
+import os
 import sys
 from pathlib import Path
 
@@ -41,7 +42,10 @@ info = resolve_architecture(ARCH)
 # --- Load model ---
 # Usage: python check_inference.py [flight_id] [model_name]
 # Default model_name = f"{info.name}_A320"
-cli_model_name = sys.argv[2] if len(sys.argv) > 2 else f"{info.name}_A320"
+cli_model_name = (
+    sys.argv[2] if len(sys.argv) > 2
+    else os.environ.get("CHECK_INFERENCE_MODEL", f"{info.name}_A320")
+)
 model_path = MODEL_DIR / cli_model_name
 if not model_path.exists():
     raise SystemExit(f"Model not found at {model_path}")
@@ -50,16 +54,79 @@ print(f"Model: {cli_model_name}")
 predictor = NodeFDMPredictor(model_path=model_path, device="cpu")
 
 # --- Load a test flight ---
-df = pl.read_delta(str(DELTA_PATH))
-df = df.filter(pl.col("fdm_flag_valid"))
+# NOTE: do NOT pre-filter on fdm_flag_valid — keep the full timeline so gaps and
+# invalid rows remain visible. The predictor needs finite contiguous arrays, but
+# the targets are bfilled (alt) / handled by *_known masks (gamma, tas) and the
+# `_sel` columns are NaN→0-filled below, so the full row set works directly.
+df = pl.read_delta(str(DELTA_PATH)).sort("meta_flight_id", "raw_timestamp")
 
 # Fill NaN on _sel columns (match training)
-sel_cols = [c for c in df.columns if c.startswith("fdm_") and "_sel" in c]
+sel_cols = [
+    c
+    for c in df.columns
+    if c.startswith("fdm_") and "_sel" in c and df.schema[c].is_numeric()
+]
 if sel_cols:
     df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])
 
-# Pick a flight from val split
-val_df = df.filter(pl.col("meta_split") == "val")
+# Fill rules for U_COLS so the predictor never sees NaN in inputs/targets even
+# on rows where fdm_flag_valid=False:
+#   - fdm_alt_target_m       → backward/forward fill (continuous trajectory target)
+#   - fdm_*_target_rad / _ms → fill 0 (gated off by *_known mask)
+#   - fdm_*_target_known     → fill 0 / False (treat unknown as "no target")
+df = df.with_columns(
+    [
+        pl.col("fdm_alt_target_m")
+        .fill_null(strategy="backward")
+        .fill_null(strategy="forward"),
+        pl.col("fdm_gamma_target_rad").fill_nan(0.0).fill_null(0.0),
+        pl.col("fdm_tas_target_ms").fill_nan(0.0).fill_null(0.0),
+        # heading target: ffill+bfill within each flight so the lateral head
+        # always has a smooth target through originally-unknown segments
+        # (in-turn, head/tail). Combined with heading_target_known forced to
+        # True below, the model gets a continuous correction signal and stops
+        # drifting freely on those segments.
+        pl.col("fdm_heading_target_rad")
+        .fill_nan(None)
+        .fill_null(strategy="forward")
+        .over("meta_flight_id")
+        .fill_null(strategy="backward")
+        .over("meta_flight_id"),
+        pl.col("fdm_gamma_target_known").fill_nan(0.0).fill_null(0.0),
+        pl.col("fdm_tas_target_known").fill_null(False),
+        # Force heading_target_known=True after the ffill above so the lateral
+        # head always has a signal (otherwise heading drifts freely on unknown
+        # segments — turns, head/tail — even though the ffilled target is sane).
+        pl.lit(True).alias("fdm_heading_target_known"),
+    ]
+)
+
+# ffill+bfill on state (raw_*, era_*, fdm_*_rad) and exo (era_*) numerical
+# columns so the predictor sees a continuous timeline. We do this ONLY here in
+# the inference debug script — the pipeline never modifies x_cols this way.
+_state_exo_cols = [
+    c
+    for c in df.columns
+    if (c.startswith("raw_") or c.startswith("era_") or c.startswith("fdm_"))
+    and df.schema[c].is_numeric()
+]
+df = df.with_columns(
+    [
+        pl.col(c)
+        .fill_nan(None)
+        .fill_null(strategy="forward")
+        .over("meta_flight_id")
+        .fill_null(strategy="backward")
+        .over("meta_flight_id")
+        for c in _state_exo_cols
+    ]
+)
+
+## Pick a flight from val or test split (use only valid rows to build the candidate set,
+# but keep the FULL row set per flight downstream so plots show the entire timeline).
+val_df = df.filter(
+    pl.col("meta_split").is_in(["val", "test"]) & pl.col("fdm_flag_valid")
+)
 flight_ids = val_df["meta_flight_id"].unique().sort().to_list()
 
 if not flight_ids:
@@ -73,60 +140,103 @@ if cli_fid is not None:
     best_fid = cli_fid
     best_len = val_df.filter(pl.col("meta_flight_id") == best_fid).shape[0]
 else:
-    # Default: pick the longest flight from the first 20
-    best_fid = None
-    best_len = 0
-    for fid in flight_ids[:20]:
-        n = val_df.filter(pl.col("meta_flight_id") == fid).shape[0]
-        if n > best_len:
-            best_len = n
-            best_fid = fid
+    # Default: pick a random flight from the val/test split.
+    import random
+    seed_env = os.environ.get("CHECK_INFERENCE_SEED")
+    if seed_env is not None:
+        random.seed(int(seed_env))
+    best_fid = random.choice(flight_ids)
+    best_len = val_df.filter(pl.col("meta_flight_id") == best_fid).shape[0]
 
 print(f"Flight: {best_fid} ({best_len} timesteps, {best_len * STEP_S / 60:.0f} min)")
 
-flight_df = val_df.filter(pl.col("meta_flight_id") == best_fid).sort("raw_timestamp")
+# Pull the FULL row set, then TRIM head/tail. fdm_flag_crop_start/end is based
+# only on temporal jumps and misses leading/trailing NaN-filled rows produced by
+# the resampler (e.g. when the flight starts before useful ADS-B coverage). We
+# trim from each end up to the first/last row that has both a valid raw_alt_ft
+# AND raw_gs_kt above min_speed_kt — equivalent to combining
+# fdm_flag_crop_* with fdm_flag_min_speed at the endpoints only (mid-flight
+# rows are NEVER dropped here, so anomalies stay visible).
+MIN_SPEED_KT = 50.0
+# Compute trim window on the RAW (pre-fill) delta so leading/trailing NaN rows
+# from the resampler are visible — once we apply ffill/bfill above, those NaN
+# are propagated away and we can no longer detect the original useful range.
+_raw = (
+    pl.read_delta(str(DELTA_PATH))
+    .filter(pl.col("meta_flight_id") == best_fid)
+    .sort("raw_timestamp")
+)
+_ok = (
+    _raw["raw_alt_ft"].is_not_null()
+    & _raw["raw_alt_ft"].is_not_nan()
+    & _raw["raw_gs_kt"].is_not_null()
+    & _raw["raw_gs_kt"].is_not_nan()
+    & (_raw["raw_gs_kt"] > MIN_SPEED_KT)
+).to_numpy()
+_idx = np.where(_ok)[0]
+if len(_idx) == 0:
+    raise SystemExit(f"No usable row for flight {best_fid}")
+trim_start, trim_end = int(_idx[0]), int(_idx[-1])
+flight_df_full = df.filter(pl.col("meta_flight_id") == best_fid).sort("raw_timestamp")
+flight_df = flight_df_full.slice(trim_start, trim_end - trim_start + 1)
+print(
+    f"Full rows: {flight_df_full.height}  trimmed to [{trim_start},{trim_end}] → "
+    f"{flight_df.height} ({flight_df.height * STEP_S / 60:.1f} min)"
+)
 
-# --- Extract arrays ---
+# --- Extract arrays for the predictor (cropped row set, fill rules applied above) ---
 x_arr = flight_df.select(info.x_cols).to_numpy().astype(np.float32)
 u_arr_raw = flight_df.select(info.u_cols).to_numpy().astype(np.float32)
 e_arr = flight_df.select(info.e0_cols).to_numpy().astype(np.float32)
 
-# Extract known mask before any transformation
 gamma_known_idx = info.u_cols.index("fdm_gamma_target_known")
 gamma_known = u_arr_raw[:, gamma_known_idx].copy()
-
-# u_arr is already NaN-free (segments.py fills NaN→0, known mask carries the info)
 u_arr = u_arr_raw
 
-finite_mask = (
-    np.isfinite(x_arr).all(axis=1)
-    & np.isfinite(e_arr).all(axis=1)
+# After ffill+bfill above, x/u/e should be NaN-free; assert.
+nan_inside = int(
+    (
+        ~(
+            np.isfinite(x_arr).all(axis=1)
+            & np.isfinite(u_arr).all(axis=1)
+            & np.isfinite(e_arr).all(axis=1)
+        )
+    ).sum()
 )
-print(f"Finite rows: {finite_mask.sum()}/{len(finite_mask)}")
-
-x_arr = x_arr[finite_mask]
-u_arr = u_arr[finite_mask]
-e_arr = e_arr[finite_mask]
-gamma_known = gamma_known[finite_mask]
+print(f"NaN remaining inside crop: {nan_inside}")
+if nan_inside:
+    raise SystemExit(
+        f"NaN still present in {nan_inside} rows after ffill/bfill — investigate."
+    )
 
 x0 = x_arr[0]
+
+# Timestamps for predicted curves (= same grid as true/target now).
+ts_full = flight_df["raw_timestamp"].to_numpy()
+t0_ts = ts_full[0]
+time_pred_full = (ts_full - t0_ts).astype("timedelta64[s]").astype(float) / 60.0
 
 # --- Predict ---
 predictions = predictor.predict_flight(x0, u_arr, e_arr)
 print(f"Prediction length: {len(list(predictions.values())[0])} steps")
 
 # --- Time axes ---
-time_true = np.arange(len(x_arr)) * STEP_S / 60  # minutes
-time_pred = np.arange(len(list(predictions.values())[0])) * STEP_S / 60
+# `time_true` covers the FULL flight (incl. invalid rows) → reveals gaps & outliers.
+# `time_pred` covers only the valid+finite subset fed to the predictor.
+time_true = (ts_full - t0_ts).astype("timedelta64[s]").astype(float) / 60.0
+time_pred = time_pred_full[: len(list(predictions.values())[0])]
 
-# --- Extract state variables ---
+# --- Extract TRUE state from flight_df (full timeline) ---
+x_full = flight_df.select(info.x_cols).to_numpy().astype(np.float32)
+u_full = flight_df.select(info.u_cols).to_numpy().astype(np.float32)
+
 alt_idx = info.x_cols.index("raw_alt_m")
 tas_idx = info.x_cols.index("era_tas_ms")
 gamma_idx = info.x_cols.index("fdm_gamma_rad")
 
-alt_true = x_arr[:, alt_idx]
-tas_true = x_arr[:, tas_idx]
-gamma_true = x_arr[:, gamma_idx]
+alt_true = x_full[:, alt_idx]
+tas_true = x_full[:, tas_idx]
+gamma_true = x_full[:, gamma_idx]
 
 alt_pred = predictions["raw_alt_m"]
 tas_pred = predictions["era_tas_ms"]
@@ -140,25 +250,25 @@ heading_target: np.ndarray | None = None
 heading_target_known: np.ndarray | None = None
 if HAS_LATERAL:
     heading_idx = info.x_cols.index("fdm_heading_rad")
-    heading_true = x_arr[:, heading_idx]
+    heading_true = x_full[:, heading_idx]
     heading_pred = predictions["fdm_heading_rad"]
 
     h_target_idx = info.u_cols.index("fdm_heading_target_rad")
     h_known_idx = info.u_cols.index("fdm_heading_target_known")
-    heading_target = u_arr[:, h_target_idx]
-    heading_target_known = u_arr[:, h_known_idx]
+    heading_target = u_full[:, h_target_idx]
+    heading_target_known = u_full[:, h_known_idx]
 
-# --- Extract targets from U_COLS ---
+# --- Extract targets from U_COLS (full timeline) ---
 alt_target_idx = info.u_cols.index("fdm_alt_target_m")
 tas_target_idx = info.u_cols.index("fdm_tas_target_ms")
 gamma_target_idx = info.u_cols.index("fdm_gamma_target_rad")
 
-alt_target = u_arr[:, alt_target_idx]
-tas_target = u_arr[:, tas_target_idx]
-# gamma_diff = known * (target - gamma), 0 when unknown
-gamma_target_raw = u_arr[:, gamma_target_idx]
-gamma_target_effective = np.where(gamma_known == 1.0, gamma_target_raw, 0.0)
-gamma_target = np.where(gamma_known == 1.0, gamma_target_raw, np.nan)  # gaps where unknown
+alt_target = u_full[:, alt_target_idx]
+tas_target = u_full[:, tas_target_idx]
+
+gamma_known_full = u_full[:, info.u_cols.index("fdm_gamma_target_known")]
+gamma_target_raw_full = u_full[:, gamma_target_idx]
+gamma_target = np.where(gamma_known_full == 1.0, gamma_target_raw_full, np.nan)
 n_pred = len(gamma_pred)
 
 # Stats for display
@@ -187,7 +297,7 @@ extra_cols = [
 ]
 if HAS_LATERAL:
     extra_cols += ["raw_lat_deg", "raw_lon_deg", "fdm_in_turn"]
-extra = flight_df.select(extra_cols).to_numpy().astype(np.float32)[finite_mask]
+extra = flight_df.select(extra_cols).to_numpy().astype(np.float32)
 
 mach_true = extra[:, 0]
 mach_sel = extra[:, 1]  # NaN outside detected segments
@@ -216,6 +326,7 @@ tas_unknown = tas_known == 0.0
 # Use real temperature (era_temp_K) so the round-trip TAS→CAS via real T closes
 # back onto bds_ias_ms; otherwise an ISA-only conversion biases CAS by ~2 m/s
 # at FL350 because era_tas_ms itself was derived via cas_to_tas_real (real T).
+# flight_df is now cropped; temp_true and predicted curves share the same grid.
 mach_pred = tas_pred / np.sqrt(GAMMA_AIR * R * temp_true)
 cas_pred = tas_to_cas_real(tas_pred, alt_pred, temp_true)
 vz_pred = tas_pred * np.sin(gamma_pred)
@@ -347,7 +458,7 @@ ax = axes[1, 1]
 ax.plot(time_true, np.degrees(gamma_true), "k-", lw=0.8, label="True", alpha=0.5)
 ax.plot(time_pred, np.degrees(gamma_pred), "r--", lw=1.2, label="Predicted", alpha=0.8)
 ax.plot(time_true, np.degrees(gamma_target), "b-", lw=3.0, label="γ target (known)", alpha=0.9)
-unknown_mask = gamma_known == 0.0
+unknown_mask = gamma_known_full == 0.0
 if unknown_mask.any():
     ax.fill_between(
         time_true,

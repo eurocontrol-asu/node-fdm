@@ -81,7 +81,7 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
         model_params=(3, 2, 48),
         step=4.0,
         shift=ov.shift or effective_seq_len,
-        lr=ov.lr or 1e-3,
+        lr=ov.lr or 5e-4,
         weight_decay=1e-4,
         seq_len=effective_seq_len,
         batch_size=ov.batch_size or 512,

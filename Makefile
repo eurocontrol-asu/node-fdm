@@ -69,7 +69,7 @@ END_DATE     ?= 2025-09-08
 ## Note: `download` auto-chains `decode` (raw cache → Delta) by default,
 ## so the `decode` target is not listed here. Invoke `make decode` standalone
 ## to rebuild `data/flights.delta` from the existing `data/raw/` cache.
-pipeline: clean-data aircraft download identify preprocess flag enrich clean-speeds derive label-modes segments convert split
+pipeline: clean-data aircraft download identify preprocess flag enrich clean-speeds derive segments label-modes convert split
 
 ## Remove Delta table, aircraft CSV, and preprocessed parquet
 ## (the system-owned `data/raw/` cache is preserved — `rm -rf data/raw/` to wipe it)

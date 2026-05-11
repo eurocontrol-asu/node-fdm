@@ -1371,10 +1371,15 @@ def segments(
 
     # Segment detection is per-flight (row-iterative). The detector is run
     # on rows passing ``fdm_flag_valid`` only; invalid-row outputs are
-    # NaN-merged back so the Delta row count is preserved.
+    # NaN-merged back so the Delta row count is preserved. Each partition
+    # is re-sorted by raw_timestamp because partition_by(..., maintain_order=True)
+    # only preserves group order, not row order WITHIN a group — Delta storage
+    # may interleave rows from multiple batch files. Without this sort the
+    # last-point anchor in `_anchored_target` lands on the wrong row.
     flights = df.partition_by("meta_flight_id", maintain_order=True)
     processed: list[pl.DataFrame] = []
     for flight_df in flights:
+        flight_df = flight_df.sort("raw_timestamp")
         flight_df = _build_selected_params_with_valid_filter(flight_df, sel_config)
         processed.append(flight_df)
 
