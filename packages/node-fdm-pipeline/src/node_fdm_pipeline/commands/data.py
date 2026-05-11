@@ -208,10 +208,9 @@ def aircraft_list(
         airline=pl.col("callsign").str.slice(0, 3).str.strip_chars()
     )
 
-    # Sample up to N distinct aircraft (icao24) per typecode, age must be known
+    # Sample up to N distinct aircraft (icao24) per typecode
     sampled = (
         ext.filter(pl.col("typecode").is_in(cfg.typecodes))
-        .filter(pl.col("age_years").is_not_null() & (pl.col("age_years") >= 0))
         .unique(subset=["icao24"], keep="first")
         .group_by("typecode")
         .map_groups(lambda g: g.sample(n=min(sample_size, len(g)), seed=42))
