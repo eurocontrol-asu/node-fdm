@@ -14,7 +14,6 @@ from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
-import polars as pl
 import structlog
 import torch
 import torch.nn as nn
@@ -33,7 +32,7 @@ from node_fdm.models.projected_integrator import (
     ClampedRK4,
     _clamp_columns,
 )
-from node_fdm.training.weighting import boot_mode_weights, compute_segment_weights
+from node_fdm.training.weighting import compute_segment_weights
 
 __all__ = [
     "ODETrainer",
@@ -136,17 +135,16 @@ class ODETrainer:
 
     Args:
         config: Training configuration.
-        train_dataset: Training dataset.
+        train_dataset: Training dataset. When ``config.use_mode_weights`` is
+            true, the caller is responsible for enriching the source
+            DataFrame with ``fdm_train_weight`` (via
+            :func:`node_fdm.training.weighting.boot_mode_weights`) **before**
+            building the dataset, so each :class:`FlightSample` carries its
+            per-timestep weight tensor ``w``.
         val_dataset: Validation dataset.
         model_dir: Base directory for checkpoints and metadata.
         callbacks: Optional list of training callbacks.
         device: Torch device string.
-        train_df: Optional in-RAM training DataFrame. When paired with
-            ``config.use_mode_weights=True``, the trainer computes per-label
-            effective-number weights from ``fdm_mode_label`` and stores the
-            DataFrame plus the new ``fdm_train_weight`` column on
-            ``self.train_df``. Val/test splits and any persisted Delta are
-            untouched.
     """
 
     def __init__(
@@ -157,13 +155,9 @@ class ODETrainer:
         model_dir: Path,
         callbacks: Sequence[TrainingCallback] | None = None,
         device: str = "cpu",
-        train_df: pl.DataFrame | None = None,
     ) -> None:
         self.config = config
         self.device = torch.device(device)
-        self.train_df: pl.DataFrame | None = train_df
-        if config.use_mode_weights and train_df is not None:
-            self.train_df = boot_mode_weights(train_df, alpha=config.mode_weight_alpha)
 
         self.spec: ArchitectureSpec = get(config.architecture_name)
         self.model_dir = model_dir / config.model_name

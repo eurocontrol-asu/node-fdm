@@ -136,12 +136,20 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
 
     log.info("train_typecode", typecode=acft)
 
+    from node_fdm.training.weighting import boot_mode_weights
+
     training_config = _build_training_config(ctx, acft)
     data_df = ctx.full_df.filter(pl.col("meta_aircraft_type") == acft)
 
     if len(data_df) == 0:
         log.warning("train_empty_dataset", typecode=acft)
         return
+
+    # Boot mode weights BEFORE building the dataset so each window/sample
+    # carries its per-timestep weight column. Doing it inside ODETrainer
+    # would be too late — the FlightSample objects are already frozen.
+    if training_config.use_mode_weights:
+        data_df = boot_mode_weights(data_df, alpha=training_config.mode_weight_alpha)
 
     train_ds, val_ds = get_train_val_data(
         data_df=data_df,
@@ -164,7 +172,6 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
         val_dataset=val_ds,
         model_dir=ctx.models_dir,
         device=ctx.device,
-        train_df=data_df if training_config.use_mode_weights else None,
     )
     trainer.train()
     log.info("train_typecode_done", typecode=acft)

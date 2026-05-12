@@ -172,6 +172,13 @@ def run_resume(
         cfg_mode_weight_alpha=cfg.training.mode_weight_alpha,
     )
 
+    from node_fdm.training.weighting import boot_mode_weights
+
+    # Boot mode weights BEFORE building the dataset so each window/sample
+    # carries its per-timestep weight column.
+    if training_config.use_mode_weights:
+        data_df = boot_mode_weights(data_df, alpha=training_config.mode_weight_alpha)
+
     dx_col_names = [col for _, col in info.dx_cols]
     train_ds, val_ds = get_train_val_data(
         data_df=data_df,
@@ -204,7 +211,6 @@ def run_resume(
         val_dataset=val_ds,
         model_dir=models_dir,
         device=device,
-        train_df=data_df if training_config.use_mode_weights else None,
     )
     trainer.load_model_weights(reset_loss=reset_loss)
     trainer.load_optimizer_state()
