@@ -11,6 +11,7 @@ from node_fdm_pipeline.config import (
     BadaConfig,
     ComputingConfig,
     GammaFilterConfig,
+    MachFilterConfig,
     PipelineConfig,
     SelectedParamConfig,
 )
@@ -145,7 +146,7 @@ selected_params:
         cfg = PipelineConfig.from_yaml(config)
         assert cfg.selected_params.mach.tol == 0.01
         # Other mach fields keep defaults
-        assert cfg.selected_params.mach.min_len == 120
+        assert cfg.selected_params.mach.min_len == MachFilterConfig().min_len
 
     def test_partial_override(self, tmp_path: Path) -> None:
         """YAML with only mach.tol set — other params keep defaults."""
