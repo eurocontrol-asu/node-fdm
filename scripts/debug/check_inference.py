@@ -150,37 +150,19 @@ else:
 
 print(f"Flight: {best_fid} ({best_len} timesteps, {best_len * STEP_S / 60:.0f} min)")
 
-# Pull the FULL row set, then TRIM head/tail. fdm_flag_crop_start/end is based
-# only on temporal jumps and misses leading/trailing NaN-filled rows produced by
-# the resampler (e.g. when the flight starts before useful ADS-B coverage). We
-# trim from each end up to the first/last row that has both a valid raw_alt_ft
-# AND raw_gs_kt above min_speed_kt — equivalent to combining
-# fdm_flag_crop_* with fdm_flag_min_speed at the endpoints only (mid-flight
-# rows are NEVER dropped here, so anomalies stay visible).
-MIN_SPEED_KT = 50.0
-# Compute trim window on the RAW (pre-fill) delta so leading/trailing NaN rows
-# from the resampler are visible — once we apply ffill/bfill above, those NaN
-# are propagated away and we can no longer detect the original useful range.
-_raw = (
-    pl.read_delta(str(DELTA_PATH))
-    .filter(pl.col("meta_flight_id") == best_fid)
-    .sort("raw_timestamp")
-)
-_ok = (
-    _raw["raw_alt_ft"].is_not_null()
-    & _raw["raw_alt_ft"].is_not_nan()
-    & _raw["raw_gs_kt"].is_not_null()
-    & _raw["raw_gs_kt"].is_not_nan()
-    & (_raw["raw_gs_kt"] > MIN_SPEED_KT)
-).to_numpy()
-_idx = np.where(_ok)[0]
-if len(_idx) == 0:
-    raise SystemExit(f"No usable row for flight {best_fid}")
-trim_start, trim_end = int(_idx[0]), int(_idx[-1])
+# Trim head/tail using pipeline-computed fdm_flag_crop_start / fdm_flag_crop_end.
+# These bound the contiguous range of "real" ADS-B motion (per-flight, in
+# packages/node-fdm-data/.../preprocessing/flags.py). Outside that window the
+# OpenSky state_vectors_data4 source re-publishes the last known state at 1 Hz
+# until lastcontact, producing stagnant ffilled rows we MUST NOT feed into the
+# predictor. Mid-flight invalid rows (single-point glitches flagged by
+# distance_ok=False) stay inside the window so the ffill above smooths them.
 flight_df_full = df.filter(pl.col("meta_flight_id") == best_fid).sort("raw_timestamp")
-flight_df = flight_df_full.slice(trim_start, trim_end - trim_start + 1)
+crop_start = int(flight_df_full["fdm_flag_crop_start"][0])
+crop_end = int(flight_df_full["fdm_flag_crop_end"][0])
+flight_df = flight_df_full.slice(crop_start, crop_end - crop_start + 1)
 print(
-    f"Full rows: {flight_df_full.height}  trimmed to [{trim_start},{trim_end}] → "
+    f"Full rows: {flight_df_full.height}  trimmed to [{crop_start},{crop_end}] → "
     f"{flight_df.height} ({flight_df.height * STEP_S / 60:.1f} min)"
 )
 
