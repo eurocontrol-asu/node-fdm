@@ -101,6 +101,7 @@ class TrainingConfig(BaseModel):
     warmup_epochs: int = Field(default=5, ge=0)
     warmup_start_lr: float = Field(default=1e-5, gt=0)
     use_mode_weights: bool = False
+    mode_weight_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
 
 
 def _collate_flight_samples(
@@ -162,7 +163,7 @@ class ODETrainer:
         self.device = torch.device(device)
         self.train_df: pl.DataFrame | None = train_df
         if config.use_mode_weights and train_df is not None:
-            self.train_df = boot_mode_weights(train_df)
+            self.train_df = boot_mode_weights(train_df, alpha=config.mode_weight_alpha)
 
         self.spec: ArchitectureSpec = get(config.architecture_name)
         self.model_dir = model_dir / config.model_name

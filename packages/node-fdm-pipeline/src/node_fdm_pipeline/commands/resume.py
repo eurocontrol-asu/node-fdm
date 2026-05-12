@@ -86,6 +86,7 @@ def _build_training_config(
     ov: _Overrides,
     *,
     cfg_use_mode_weights: bool = False,
+    cfg_mode_weight_alpha: float = 0.5,
 ) -> Any:
     """Build a TrainingConfig from saved meta values overlaid with CLI overrides."""
     from node_fdm.trainer import TrainingConfig
@@ -117,6 +118,7 @@ def _build_training_config(
         },
         eta_min=1e-5,
         use_mode_weights=use_mode_weights,
+        mode_weight_alpha=cfg_mode_weight_alpha,
     )
 
 
@@ -163,7 +165,11 @@ def run_resume(
         use_mode_weights=use_mode_weights,
     )
     training_config = _build_training_config(
-        meta, model.name, overrides, cfg_use_mode_weights=cfg.training.use_mode_weights
+        meta,
+        model.name,
+        overrides,
+        cfg_use_mode_weights=cfg.training.use_mode_weights,
+        cfg_mode_weight_alpha=cfg.training.mode_weight_alpha,
     )
 
     dx_col_names = [col for _, col in info.dx_cols]

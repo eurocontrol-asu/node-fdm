@@ -1,37 +1,35 @@
-"""Effective-number sample weights for class-imbalanced training.
+"""Power-law sample weights for class-imbalanced training.
 
 Flight-mode labels (~13 modes: TURN, ALT_MACH, ALT_CAS, VS_CAS, ...) are
-heavily skewed toward cruise (`ALT_MACH`) — typical run shows 100x to 1000x
+heavily skewed toward cruise (`ALT_MACH`) — typical run shows 40x to 100x
 ratio between dominant and rare modes. Without rebalancing, the rollout
 loss is dominated by cruise samples and the model under-fits transitions
 (turns, climbs, descents).
 
-We use the **Effective Number of Samples** weighting from Cui et al. 2019
-("Class-Balanced Loss Based on Effective Number of Samples", CVPR'19):
+We use a **power-law** weighting:
 
-    N_eff[L] = (1 - beta**count[L]) / (1 - beta)
-    w_raw[L] = 1 / N_eff[L]
+    w_raw[L] = 1 / count[L] ** alpha
 
-The per-sample weight is then normalised so that the dataset-weighted mean
-equals 1, i.e. summing `count[L] * w[L]` over all labels recovers the total
-sample count. This keeps the average loss magnitude unchanged — only the
-relative contribution of each mode shifts.
+where ``alpha`` controls the strength of the rebalance:
 
-beta is selected by `auto_beta`: `beta = clip(1 - 1/sqrt(ratio), 0.99, 0.9999)`
-where `ratio = max_count / min_count`. The intuition is that beta -> 1 as
-the imbalance ratio grows, calibrating the strength of the rebalance to the
-actual skew. `cui_beta` exposes the alternative `1 - 10/N_total` heuristic
-from the original paper for cross-validation logging.
+- ``alpha = 0``    -> uniform (no reweighting)
+- ``alpha = 0.5``  -> sqrt inverse-frequency, standard NLP/detection
+- ``alpha = 1``    -> full inverse-frequency, aggressive
 
-Numerical note: `(1 - beta**count) / (1 - beta)` is computed in float64.
-For beta ~ 0.9999 and count ~ 1e7, `beta**count -> 0` and the ratio caps
-at ~ 1/(1-beta) ~ 1e4, well within float64 dynamic range. Per-sample
-weights are cast to Float32 only at attach time.
+The per-label weight is then normalised so that the dataset-weighted mean
+equals 1, i.e. summing ``count[L] * w[L]`` over all labels recovers the
+total sample count. This keeps the average loss magnitude unchanged —
+only the relative contribution of each mode shifts.
+
+History: an earlier implementation used the Cui 2019 effective-number
+formula. For datasets with counts >> 10^3 per class (our case), the
+required ``beta`` saturated at the clipping bound and all weights
+collapsed to 1.0 — a silent no-op. Power-law is scale-invariant and has
+no such failure mode.
 """
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 import polars as pl
@@ -40,19 +38,16 @@ import torch
 
 __all__ = [
     "attach_sample_weights",
-    "auto_beta",
     "boot_mode_weights",
     "compute_mode_weights",
     "compute_segment_weights",
-    "cui_beta",
 ]
 
 log = structlog.get_logger(__name__)
 
-_BETA_LO = 0.99
-_BETA_HI = 0.9999
 _LABEL_COL = "fdm_mode_label"
 _WEIGHT_COL = "fdm_train_weight"
+_DEFAULT_ALPHA = 0.5
 
 
 def compute_segment_weights(weights_per_sample: torch.Tensor) -> torch.Tensor:
@@ -71,64 +66,37 @@ def compute_segment_weights(weights_per_sample: torch.Tensor) -> torch.Tensor:
     return weights_per_sample.mean(dim=-1)
 
 
-def auto_beta(counts: dict[str, int]) -> float:
-    """Pick a beta calibrated to the observed imbalance ratio.
+def compute_mode_weights(
+    counts: dict[str, int], alpha: float = _DEFAULT_ALPHA
+) -> dict[str, float]:
+    """Return per-label power-law weights, normalised to weighted-mean 1.
 
-    # why: beta = 1 - 1/sqrt(ratio) -> beta->1 as ratio->inf
-    # (calibrate strength of rebalance to the actual skew)
+    For each label L with ``count[L] >= 1``:
 
-    >>> auto_beta({"A": 100, "B": 90})
-    0.99
-    >>> round(auto_beta({"A": 1_000_000, "B": 1_000}), 6)
-    0.968377
-    """
-    if len(counts) < 2:
-        msg = f"auto_beta requires at least 2 labels, got {len(counts)}"
-        raise ValueError(msg)
-    values = list(counts.values())
-    if min(values) <= 0:
-        msg = f"auto_beta requires strictly positive counts, got min={min(values)}"
-        raise ValueError(msg)
-    ratio = max(values) / min(values)
-    beta = 1.0 - 1.0 / math.sqrt(ratio)
-    return max(_BETA_LO, min(_BETA_HI, beta))
+        w_raw[L] = 1 / count[L] ** alpha
 
+    Weights are normalised so the dataset-weighted mean is 1:
 
-def cui_beta(n_total: int) -> float:
-    """Cui 2019 default heuristic: ``1 - 10/N_total``. Informational only."""
-    if n_total <= 10:
-        msg = f"cui_beta requires n_total > 10, got {n_total}"
-        raise ValueError(msg)
-    return 1.0 - 10.0 / n_total
-
-
-def compute_mode_weights(counts: dict[str, int]) -> dict[str, float]:
-    """Return per-label weights from Cui 2019 effective-number formula.
-
-    For each label L with count[L] >= 1:
-        N_eff[L] = (1 - beta**count[L]) / (1 - beta)
-        w_raw[L] = 1 / N_eff[L]
-
-    Weights are then normalised so the dataset-weighted mean is 1:
         sum(count[L] * w[L]) == sum(count[L])
 
-    Labels with ``count == 0`` are **omitted** from the output (no NaN, no
-    inf, no division by zero). Determinism: input dict insertion order is
+    Labels with ``count == 0`` are **omitted** (no NaN, no inf, no
+    division by zero). Determinism: input dict insertion order is
     preserved in the output.
 
     >>> w = compute_mode_weights({"rare": 100, "common": 100_000})
     >>> w["rare"] > w["common"]
     True
+    >>> w = compute_mode_weights({"a": 10, "b": 10}, alpha=0.5)
+    >>> abs(w["a"] - 1.0) < 1e-12 and abs(w["b"] - 1.0) < 1e-12
+    True
     """
+    if alpha < 0.0:
+        msg = f"alpha must be >= 0, got {alpha}"
+        raise ValueError(msg)
     nonzero = {k: int(v) for k, v in counts.items() if v > 0}
     if not nonzero:
         return {}
-    beta = auto_beta(nonzero) if len(nonzero) >= 2 else _BETA_LO
-    one_minus_beta = 1.0 - beta
-    raw: dict[str, float] = {}
-    for label, c in nonzero.items():
-        n_eff = (1.0 - beta**c) / one_minus_beta
-        raw[label] = 1.0 / n_eff
+    raw: dict[str, float] = {label: 1.0 / (c**alpha) for label, c in nonzero.items()}
     total = sum(nonzero.values())
     weighted_sum = sum(nonzero[k] * raw[k] for k in nonzero)
     norm = total / weighted_sum
@@ -159,28 +127,26 @@ def _top_k(
     return [[label, float(w), int(counts[label])] for label, w in items[:k]]
 
 
-def boot_mode_weights(train_df: pl.DataFrame) -> pl.DataFrame:
+def boot_mode_weights(train_df: pl.DataFrame, *, alpha: float = _DEFAULT_ALPHA) -> pl.DataFrame:
     """Compute mode weights and attach them to *train_df*; emit boot log.
 
-    Counts labels in `train_df["fdm_mode_label"]`, computes beta + weights,
-    appends `fdm_train_weight`, and logs one ``mode_weights_computed`` event
-    carrying the diagnostic fields required by the spec.
+    Counts labels in ``train_df["fdm_mode_label"]``, computes power-law
+    weights with exponent *alpha*, appends ``fdm_train_weight``, and logs
+    one ``mode_weights_computed`` event carrying the diagnostic fields.
     """
     counts_series = train_df.get_column(_LABEL_COL).value_counts()
     counts: dict[str, int] = {
         row[0]: int(row[1]) for row in counts_series.iter_rows() if row[0] is not None
     }
-    weights = compute_mode_weights(counts)
+    weights = compute_mode_weights(counts, alpha=alpha)
     out = attach_sample_weights(train_df, weights)
     nonzero_counts = {k: v for k, v in counts.items() if v > 0}
-    n_total = sum(nonzero_counts.values())
     nonzero_vals = list(nonzero_counts.values())
     imbalance = max(nonzero_vals) / min(nonzero_vals) if len(nonzero_vals) >= 2 else 1.0
     weight_vals = list(weights.values())
     log.info(
         "mode_weights_computed",
-        beta=auto_beta(nonzero_counts) if len(nonzero_counts) >= 2 else _BETA_LO,
-        beta_cui=cui_beta(n_total) if n_total > 10 else None,
+        alpha=alpha,
         imbalance_ratio=imbalance,
         n_labels=len(weights),
         top5_labels=_top_k(weights, counts, 5, descending=True),

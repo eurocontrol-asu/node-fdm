@@ -48,6 +48,7 @@ class _TrainContext:
     device: str
     overrides: _TrainOverrides
     cfg_use_mode_weights: bool = False
+    cfg_mode_weight_alpha: float = 0.5
 
 
 def _load_delta_df(cfg: Any) -> tuple[Any, Path]:
@@ -99,6 +100,7 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
         },
         eta_min=1e-5,
         use_mode_weights=use_mode_weights,
+        mode_weight_alpha=ctx.cfg_mode_weight_alpha,
     )
 
 
@@ -233,6 +235,7 @@ def run_training(
             train_limit=train_limit,
         ),
         cfg_use_mode_weights=cfg.training.use_mode_weights,
+        cfg_mode_weight_alpha=cfg.training.mode_weight_alpha,
     )
 
     log.info("train_start", arch=arch, typecodes=typecodes, device=device)

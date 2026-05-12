@@ -42,7 +42,7 @@ def test_trainer_attaches_weights_when_flag_on() -> None:
     assert len(events) == 1
     evt = events[0]
     for key in (
-        "beta",
+        "alpha",
         "imbalance_ratio",
         "n_labels",
         "top5_labels",

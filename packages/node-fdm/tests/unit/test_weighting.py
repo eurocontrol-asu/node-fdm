@@ -8,38 +8,8 @@ import pytest
 from node_fdm.trainer import TrainingConfig
 from node_fdm.training.weighting import (
     attach_sample_weights,
-    auto_beta,
     compute_mode_weights,
 )
-
-# ---- auto_beta -------------------------------------------------------------
-
-
-def test_auto_beta_in_clamp_range_for_realistic_imbalance() -> None:
-    counts = {"A": 1_000_000, "B": 1_000}
-    beta = auto_beta(counts)
-    expected = max(0.99, min(0.9999, 1 - 1 / math.sqrt(1000)))
-    assert 0.99 <= beta <= 0.9999
-    assert math.isclose(beta, expected, abs_tol=1e-9)
-
-
-def test_auto_beta_clamps_to_lower_bound_when_ratio_small() -> None:
-    assert auto_beta({"A": 100, "B": 90}) == 0.99
-
-
-def test_auto_beta_clamps_to_upper_bound_when_ratio_huge() -> None:
-    assert auto_beta({"A": 10**12, "B": 1}) == 0.9999
-
-
-def test_auto_beta_raises_on_zero_count() -> None:
-    with pytest.raises(ValueError):
-        auto_beta({"A": 1000, "B": 0})
-
-
-def test_auto_beta_raises_on_single_label() -> None:
-    with pytest.raises(ValueError):
-        auto_beta({"A": 1000})
-
 
 # ---- compute_mode_weights --------------------------------------------------
 
@@ -94,6 +64,39 @@ def test_compute_mode_weights_deterministic_on_repeated_call() -> None:
     assert a == b
 
 
+def test_compute_mode_weights_alpha_zero_is_uniform() -> None:
+    weights = compute_mode_weights(_REPRESENTATIVE_COUNTS, alpha=0.0)
+    assert all(math.isclose(w, 1.0, abs_tol=1e-12) for w in weights.values())
+
+
+def test_compute_mode_weights_alpha_one_recovers_inverse_frequency_shape() -> None:
+    weights = compute_mode_weights(_REPRESENTATIVE_COUNTS, alpha=1.0)
+    # With alpha=1 the unnormalised weight is 1/count, so the *product*
+    # count * w is the same constant for every label (up to normalisation).
+    counts = _REPRESENTATIVE_COUNTS
+    products = [counts[k] * weights[k] for k in counts]
+    assert all(math.isclose(p, products[0], rel_tol=1e-9) for p in products)
+
+
+def test_compute_mode_weights_higher_alpha_boosts_rare_more() -> None:
+    counts = {"rare": 100, "common": 100_000}
+    w_low = compute_mode_weights(counts, alpha=0.25)
+    w_high = compute_mode_weights(counts, alpha=0.75)
+    ratio_low = w_low["rare"] / w_low["common"]
+    ratio_high = w_high["rare"] / w_high["common"]
+    assert ratio_high > ratio_low
+
+
+def test_compute_mode_weights_rejects_negative_alpha() -> None:
+    with pytest.raises(ValueError, match="alpha"):
+        compute_mode_weights(_REPRESENTATIVE_COUNTS, alpha=-0.1)
+
+
+def test_compute_mode_weights_handles_single_label() -> None:
+    weights = compute_mode_weights({"only": 1000})
+    assert math.isclose(weights["only"], 1.0, abs_tol=1e-12)
+
+
 # ---- attach_sample_weights -------------------------------------------------
 
 
@@ -123,3 +126,17 @@ def test_training_config_accepts_use_mode_weights_true() -> None:
     cfg = TrainingConfig(architecture_name="node_adsb_v1", model_name="m", use_mode_weights=True)
     dumped = cfg.model_dump()
     assert dumped["use_mode_weights"] is True
+
+
+def test_training_config_default_mode_weight_alpha_is_half() -> None:
+    cfg = TrainingConfig(architecture_name="node_adsb_v1", model_name="m")
+    assert cfg.mode_weight_alpha == 0.5
+
+
+def test_training_config_rejects_alpha_outside_unit_interval() -> None:
+    from pydantic import ValidationError
+
+    with pytest.raises(ValidationError):
+        TrainingConfig(architecture_name="node_adsb_v1", model_name="m", mode_weight_alpha=1.5)
+    with pytest.raises(ValidationError):
+        TrainingConfig(architecture_name="node_adsb_v1", model_name="m", mode_weight_alpha=-0.1)

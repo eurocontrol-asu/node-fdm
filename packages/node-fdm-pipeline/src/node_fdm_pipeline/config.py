@@ -304,6 +304,7 @@ class TrainingPipelineConfig(BaseModel, frozen=True):
     """
 
     use_mode_weights: bool = False
+    mode_weight_alpha: float = 0.5
 
 
 class PipelineConfig(BaseModel, frozen=True):

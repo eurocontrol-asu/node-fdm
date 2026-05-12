@@ -30,11 +30,14 @@ computing:
 
 # Training-time toggles forwarded to node_fdm.trainer.TrainingConfig.
 # Why: rebalances the trajectory loss across flight modes (TURN vs straight
-# segments) using effective-number sample weights when modes are imbalanced.
+# segments) via power-law sample weights when modes are imbalanced.
 # How: enable when training data is heavily skewed toward cruise; the CLI
-# flag --use-mode-weights / --no-use-mode-weights overrides this value.
+# flag --use-mode-weights / --no-use-mode-weights overrides use_mode_weights.
+# mode_weight_alpha controls strength: 0 = uniform, 0.5 = sqrt inv-freq
+# (standard), 1.0 = full inverse-frequency (aggressive).
 training:
   use_mode_weights: false
+  mode_weight_alpha: 0.5
 
 bada:
   bada_4_2_dir: "/path/to/BADA/4.2.1"  # ← CHANGE THIS (if using BADA)
