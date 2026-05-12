@@ -213,7 +213,8 @@ class ODETrainer:
         self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(
             self.device
         )
-        self.model = torch.compile(self.model)
+        if self.device.type == "cuda":
+            self.model = torch.compile(self.model)
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
