@@ -43,6 +43,7 @@ coverage_html/
 
 # Documentation
 site/
+docs/notes/
 
 # OS
 .DS_Store
