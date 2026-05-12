@@ -349,31 +349,37 @@ def _parse_metrics(out_dir: Path, run: RunConfig, template_path: Path) -> dict[s
 
 @dataclass
 class SlotPool:
-    """Round-robin GPU allocator: each pending run picks the next free slot."""
+    """Concurrent-slot allocator.
 
-    slots: list[int]
+    Each ``slot_id`` is unique even when several slots map to the same GPU
+    (oversubscription via ``--per-gpu``). ``slot_to_gpu[slot_id]`` gives the
+    actual CUDA device id to inject into ``CUDA_VISIBLE_DEVICES``.
+    """
+
+    slot_to_gpu: dict[int, int]
     busy: dict[int, str] = field(default_factory=dict)
 
     def acquire(self) -> int | None:
-        for s in self.slots:
-            if s not in self.busy:
-                return s
+        for slot_id in self.slot_to_gpu:
+            if slot_id not in self.busy:
+                return slot_id
         return None
 
-    def release(self, slot: int) -> None:
-        self.busy.pop(slot, None)
+    def release(self, slot_id: int) -> None:
+        self.busy.pop(slot_id, None)
+
+    def gpu_of(self, slot_id: int) -> int:
+        return self.slot_to_gpu[slot_id]
 
 
-def _build_slots(gpus: list[int], per_gpu: int) -> list[int]:
-    """Encode ``(gpu_id, instance)`` pairs as flat slot indices.
+def _build_slots(gpus: list[int], per_gpu: int) -> dict[int, int]:
+    """Assign a unique ``slot_id`` per concurrent worker, mapped to its GPU.
 
-    Each slot maps back to a GPU via modulo; ``per_gpu`` controls oversubscription.
+    Two slots on the same GPU must not collide on the busy table — the
+    previous flat ``list[int]`` flattened both into the same key. Returns
+    ``{slot_id: gpu_id}`` instead.
     """
-    slots: list[int] = []
-    for gpu in gpus:
-        for _ in range(per_gpu):
-            slots.append(gpu)
-    return slots
+    return dict(enumerate(gpu for gpu in gpus for _ in range(per_gpu)))
 
 
 def _filter_runs(runs: list[RunConfig], state: QueueState) -> list[RunConfig]:
@@ -482,46 +488,52 @@ def run(
     )
 
     if gpus.lower() == "cpu":
-        slots = [-1] * per_gpu
+        slot_to_gpu = dict.fromkeys(range(per_gpu), -1)
     else:
         gpu_ids = [int(g) for g in gpus.split(",") if g.strip()]
-        slots = _build_slots(gpu_ids, per_gpu)
-    pool = SlotPool(slots=slots)
+        slot_to_gpu = _build_slots(gpu_ids, per_gpu)
+    pool = SlotPool(slot_to_gpu=slot_to_gpu)
 
     futures: dict[Future[dict[str, Any]], tuple[str, int]] = {}
     runs_by_id = {r.run_id: r for r in todo}
     remaining = list(todo)
 
-    with ProcessPoolExecutor(max_workers=len(slots)) as executor:
+    with ProcessPoolExecutor(max_workers=len(slot_to_gpu)) as executor:
         while remaining or futures:
             while remaining:
-                slot = pool.acquire()
-                if slot is None:
+                slot_id = pool.acquire()
+                if slot_id is None:
                     break
                 run_cfg = remaining.pop(0)
-                pool.busy[slot] = run_cfg.run_id
+                pool.busy[slot_id] = run_cfg.run_id
+                gpu_id = pool.gpu_of(slot_id)
                 state.pending = [
                     rid for rid in state.pending if rid != run_cfg.run_id
                 ]
                 state.running.append(run_cfg.run_id)
                 _save_queue(results_dir, state)
-                log.info("run_dispatch", run_id=run_cfg.run_id, gpu_id=slot)
+                log.info(
+                    "run_dispatch",
+                    run_id=run_cfg.run_id,
+                    slot_id=slot_id,
+                    gpu_id=gpu_id,
+                )
                 fut = executor.submit(
                     _execute_run,
                     run_cfg.model_dump(),
                     str(config_template),
                     str(results_dir),
-                    slot,
+                    gpu_id,
                     timeout_s,
                 )
-                futures[fut] = (run_cfg.run_id, slot)
+                futures[fut] = (run_cfg.run_id, slot_id)
 
             if not futures:
                 break
 
             done_fut = next(_as_completed(futures))
-            run_id, slot = futures.pop(done_fut)
-            pool.release(slot)
+            run_id, slot_id = futures.pop(done_fut)
+            pool.release(slot_id)
             state.running = [rid for rid in state.running if rid != run_id]
             try:
                 result = done_fut.result()
