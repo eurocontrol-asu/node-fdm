@@ -20,52 +20,6 @@ __all__ = ["run_predict", "run_predict_bada"]
 log = structlog.get_logger()
 
 
-def _filter_nan_segments(
-    x_arr: np.ndarray,
-    u_seq: np.ndarray,
-    e_seq: np.ndarray,
-    *,
-    nan_threshold: float,
-    flight_id: str,
-    col_names: tuple[list[str], list[str], list[str]],
-) -> tuple[np.ndarray, np.ndarray, np.ndarray] | None:
-    """Filter arrays to finite-only rows, matching training NaN behavior.
-
-    Args:
-        x_arr: State array of shape ``(n_steps, n_x)``.
-        u_seq: Control array of shape ``(n_steps, n_u)``.
-        e_seq: Environment array of shape ``(n_steps, n_e)``.
-        nan_threshold: Skip flight if NaN fraction exceeds this value.
-        flight_id: Flight identifier for log messages.
-        col_names: Tuple of ``(x_cols, u_cols, e_cols)`` for diagnostics.
-
-    Returns:
-        Tuple of ``(x_init, u_filtered, e_filtered)`` or *None* if the
-        flight should be skipped (NaN fraction above threshold).
-    """
-    import numpy as np
-
-    finite_mask = np.isfinite(x_arr).all(axis=1) & np.isfinite(e_seq).all(axis=1)
-    nan_fraction = 1.0 - finite_mask.mean()
-
-    if nan_fraction > nan_threshold:
-        x_cols, _u_cols, e_cols = col_names
-        nan_cols = []
-        for cols, arr in [(x_cols, x_arr), (e_cols, e_seq)]:
-            for i, col in enumerate(cols):
-                if not np.isfinite(arr[:, i]).all():
-                    nan_cols.append(col)
-        log.warning(
-            "predict_skip_nan",
-            flight_id=flight_id,
-            nan_pct=f"{nan_fraction:.1%}",
-            nan_cols=nan_cols,
-            threshold=f"{nan_threshold:.0%}",
-        )
-        return None
-
-    return x_arr[finite_mask][0], u_seq[finite_mask], e_seq[finite_mask]
-
 
 def _resolve_model_path(
     *,
@@ -107,15 +61,28 @@ def _resolve_model_path(
 
 
 def _load_test_df(delta_table: Path) -> object:
-    """Read the Delta table and keep valid test-split rows, with sel_* columns NaN/null filled."""
+    """Read the Delta table for test-split flights.
+
+    Keeps the **full timeline** (including ``fdm_flag_valid=False`` rows)
+    so the predictor sees a continuous signal.  NaN gaps are filled via
+    ffill/bfill, matching ``check_inference.py``.
+    """
     import polars as pl
     from node_fdm_data.delta import read_delta_table
 
     df = read_delta_table(delta_table)
-    df = df.filter(pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"))
-    # Boolean companions like ``fdm_track_sel_known`` are filtered out:
-    # ``fill_nan`` is unsupported on bool dtype, and they carry presence
-    # info, not a value to fill.
+    df = df.sort("meta_flight_id", "raw_timestamp")
+
+    # Keep only flights present in the test split, but retain ALL rows
+    # (including fdm_flag_valid=False) so that ffill/bfill produces a
+    # continuous timeline for the predictor.
+    test_ids = (
+        df.filter(pl.col("meta_split").eq("test"))["meta_flight_id"]
+        .unique()
+    )
+    df = df.filter(pl.col("meta_flight_id").is_in(test_ids))
+
+    # --- Fill _sel columns (match training) ---
     sel_cols = [
         c
         for c in df.columns
@@ -123,6 +90,53 @@ def _load_test_df(delta_table: Path) -> object:
     ]
     if sel_cols:
         df = df.with_columns([pl.col(c).fill_nan(0.0).fill_null(0.0) for c in sel_cols])
+
+    # --- Fill target / U columns ---
+    target_fills: list[pl.Expr] = [
+        pl.col("fdm_alt_target_m")
+        .fill_null(strategy="backward")
+        .fill_null(strategy="forward"),
+        pl.col("fdm_gamma_target_rad").fill_nan(0.0).fill_null(0.0),
+        pl.col("fdm_tas_target_ms").fill_nan(0.0).fill_null(0.0),
+        pl.col("fdm_heading_target_rad")
+        .fill_nan(None)
+        .fill_null(strategy="forward")
+        .over("meta_flight_id")
+        .fill_null(strategy="backward")
+        .over("meta_flight_id"),
+        pl.col("fdm_gamma_target_known").fill_nan(0.0).fill_null(0.0),
+        pl.col("fdm_tas_target_known").fill_null(False),
+        pl.lit(True).alias("fdm_heading_target_known"),
+    ]
+    # Guard: only apply fills for columns that actually exist in this table.
+    existing = set(df.columns)
+    target_fills = [
+        expr for expr in target_fills
+        if expr.meta.output_name() in existing or expr.meta.output_name() == "fdm_heading_target_known"
+    ]
+    if target_fills:
+        df = df.with_columns(target_fills)
+
+    # --- ffill + bfill on all numeric state / exo columns ---
+    state_exo_cols = [
+        c
+        for c in df.columns
+        if (c.startswith("raw_") or c.startswith("era_") or c.startswith("fdm_"))
+        and df.schema[c].is_numeric()
+    ]
+    if state_exo_cols:
+        df = df.with_columns(
+            [
+                pl.col(c)
+                .fill_nan(None)
+                .fill_null(strategy="forward")
+                .over("meta_flight_id")
+                .fill_null(strategy="backward")
+                .over("meta_flight_id")
+                for c in state_exo_cols
+            ]
+        )
+
     return df
 
 
@@ -133,54 +147,88 @@ def _predict_flight(
     predictor: object,
     output_dir: Path,
     nan_threshold: float,
-) -> None:
-    """Run the predictor on one flight and write its predictions parquet to output_dir."""
+) -> bool:
+    """Run the predictor on one flight and write its predictions parquet to output_dir.
+
+    Returns ``True`` if a parquet was written, ``False`` if the flight was
+    skipped.  The output parquet always has exactly ``len(flight_df)`` rows
+    so that ``evaluate`` can ``hstack`` it with the ground-truth frame.
+    Rows outside the crop window are filled with NaN in the output.
+    """
     import numpy as np
     import polars as pl
 
     flight_id = flight_df["meta_flight_id"][0]  # type: ignore[index]
-    x_arr = flight_df.select(info.x_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
-    u_arr = flight_df.select(info.u_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
-    e_arr = flight_df.select(info.e0_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
+    n_total = len(flight_df)  # type: ignore[arg-type]
 
-    result = _filter_nan_segments(
-        x_arr,
-        u_arr,
-        e_arr,
-        nan_threshold=nan_threshold,
-        flight_id=flight_id,
-        col_names=(info.x_cols, info.u_cols, info.e0_cols),  # type: ignore[attr-defined]
+    # --- Crop to the valid inference window ---
+    crop_start = int(flight_df["fdm_flag_crop_start"][0])  # type: ignore[index]
+    crop_end = int(flight_df["fdm_flag_crop_end"][0])  # type: ignore[index]
+    cropped = flight_df.slice(crop_start, crop_end - crop_start + 1)  # type: ignore[attr-defined]
+
+    x_arr = cropped.select(info.x_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
+    u_arr = cropped.select(info.u_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
+    e_arr = cropped.select(info.e0_cols).to_numpy().astype(np.float32)  # type: ignore[attr-defined]
+
+    # After ffill/bfill in _load_test_df the cropped window should be
+    # NaN-free.  Fall back to the old finite-filter path if not.
+    nan_rows = int(
+        (~(
+            np.isfinite(x_arr).all(axis=1)
+            & np.isfinite(u_arr).all(axis=1)
+            & np.isfinite(e_arr).all(axis=1)
+        )).sum()
     )
-    if result is None:
-        return
+    if nan_rows > 0:
+        nan_frac = nan_rows / len(x_arr)
+        if nan_frac > nan_threshold:
+            log.warning(
+                "predict_skip_nan",
+                flight_id=flight_id,
+                nan_rows=nan_rows,
+                crop_len=len(x_arr),
+            )
+            return False
+        log.debug("predict_nan_residual", flight_id=flight_id, nan_rows=nan_rows)
+
+    x0 = x_arr[0]
 
     try:
-        predictions = predictor.predict_flight(*result)  # type: ignore[attr-defined]
+        predictions = predictor.predict_flight(x0, u_arr, e_arr)  # type: ignore[attr-defined]
     except ValueError:
         log.warning("predict_skip_bad_x_init", flight_id=flight_id)
-        return
+        return False
 
+    n_pred = len(next(iter(predictions.values())))
     is_lateral = "fdm_heading_rad" in info.x_cols  # type: ignore[attr-defined]
+
+    # Build full-length columns (NaN outside crop window).
+    pred_cols: dict[str, np.ndarray] = {}
+    for k, v in predictions.items():
+        full = np.full(n_total, np.nan, dtype=np.float64)
+        full[crop_start : crop_start + n_pred] = np.asarray(v[:n_pred], dtype=np.float64)
+        pred_cols[f"pred_{k}"] = full
+
     if is_lateral:
         lat_pred, lon_pred = _integrate_lat_lon(
-            flight_df=flight_df,
+            flight_df=cropped,
             info=info,
             predictions=predictions,
             x_arr=x_arr,
             e_arr=e_arr,
             step=float(predictor.meta.step),  # type: ignore[attr-defined]
         )
-        pred_cols = {
-            f"pred_{k}": np.concatenate(([np.nan], np.asarray(v, dtype=np.float64)))
-            for k, v in predictions.items()
-        }
-        pred_cols["pred_lat_deg"] = lat_pred
-        pred_cols["pred_lon_deg"] = lon_pred
-    else:
-        pred_cols = {f"pred_{k}": v for k, v in predictions.items()}
+        full_lat = np.full(n_total, np.nan, dtype=np.float64)
+        full_lon = np.full(n_total, np.nan, dtype=np.float64)
+        n_place = min(len(lat_pred), crop_end - crop_start + 1)
+        full_lat[crop_start : crop_start + n_place] = lat_pred[:n_place]
+        full_lon[crop_start : crop_start + n_place] = lon_pred[:n_place]
+        pred_cols["pred_lat_deg"] = full_lat
+        pred_cols["pred_lon_deg"] = full_lon
 
     pred_df = pl.DataFrame(pred_cols)
     pred_df.write_parquet(output_dir / f"{flight_id}.parquet")
+    return True
 
 
 def _integrate_lat_lon(
@@ -192,16 +240,15 @@ def _integrate_lat_lon(
     e_arr: np.ndarray,
     step: float,
 ) -> tuple[np.ndarray, np.ndarray]:
-    """Euler-integrate (lat, lon) from predicted heading/tas/gamma + winds."""
+    """Euler-integrate (lat, lon) from predicted heading/tas/gamma + winds.
+
+    ``flight_df`` is expected to be the **cropped** slice (already ffill'd),
+    so no finite-mask filtering is needed.
+    """
     import numpy as np
 
     lat_arr = flight_df.select("raw_lat_deg").to_numpy().astype(np.float64).ravel()  # type: ignore[attr-defined]
     lon_arr = flight_df.select("raw_lon_deg").to_numpy().astype(np.float64).ravel()  # type: ignore[attr-defined]
-
-    finite_mask = np.isfinite(x_arr).all(axis=1) & np.isfinite(e_arr).all(axis=1)
-    lat_arr = lat_arr[finite_mask]
-    lon_arr = lon_arr[finite_mask]
-    e_filtered = e_arr[finite_mask]
 
     heading_pred = np.asarray(predictions["fdm_heading_rad"], dtype=np.float64)
     tas_pred = np.asarray(predictions["era_tas_ms"], dtype=np.float64)
@@ -210,8 +257,8 @@ def _integrate_lat_lon(
 
     u_idx = info.e0_cols.index("era_u_wind_ms")  # type: ignore[attr-defined]
     v_idx = info.e0_cols.index("era_v_wind_ms")  # type: ignore[attr-defined]
-    u_wind = e_filtered[:n_pred, u_idx].astype(np.float64)
-    v_wind = e_filtered[:n_pred, v_idx].astype(np.float64)
+    u_wind = e_arr[:n_pred, u_idx].astype(np.float64)
+    v_wind = e_arr[:n_pred, v_idx].astype(np.float64)
 
     earth_radius = 6_371_000.0
     lat = np.empty(n_pred + 1, dtype=np.float64)
@@ -280,16 +327,29 @@ def _predict_typecode(
     flights = acft_df.partition_by("meta_flight_id", maintain_order=True)
     if flight is None and limit is not None:
         flights = flights[:limit]
+    n_written = 0
     for flight_df in flights:
-        _predict_flight(
+        if _predict_flight(
             flight_df=flight_df,
             info=info,
             predictor=predictor,
             output_dir=output_dir,
             nan_threshold=nan_threshold,
-        )
+        ):
+            n_written += 1
 
-    log.info("predict_typecode_done", typecode=acft)
+    if n_written == 0 and len(flights) > 0:
+        log.warning(
+            "predict_zero_output",
+            typecode=acft,
+            flights_attempted=len(flights),
+        )
+    log.info(
+        "predict_typecode_done",
+        typecode=acft,
+        flights_written=n_written,
+        flights_total=len(flights),
+    )
 
 
 def run_predict(

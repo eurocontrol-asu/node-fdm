@@ -141,17 +141,15 @@ def _check_perf_parquet(results_dir: Path, data_dir: Path) -> Status:
         if missing_cols:
             bad.append(f"{run_dir.name}: missing cols {sorted(missing_cols)}")
         models = set(df["Model"].unique())
-        if "pred_" not in models:
-            bad.append(f"{run_dir.name}: no pred_ rows (predict step did not write any flight)")
-        if "bada_" not in models:
-            bad.append(f"{run_dir.name}: no bada_ rows (BADA absent — only matters if expected)")
+        if "PRED" not in models:
+            bad.append(f"{run_dir.name}: no PRED rows (predict step did not write any flight)")
     if bad:
         for b in bad[:5]:
             _emit("FAIL", "performance.parquet shape", b)
         if len(bad) > 5:
             _emit("FAIL", "performance.parquet shape", f"...and {len(bad) - 5} more")
         return "FAIL"
-    _emit("PASS", "performance.parquet shape", f"{sampled} files OK (cols + pred_/bada_)")
+    _emit("PASS", "performance.parquet shape", f"{sampled} files OK")
     return "PASS"
 
 
@@ -187,17 +185,18 @@ def _print_axis_summary(summary: pl.DataFrame) -> None:
     """Mean / std / n per axis — informational, never gates the exit code."""
     if summary.is_empty():
         return
-    grouped = (
-        summary.group_by("axis")
-        .agg(
-            pl.col("score_primary").mean().alias("mean_mae"),
-            pl.col("score_primary").std().alias("std_mae"),
-            pl.col("score_primary").count().alias("n"),
-        )
-        .sort("mean_mae")
-    )
+
+    score_cols = [c for c in ("mae_alt", "mae_tas", "mae_gamma", "mae_heading") if c in summary.columns]
+    agg_exprs: list[pl.Expr] = [pl.col("score_primary").count().alias("n")]
+    for c in score_cols:
+        short = c.replace("mae_", "")
+        agg_exprs.append(pl.col(c).mean().alias(f"{short}_mean"))
+        agg_exprs.append(pl.col(c).std().alias(f"{short}_std"))
+
+    grouped = summary.group_by("axis").agg(agg_exprs).sort("alt_mean")
+
     print("\n  axis effect (lower MAE = better, std across seeds):")
-    with pl.Config(tbl_rows=-1, tbl_width_chars=120, float_precision=2):
+    with pl.Config(tbl_rows=-1, tbl_width_chars=160, float_precision=2):
         print(grouped)
 
 
@@ -252,6 +251,10 @@ def _aggregate_summary(results_dir: Path) -> pl.DataFrame:
                     )
                 },
                 "score_primary": metrics.get("score_primary"),
+                "mae_alt": metrics.get("mae_alt"),
+                "mae_tas": metrics.get("mae_tas"),
+                "mae_gamma": metrics.get("mae_gamma"),
+                "mae_heading": metrics.get("mae_heading"),
             }
         )
     if not rows:

@@ -165,8 +165,8 @@ def _collect_acft_frames(
             f = _load_flight_frame(flight_df, pred_path, bada_path)
             if f is not None:
                 acft_frames.append(f)
-        except Exception:  # noqa: BLE001
-            log.debug("evaluate_flight_error", flight_id=fid)
+        except Exception as exc:  # noqa: BLE001
+            log.warning("evaluate_flight_error", flight_id=fid, error=str(exc))
     if require_both and skipped:
         log.info("evaluate_intersection", typecode=acft, skipped=skipped, kept=len(acft_frames))
     return acft_frames
@@ -361,8 +361,6 @@ def run_evaluate(
         arch: Architecture identifier (``"qar"`` or ``"adsb"``).
         config: Path to YAML pipeline config.
     """
-    from node_fdm_data.delta import read_delta_table
-
     from node_fdm_pipeline.config import PipelineConfig
     from node_fdm_pipeline.resolver import resolve_architecture
 
@@ -373,11 +371,11 @@ def run_evaluate(
     predict_dir = cfg.paths.resolve("predicted_dir")
     bada_dir = cfg.paths.resolve("bada_dir")
 
-    # Read Delta Table — filter on valid + test split
-    df = read_delta_table(delta_table)
-    df = df.filter(
-        pl.col("fdm_flag_valid") & pl.col("meta_split").eq("test"),
-    )
+    # Load exactly the same full-timeline DataFrame used by predict
+    # (all rows, ffill/bfill'd) so the hstack row counts match.
+    from node_fdm_pipeline.commands.predict import _load_test_df
+
+    df = _load_test_df(delta_table)
 
     variables = {
         "raw_alt_m": "Altitude [m]",

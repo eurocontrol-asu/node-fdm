@@ -327,17 +327,25 @@ def _parse_metrics(out_dir: Path, run: RunConfig, template_path: Path) -> dict[s
             }
         return out
 
-    pred = _extract("pred_")
-    bada = _extract("bada_")
+    pred = _extract("PRED")
+    bada = _extract("BADA")
 
     metrics["score_breakdown"] = pred
     metrics["bada_baseline"] = bada
-    alt_all = pred.get("Altitude [m]", {}).get("All phases")
-    if alt_all is None:
-        # Fallback: raw column name from variables map.
-        alt_all = pred.get("raw_alt_m", {}).get("All phases")
-    if alt_all is not None:
-        metrics["score_primary"] = alt_all["MAE"]
+
+    score_keys = {
+        "mae_alt": ("Altitude [m]", "raw_alt_m"),
+        "mae_tas": ("True airspeed [m/s]", "era_tas_ms"),
+        "mae_gamma": ("Flight path angle [deg]", "fdm_gamma_rad"),
+        "mae_heading": ("Heading [deg]", "fdm_heading_rad"),
+    }
+    for key, (label, fallback) in score_keys.items():
+        entry = pred.get(label, {}).get("All phases")
+        if entry is None:
+            entry = pred.get(fallback, {}).get("All phases")
+        metrics[key] = entry["MAE"] if entry is not None else None
+
+    metrics["score_primary"] = metrics["mae_alt"]
     metrics["perf_path"] = str(perf_path)
     return metrics
 
@@ -633,6 +641,10 @@ def aggregate(
                 )
             },
             "score_primary": metrics.get("score_primary"),
+            "mae_alt": metrics.get("mae_alt"),
+            "mae_tas": metrics.get("mae_tas"),
+            "mae_gamma": metrics.get("mae_gamma"),
+            "mae_heading": metrics.get("mae_heading"),
         }
         rows.append(row)
 
