@@ -18,11 +18,11 @@ resolution-markers = [
 
 [manifest]
 members = [
-    "axm-fdm-workspace",
     "node-fdm",
     "node-fdm-bada",
     "node-fdm-data",
     "node-fdm-pipeline",
+    "node-fdm-workspace",
 ]
 
 [[package]]
@@ -300,43 +300,6 @@ source = { registry = "https://pypi.org/simple" }
 sdist = { url = "https://files.pythonhosted.org/packages/6b/5c/685e6633917e101e5dcb62b9dd76946cbb57c26e133bae9e0cd36033c0a9/attrs-25.4.0.tar.gz", hash = "sha256:16d5969b87f0859ef33a48b35d55ac1be6e42ae49d5e853b597db70c35c57e11", size = 934251, upload-time = "2025-10-06T13:54:44.725Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/3a/2a/7cc015f5b9f5db42b7d48157e23356022889fc354a2813c15934b7cb5c0e/attrs-25.4.0-py3-none-any.whl", hash = "sha256:adcf7e2a1fb3b36ac48d97835bb6d8ade15b8dcce26aba8bf1d14847b57a3373", size = 67615, upload-time = "2025-10-06T13:54:43.17Z" },
-]
-
-[[package]]
-name = "axm-fdm-workspace"
-version = "0.0.0"
-source = { virtual = "." }
-dependencies = [
-    { name = "matplotlib" },
-    { name = "node-fdm" },
-    { name = "node-fdm-bada" },
-    { name = "node-fdm-data" },
-    { name = "node-fdm-pipeline" },
-    { name = "pygeomag" },
-    { name = "traffic" },
-]
-
-[package.dev-dependencies]
-dev = [
-    { name = "mypy" },
-    { name = "pre-commit" },
-]
-
-[package.metadata]
-requires-dist = [
-    { name = "matplotlib", specifier = ">=3.10.8" },
-    { name = "node-fdm", editable = "packages/node-fdm" },
-    { name = "node-fdm-bada", editable = "packages/node-fdm-bada" },
-    { name = "node-fdm-data", editable = "packages/node-fdm-data" },
-    { name = "node-fdm-pipeline", editable = "packages/node-fdm-pipeline" },
-    { name = "pygeomag", specifier = ">=1.1.0" },
-    { name = "traffic", specifier = ">=2.10" },
-]
-
-[package.metadata.requires-dev]
-dev = [
-    { name = "mypy", specifier = ">=1.13" },
-    { name = "pre-commit", specifier = ">=4.0" },
 ]
 
 [[package]]
@@ -2893,6 +2856,43 @@ dev = [
     { name = "pytest-mock", specifier = ">=3.0" },
     { name = "ruff", specifier = "==0.15.12" },
     { name = "types-pyyaml", specifier = ">=6.0" },
+]
+
+[[package]]
+name = "node-fdm-workspace"
+version = "0.0.0"
+source = { virtual = "." }
+dependencies = [
+    { name = "matplotlib" },
+    { name = "node-fdm" },
+    { name = "node-fdm-bada" },
+    { name = "node-fdm-data" },
+    { name = "node-fdm-pipeline" },
+    { name = "pygeomag" },
+    { name = "traffic" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "mypy" },
+    { name = "pre-commit" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "matplotlib", specifier = ">=3.10.8" },
+    { name = "node-fdm", editable = "packages/node-fdm" },
+    { name = "node-fdm-bada", editable = "packages/node-fdm-bada" },
+    { name = "node-fdm-data", editable = "packages/node-fdm-data" },
+    { name = "node-fdm-pipeline", editable = "packages/node-fdm-pipeline" },
+    { name = "pygeomag", specifier = ">=1.1.0" },
+    { name = "traffic", specifier = ">=2.10" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "mypy", specifier = ">=1.13" },
+    { name = "pre-commit", specifier = ">=4.0" },
 ]
 
 [[package]]
