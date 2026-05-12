@@ -213,8 +213,8 @@ class ODETrainer:
         self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(
             self.device
         )
+        self.model = torch.compile(self.model)
 
-        # Freeze GammaDefaultNet when tracking loss is disabled — the ODE
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
             lr=config.lr,
@@ -241,6 +241,7 @@ class ODETrainer:
         self.save_meta()
 
         # Deterministic loaders for reproducible single-batch access
+        _pin = self.device.type == "cuda"
         self.train_loader = DataLoader(
             self.train_dataset,
             batch_size=self.config.batch_size,
@@ -248,6 +249,7 @@ class ODETrainer:
             num_workers=self.config.num_workers,
             collate_fn=_collate_flight_samples,
             generator=torch.Generator().manual_seed(0),
+            pin_memory=_pin,
         )
         self.val_loader = DataLoader(
             self.val_dataset,
@@ -255,6 +257,7 @@ class ODETrainer:
             shuffle=False,
             num_workers=self.config.num_workers,
             collate_fn=_collate_flight_samples,
+            pin_memory=_pin,
         )
 
         log.info(
@@ -428,6 +431,37 @@ class ODETrainer:
                 result[i] = named_bounds[name]
         return result
 
+    @staticmethod
+    def _preload_dataset(
+        dataset: FlightDataset,
+        device: torch.device,
+    ) -> tuple[torch.Tensor, ...]:
+        """Collate an entire dataset into stacked tensors on *device*.
+
+        Returns the same tuple shape as ``_collate_flight_samples`` but
+        covering all samples, resident on *device*.
+        """
+        all_samples = [dataset[i] for i in range(len(dataset))]
+        stacked = _collate_flight_samples(all_samples)
+        return tuple(t.to(device) for t in stacked)
+
+    @staticmethod
+    def _iter_preloaded(
+        stacked: tuple[torch.Tensor, ...],
+        batch_size: int,
+        shuffle: bool = True,
+    ) -> list[tuple[torch.Tensor, ...]]:
+        """Yield batch-sized slices from pre-loaded stacked tensors."""
+        n = stacked[0].shape[0]
+        if shuffle:
+            perm = torch.randperm(n, device=stacked[0].device)
+            stacked = tuple(t[perm] for t in stacked)
+        batches = []
+        for start in range(0, n, batch_size):
+            end = start + batch_size
+            batches.append(tuple(t[start:end] for t in stacked))
+        return batches
+
     def _compute_batch_loss(
         self,
         batch: tuple[torch.Tensor, ...],
@@ -452,7 +486,10 @@ class ODETrainer:
         Returns:
             Scalar loss tensor.
         """
-        tensors = tuple(t.to(self.device) for t in batch)
+        if batch[0].device == self.device:
+            tensors = batch
+        else:
+            tensors = tuple(t.to(self.device, non_blocking=True) for t in batch)
         x_seq, u_seq, e_seq = tensors[0], tensors[1], tensors[2]
         # The collate output may carry e1 and/or w in trailing slots. The
         # last tensor whose last dim equals seq_len is treated as ``w``
@@ -724,26 +761,43 @@ class ODETrainer:
         Returns:
             List of per-epoch loss records.
         """
-        train_loader = DataLoader(
-            self.train_dataset,
-            batch_size=self.config.batch_size,
-            shuffle=True,
-            num_workers=self.config.num_workers,
-            collate_fn=_collate_flight_samples,
-        )
-        val_loader = DataLoader(
-            self.val_dataset,
-            batch_size=self.config.val_batch_size,
-            shuffle=False,
-            num_workers=self.config.num_workers,
-            collate_fn=_collate_flight_samples,
-        )
+        use_cuda = self.device.type == "cuda"
+
+        if use_cuda:
+            log.info("preloading_data_to_gpu")
+            train_stacked = self._preload_dataset(self.train_dataset, self.device)
+            val_stacked = self._preload_dataset(self.val_dataset, self.device)
+            n_train_batches = max(
+                (len(self.train_dataset) + self.config.batch_size - 1) // self.config.batch_size, 1
+            )
+        else:
+            train_stacked = None
+            val_stacked = None
+
+        if not use_cuda:
+            train_loader = DataLoader(
+                self.train_dataset,
+                batch_size=self.config.batch_size,
+                shuffle=True,
+                num_workers=self.config.num_workers,
+                collate_fn=_collate_flight_samples,
+            )
+            val_loader = DataLoader(
+                self.val_dataset,
+                batch_size=self.config.val_batch_size,
+                shuffle=False,
+                num_workers=self.config.num_workers,
+                collate_fn=_collate_flight_samples,
+            )
 
         epochs = self.config.epochs
         records: list[dict[str, float]] = []
         loss_csv_path = self.model_dir / "training_losses.csv"
 
-        self.scheduler = self._build_scheduler(steps_per_epoch=max(len(train_loader), 1))
+        steps_per_epoch = (
+            n_train_batches if use_cuda else max(len(train_loader), 1)  # type: ignore[possibly-undefined]
+        )
+        self.scheduler = self._build_scheduler(steps_per_epoch=steps_per_epoch)
 
         for epoch in range(1, epochs + 1):
             for cb in self.callbacks:
@@ -753,12 +807,16 @@ class ODETrainer:
             self.model.train()
             total_loss = 0.0
             n_batches = 0
-            for batch in train_loader:
+
+            train_batches = (
+                self._iter_preloaded(train_stacked, self.config.batch_size, shuffle=True)
+                if use_cuda
+                else train_loader  # type: ignore[possibly-undefined]
+            )
+            for batch in train_batches:
                 loss = self._compute_batch_loss(batch)
                 self.optimizer.zero_grad()
                 loss.backward()  # type: ignore[no-untyped-call]
-                # Sanitize NaN/Inf gradients from ODE rollout through
-                # physics layers before clipping and stepping.
                 for p in self.model.parameters():
                     if p.grad is not None:
                         torch.nan_to_num(p.grad, nan=0.0, posinf=0.0, neginf=0.0, out=p.grad)
@@ -777,8 +835,13 @@ class ODETrainer:
             self.model.eval()
             val_total = 0.0
             val_batches = 0
+            val_iter = (
+                self._iter_preloaded(val_stacked, self.config.val_batch_size, shuffle=False)
+                if use_cuda
+                else val_loader  # type: ignore[possibly-undefined]
+            )
             with torch.no_grad():
-                for batch in val_loader:
+                for batch in val_iter:
                     loss = self._compute_batch_loss(batch)
                     val_total += loss.item()
                     val_batches += 1

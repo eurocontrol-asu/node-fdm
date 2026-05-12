@@ -34,6 +34,7 @@ class _TrainOverrides:
     model_name: str | None
     lambda_tracking: float | None
     use_mode_weights: bool | None
+    train_limit: int | None
 
 
 @dataclass(frozen=True)
@@ -149,8 +150,8 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
         dx_cols=ctx.dx_col_names,
         seq_len=training_config.seq_len,
         shift=training_config.shift,
-        train_limit=5000,
-        val_limit=5000,
+        train_limit=ctx.overrides.train_limit or 5000,
+        val_limit=min(ctx.overrides.train_limit or 5000, 5000),
     )
 
     training_config = _maybe_adjust_epochs(training_config, train_ds, acft, ctx.overrides.epochs)
@@ -182,6 +183,7 @@ def run_training(
     model_name: str | None = None,
     lambda_tracking: float | None = None,
     use_mode_weights: bool | None = None,
+    train_limit: int | None = None,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
 
@@ -197,6 +199,7 @@ def run_training(
         shift: Override shift between windows (defaults to seq_len).
         device: PyTorch device string (e.g. ``"cpu"``, ``"cuda:0"``).
         model_name: Custom model name (default: ``{arch}_{typecode}``).
+        train_limit: Max training samples (default: 5000).
         use_mode_weights: Optional CLI override. ``None`` defers to
             ``cfg.training.use_mode_weights``; otherwise the explicit value
             wins (precedence: CLI > YAML > default ``False``).
@@ -227,6 +230,7 @@ def run_training(
             model_name=model_name,
             lambda_tracking=lambda_tracking,
             use_mode_weights=use_mode_weights,
+            train_limit=train_limit,
         ),
         cfg_use_mode_weights=cfg.training.use_mode_weights,
     )

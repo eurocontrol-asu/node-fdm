@@ -107,6 +107,13 @@ def train(
             ),
         ),
     ] = None,
+    train_limit: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--train-limit",
+            help="Max training samples (default: 5000)",
+        ),
+    ] = None,
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
     from node_fdm_pipeline.commands.train import run_training
@@ -125,6 +132,7 @@ def train(
         model_name=model_name,
         lambda_tracking=lambda_tracking,
         use_mode_weights=use_mode_weights,
+        train_limit=train_limit,
     )
 
 
