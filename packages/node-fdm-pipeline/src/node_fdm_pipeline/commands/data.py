@@ -8,6 +8,7 @@ install message if missing.
 
 from __future__ import annotations
 
+import multiprocessing
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
@@ -27,12 +28,26 @@ if TYPE_CHECKING:
     from node_fdm_pipeline.config import PipelineConfig
 
 
-def _clean_speeds_worker(args: tuple[pl.DataFrame, dict[str, Any]]) -> pl.DataFrame:
-    """ProcessPool worker: invoke ``clean_bds_speeds`` on a single flight."""
+def _clean_speeds_worker(
+    args: tuple[str, list[str], str, dict[str, Any]],
+) -> pl.DataFrame:
+    """Spawn-safe worker: read a subset of flights from delta and clean them."""
+    import polars as pl
     from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
 
-    flight_df, kwargs = args
-    return clean_bds_speeds(flight_df, **kwargs)
+    batch_date, flight_ids, delta_path, kwargs = args
+    df = pl.read_delta(delta_path).filter(
+        (pl.col("meta_batch_date") == batch_date)
+        & (pl.col("meta_flight_id").is_in(flight_ids))
+    )
+    clean_existing = [c for c in df.columns if c.startswith("bds_") and c.endswith("_clean")]
+    if clean_existing:
+        df = df.drop(clean_existing)
+    parts = [
+        clean_bds_speeds(f, **kwargs)
+        for f in df.partition_by("meta_flight_id", maintain_order=True)
+    ]
+    return pl.concat(parts, how="diagonal_relaxed")
 
 
 def _clean_speeds_init_polars() -> None:
@@ -1169,14 +1184,6 @@ def clean_speeds(
         log.info("clean_speeds_dry_run", msg="Config valid, would clean BDS speeds")
         return
 
-    df = read_delta_table(delta_table)
-
-    clean_existing = [c for c in df.columns if c.startswith("bds_") and c.endswith("_clean")]
-    if clean_existing:
-        log.info("clean_speeds_drop_existing", columns=clean_existing)
-        df = df.drop(clean_existing)
-
-    flights = df.partition_by("meta_flight_id", maintain_order=True)
     cs_kwargs: dict[str, Any] = {
         "bds_window": cs_cfg.bds_window,
         "era_window": cs_cfg.era_window,
@@ -1197,17 +1204,45 @@ def clean_speeds(
         "on_ground_alt_threshold": cs_cfg.on_ground_alt_threshold,
     }
 
-    n_workers = min(8, os.cpu_count() or 4)
-    with ProcessPoolExecutor(
-        max_workers=n_workers,
-        initializer=_clean_speeds_init_polars,
-    ) as ex:
-        processed: list[pl.DataFrame] = list(
-            ex.map(
-                _clean_speeds_worker,
-                ((f, cs_kwargs) for f in flights),
-            )
+    n_workers = cfg.computing.default_cpu_count
+    delta_cols = pl.scan_delta(str(delta_table)).collect_schema().names()
+    clean_existing = [c for c in delta_cols if c.startswith("bds_") and c.endswith("_clean")]
+    if clean_existing:
+        log.info("clean_speeds_drop_existing", columns=clean_existing)
+
+    if "meta_batch_date" in delta_cols:
+        meta = (
+            pl.scan_delta(str(delta_table))
+            .select(["meta_flight_id", "meta_batch_date"])
+            .unique()
+            .collect()
         )
+        tasks: list[tuple[str, list[str], str, dict[str, Any]]] = []
+        n_dates = meta["meta_batch_date"].n_unique()
+        for (batch_date,), grp in meta.group_by("meta_batch_date"):
+            ids = grp["meta_flight_id"].to_list()
+            chunk_size = max(1, len(ids) // max(1, n_workers // n_dates))
+            for i in range(0, len(ids), chunk_size):
+                tasks.append((batch_date, ids[i : i + chunk_size], str(delta_table), cs_kwargs))
+
+        log.info("clean_speeds_dispatch", tasks=len(tasks), workers=n_workers)
+        ctx = multiprocessing.get_context("spawn")
+        with ProcessPoolExecutor(
+            max_workers=n_workers,
+            initializer=_clean_speeds_init_polars,
+            mp_context=ctx,
+        ) as ex:
+            processed: list[pl.DataFrame] = list(ex.map(_clean_speeds_worker, tasks))
+    else:
+        from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
+
+        df = read_delta_table(delta_table)
+        if clean_existing:
+            df = df.drop(clean_existing)
+        processed = [
+            clean_bds_speeds(f, **cs_kwargs)
+            for f in df.partition_by("meta_flight_id", maintain_order=True)
+        ]
 
     df = pl.concat(processed, how="diagonal_relaxed")
     write_columns(df, delta_table)
