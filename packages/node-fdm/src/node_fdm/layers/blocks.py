@@ -45,7 +45,7 @@ class MLPBlock(nn.Module):
         prev_dim = input_dim
         for _ in range(num_layers):
             layers.append(nn.Linear(prev_dim, hidden_dim))
-            layers.append(nn.ReLU())
+            layers.append(nn.SiLU())
             prev_dim = hidden_dim
         layers.append(nn.Linear(hidden_dim, output_dim))
         if last_activation is not None:
