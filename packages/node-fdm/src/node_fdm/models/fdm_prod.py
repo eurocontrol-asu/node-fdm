@@ -14,6 +14,7 @@ import torch
 import torch.nn as nn
 
 from node_fdm.architectures.registry import ArchitectureSpec, LayerSpec, resolve_layer_class
+from node_fdm.layers.activations import resolve_activation
 
 __all__ = [
     "FlightDynamicsModelProd",
@@ -41,6 +42,7 @@ class FlightDynamicsModelProd(nn.Module):
         stats_dict: dict[str, dict[str, float]],
         model_params: tuple[int, int, int],
         model_path: Path,
+        activation: str = "silu",
     ) -> None:
         super().__init__()
         self.spec = spec
@@ -48,6 +50,8 @@ class FlightDynamicsModelProd(nn.Module):
         self.model_path = model_path
         self.device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
         backbone_depth, head_depth, neurons_num = model_params
+        self.activation = activation
+        self._activation_cls: type[nn.Module] = resolve_activation(activation)
 
         self.layers_dict = nn.ModuleDict()
         self.layers_name: list[str] = []
@@ -63,6 +67,7 @@ class FlightDynamicsModelProd(nn.Module):
                     backbone_depth=backbone_depth,
                     head_depth=head_depth,
                     neurons_num=neurons_num,
+                    activation_cls=self._activation_cls,
                 )
             else:
                 # Pass input_stats for layers that support normalization
@@ -104,6 +109,7 @@ class FlightDynamicsModelProd(nn.Module):
         backbone_depth: int,
         head_depth: int,
         neurons_num: int,
+        activation_cls: type[nn.Module],
     ) -> nn.Module:
         """Build a structured layer with normalization stats.
 
@@ -190,6 +196,7 @@ class FlightDynamicsModelProd(nn.Module):
             denormalize_modes=denormalize_modes or None,
             scale_dict=scale_dict or None,
             cap_dict=cap_dict or None,
+            activation=activation_cls,
         )
 
     def reset_history(self) -> None:

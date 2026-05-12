@@ -30,6 +30,7 @@ class MLPBlock(nn.Module):
         output_dim: int,
         num_layers: int = 1,
         last_activation: type[nn.Module] | None = None,
+        activation: type[nn.Module] = nn.SiLU,
     ) -> None:
         """Initialize the MLP block.
 
@@ -39,13 +40,15 @@ class MLPBlock(nn.Module):
             output_dim: Output feature dimension.
             num_layers: Number of hidden layers.
             last_activation: Optional module class applied after the final linear.
+            activation: Hidden-layer activation class instantiated between
+                each pair of Linear layers. Defaults to ``nn.SiLU``.
         """
         super().__init__()
         layers: list[nn.Module] = []
         prev_dim = input_dim
         for _ in range(num_layers):
             layers.append(nn.Linear(prev_dim, hidden_dim))
-            layers.append(nn.SiLU())
+            layers.append(activation())
             prev_dim = hidden_dim
         layers.append(nn.Linear(hidden_dim, output_dim))
         if last_activation is not None:
@@ -74,6 +77,7 @@ class Backbone(MLPBlock):
         hidden_dim: int = 48,
         num_layers: int = 2,
         last_activation: type[nn.Module] | None = None,
+        activation: type[nn.Module] = nn.SiLU,
     ) -> None:
         """Initialize backbone with symmetric hidden dimensions."""
         super().__init__(
@@ -82,6 +86,7 @@ class Backbone(MLPBlock):
             hidden_dim,
             num_layers=num_layers,
             last_activation=last_activation,
+            activation=activation,
         )
 
 
@@ -96,6 +101,7 @@ class Head(MLPBlock):
         num_layers: int = 1,
         last_activation: type[nn.Module] | None = None,
         output_init_bias: float = 0.0,
+        activation: type[nn.Module] = nn.SiLU,
     ) -> None:
         """Initialize head with optional activation and bias offset.
 
@@ -119,6 +125,7 @@ class Head(MLPBlock):
             output_dim,
             num_layers=num_layers,
             last_activation=last_activation,
+            activation=activation,
         )
         last_linear = self.net[-1]
         if isinstance(last_linear, nn.Linear):

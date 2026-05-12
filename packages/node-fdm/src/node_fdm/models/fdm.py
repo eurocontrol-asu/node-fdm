@@ -12,6 +12,7 @@ import torch
 import torch.nn as nn
 
 from node_fdm.architectures.registry import ArchitectureSpec, resolve_layer_class
+from node_fdm.layers.activations import resolve_activation
 
 __all__ = [
     "FlightDynamicsModel",
@@ -39,6 +40,7 @@ class FlightDynamicsModel(nn.Module):
             _DEFAULT_HEAD_DEPTH,
             _DEFAULT_NEURONS,
         ),
+        activation: str = "silu",
     ) -> None:
         """Initialize the model from an architecture specification.
 
@@ -46,11 +48,16 @@ class FlightDynamicsModel(nn.Module):
             spec: Typed architecture specification.
             stats_dict: Mapping ``column_name → {"mean": ..., "std": ..., "max": ...}``.
             model_params: Tuple of ``(backbone_depth, head_depth, hidden_width)``.
+            activation: Hidden-layer activation identifier (``"silu"`` /
+                ``"relu"`` / ``"gelu"`` / ``"tanh"``). Persisted in
+                ``meta.json`` so inference rebuilds the same graph.
         """
         super().__init__()
         self.spec = spec
         self.stats_dict = stats_dict
         self.backbone_depth, self.head_depth, self.neurons_num = model_params
+        self.activation = activation
+        self._activation_cls: type[nn.Module] = resolve_activation(activation)
         self.layers_dict = nn.ModuleDict()
         self.layers_name: list[str] = []
         self.history: dict[str, Any] = {}
@@ -164,6 +171,7 @@ class FlightDynamicsModel(nn.Module):
             scale_dict=scale_dict if scale_dict else None,
             cap_dict=cap_dict if cap_dict else None,
             output_init_biases=output_init_biases if output_init_biases else None,
+            activation=self._activation_cls,
         )
 
     def reset_history(self) -> None:

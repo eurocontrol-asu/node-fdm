@@ -114,6 +114,27 @@ def train(
             help="Max training samples (default: 5000)",
         ),
     ] = None,
+    activation: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--activation",
+            help="Hidden-layer activation: silu (default), relu, gelu, or tanh",
+        ),
+    ] = None,
+    seed: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--seed",
+            help="Seed torch/numpy/random for reproducible runs",
+        ),
+    ] = None,
+    mode_weight_alpha: Annotated[
+        float | None,
+        cyclopts.Parameter(
+            name="--mode-weight-alpha",
+            help="Override cfg.training.mode_weight_alpha (power-law exponent in [0,1])",
+        ),
+    ] = None,
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
     from node_fdm_pipeline.commands.train import run_training
@@ -133,6 +154,9 @@ def train(
         lambda_tracking=lambda_tracking,
         use_mode_weights=use_mode_weights,
         train_limit=train_limit,
+        activation=activation,
+        seed=seed,
+        mode_weight_alpha=mode_weight_alpha,
     )
 
 
@@ -333,11 +357,23 @@ def evaluate(
         Path,
         cyclopts.Parameter(help="Path to YAML config file"),
     ],
+    model_name: Annotated[
+        str | None,
+        cyclopts.Parameter(
+            name="--model-name",
+            help=(
+                "Checkpoint directory name written by 'fdm train --model-name'. "
+                "When set, predictions are read from "
+                "<predict_dir>/<model_name>/<typecode>/ and metrics written to "
+                "<data_dir>/model_performance/<model_name>/. Defaults to <arch>."
+            ),
+        ),
+    ] = None,
 ) -> None:
     """Compute prediction error metrics per flight phase."""
     from node_fdm_pipeline.commands.evaluate import run_evaluate
 
-    run_evaluate(arch=arch, config=config)
+    run_evaluate(arch=arch, config=config, model_name=model_name)
 
 
 @app.command(name="aircraft-list")

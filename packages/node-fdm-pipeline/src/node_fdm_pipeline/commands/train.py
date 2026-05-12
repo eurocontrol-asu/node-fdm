@@ -35,6 +35,9 @@ class _TrainOverrides:
     lambda_tracking: float | None
     use_mode_weights: bool | None
     train_limit: int | None
+    activation: str | None = None
+    seed: int | None = None
+    mode_weight_alpha: float | None = None
 
 
 @dataclass(frozen=True)
@@ -77,6 +80,9 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
     use_mode_weights = (
         ov.use_mode_weights if ov.use_mode_weights is not None else ctx.cfg_use_mode_weights
     )
+    mode_weight_alpha = (
+        ov.mode_weight_alpha if ov.mode_weight_alpha is not None else ctx.cfg_mode_weight_alpha
+    )
     return TrainingConfig(
         architecture_name=ctx.info.name,
         model_name=ov.model_name or f"{ctx.info.name}_{acft}",
@@ -100,7 +106,9 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
         },
         eta_min=1e-5,
         use_mode_weights=use_mode_weights,
-        mode_weight_alpha=ctx.cfg_mode_weight_alpha,
+        mode_weight_alpha=mode_weight_alpha,
+        activation=ov.activation or "silu",
+        seed=ov.seed,
     )
 
 
@@ -193,6 +201,9 @@ def run_training(
     lambda_tracking: float | None = None,
     use_mode_weights: bool | None = None,
     train_limit: int | None = None,
+    activation: str | None = None,
+    seed: int | None = None,
+    mode_weight_alpha: float | None = None,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
 
@@ -240,6 +251,9 @@ def run_training(
             lambda_tracking=lambda_tracking,
             use_mode_weights=use_mode_weights,
             train_limit=train_limit,
+            activation=activation,
+            seed=seed,
+            mode_weight_alpha=mode_weight_alpha,
         ),
         cfg_use_mode_weights=cfg.training.use_mode_weights,
         cfg_mode_weight_alpha=cfg.training.mode_weight_alpha,

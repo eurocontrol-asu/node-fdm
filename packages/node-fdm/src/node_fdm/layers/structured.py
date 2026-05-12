@@ -36,6 +36,7 @@ class StructuredLayer(nn.Module):
         scale_dict: dict[str, float] | None = None,
         cap_dict: dict[str, float] | None = None,
         output_init_biases: dict[str, float] | None = None,
+        activation: type[nn.Module] = nn.SiLU,
     ) -> None:
         """Initialize structured layer.
 
@@ -61,7 +62,12 @@ class StructuredLayer(nn.Module):
         self.output_cols = output_cols
 
         self.normalizer = InputNormalizer(input_mean_dict, input_std_dict, modes=normalize_modes)
-        self.backbone = Backbone(input_dim, hidden_dim=backbone_dim, num_layers=backbone_depth)
+        self.backbone = Backbone(
+            input_dim,
+            hidden_dim=backbone_dim,
+            num_layers=backbone_depth,
+            activation=activation,
+        )
 
         _activations = activations or {}
         _init_biases = output_init_biases or {}
@@ -75,6 +81,7 @@ class StructuredLayer(nn.Module):
                 num_layers=head_depth,
                 last_activation=_activations.get(col),
                 output_init_bias=_init_biases.get(col, 0.0),
+                activation=activation,
             )
 
         self.heads = MultiLayerDict(self.output_cols, head_factory)

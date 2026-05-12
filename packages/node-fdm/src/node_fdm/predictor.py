@@ -77,6 +77,8 @@ class ModelMeta(BaseModel):
     method: str = "euler"
     stats_dict: dict[str, ColumnStats]
     optimizer_saved: bool = False
+    activation: str = "silu"
+    seed: int | None = None
 
     @classmethod
     def from_json(cls, path: Path) -> ModelMeta:
@@ -127,6 +129,7 @@ class NodeFDMPredictor:
             stats_dict=stats_plain,
             model_params=self.meta.model_params,
             model_path=self.model_path,
+            activation=self.meta.activation,
         ).to(self.device)
         self.model.eval()
         log.info(

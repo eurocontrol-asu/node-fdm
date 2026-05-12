@@ -10,10 +10,12 @@ from __future__ import annotations
 import csv
 import json
 import math
+import random
 from collections.abc import Sequence
 from pathlib import Path
 from typing import Any
 
+import numpy as np
 import structlog
 import torch
 import torch.nn as nn
@@ -101,6 +103,8 @@ class TrainingConfig(BaseModel):
     warmup_start_lr: float = Field(default=1e-5, gt=0)
     use_mode_weights: bool = False
     mode_weight_alpha: float = Field(default=0.5, ge=0.0, le=1.0)
+    activation: str = Field(default="silu", pattern="^(silu|relu|gelu|tanh)$")
+    seed: int | None = Field(default=None, ge=0)
 
 
 def _collate_flight_samples(
@@ -159,6 +163,18 @@ class ODETrainer:
         self.config = config
         self.device = torch.device(device)
 
+        # Seed the global RNGs as early as possible so that all downstream
+        # randomness (weight init, shuffle, dropout, CUDA) shares the same
+        # source. Default (``None``) preserves prior non-deterministic
+        # behavior; the DataLoader generator below stays at seed 0 only
+        # when no explicit seed is requested.
+        if config.seed is not None:
+            random.seed(config.seed)
+            np.random.seed(config.seed)
+            torch.manual_seed(config.seed)
+            if torch.cuda.is_available():
+                torch.cuda.manual_seed_all(config.seed)
+
         self.spec: ArchitectureSpec = get(config.architecture_name)
         self.model_dir = model_dir / config.model_name
         self.model_dir.mkdir(parents=True, exist_ok=True)
@@ -205,9 +221,12 @@ class ODETrainer:
             derived_scale_floor_ratio=scale_floor,
         )
 
-        self.model = FlightDynamicsModel(self.spec, model_stats, config.model_params).to(
-            self.device
-        )
+        self.model = FlightDynamicsModel(
+            self.spec,
+            model_stats,
+            config.model_params,
+            activation=config.activation,
+        ).to(self.device)
         if self.device.type == "cuda":
             self.model = torch.compile(self.model)
 
@@ -244,7 +263,7 @@ class ODETrainer:
             shuffle=True,
             num_workers=self.config.num_workers,
             collate_fn=_collate_flight_samples,
-            generator=torch.Generator().manual_seed(0),
+            generator=torch.Generator().manual_seed(self.config.seed or 0),
             pin_memory=_pin,
         )
         self.val_loader = DataLoader(
@@ -278,6 +297,11 @@ class ODETrainer:
             "method": self.config.method,
             "stats_dict": self.stats_dict,
             "optimizer_saved": optimizer_path.exists(),
+            "activation": self.config.activation,
+            "seed": self.config.seed,
+            "epochs": self.config.epochs,
+            "use_mode_weights": self.config.use_mode_weights,
+            "mode_weight_alpha": self.config.mode_weight_alpha,
         }
         meta_path = self.model_dir / "meta.json"
         with meta_path.open("w") as f:
