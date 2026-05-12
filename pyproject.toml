@@ -1,5 +1,5 @@
 [project]
-name = "node-fdm"
+name = "node-fdm-workspace"
 version = "0.0.0"
 description = "Physics-guided Neural ODE framework for aircraft flight dynamics"
 readme = "README.md"
