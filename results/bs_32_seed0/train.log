@@ -1,0 +1,194 @@
+
+$ uv run fdm train --arch adsb --config results/bs_32_seed0/config.yaml --model-name bs_32_seed0 --epochs 50 --batch-size 32 --lr 0.001 --method rk4 --seq-len 60 --train-limit 5000 --activation silu --seed 0 --device cuda --use-mode-weights --mode-weight-alpha 0.5
+2026-05-12 16:19:17 [info     ] train_start                    arch=adsb device=cuda typecodes=['A320']
+2026-05-12 16:19:18 [info     ] train_typecode                 typecode=A320
+2026-05-12 16:19:18 [info     ] mode_weights_computed          alpha=0.5 bottom5_labels=[['ALT_MACH', 0.6206242276704164, 556092], ['ALT_UNK', 0.6891691293583678, 450975], ['TURN', 0.8913340435092099, 269602], ['UNKVERT_MACH', 0.9861637175043825, 220245], ['ALT_CAS', 1.0707556265239335, 186820]] imbalance_ratio=40.174252275682704 n_labels=13 top5_labels=[['VZ_CAS', 3.9337125975553753, 13842], ['VZ_UNK', 2.533593642654822, 33368], ['GAMMA_CAS', 2.453056495492336, 35595], ['VZ_MACH', 2.0015537788607305, 53465], ['UNKVERT_CAS', 1.936559122733483, 57114]] weight_ratio_max_over_min=6.33831620193271
+2026-05-12 16:19:18 [info     ] loading_data                   train_flights=1594 val_flights=247
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_g_sin_gamma_ms2
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_cos_gamma
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_q_pa
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_g_over_v
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_lat_wind_ms
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_drift_rad
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_track_rad
+2026-05-12 16:19:18 [warning  ] e1_column_missing              column=fdm_heading_diff_rad
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_g_sin_gamma_ms2
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_cos_gamma
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_q_pa
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_g_over_v
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_lat_wind_ms
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_drift_rad
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_track_rad
+2026-05-12 16:19:36 [warning  ] e1_column_missing              column=fdm_heading_diff_rad
+2026-05-12 16:19:39 [info     ] data_loaded                    train_samples=23212 val_samples=3628
+2026-05-12 16:19:56 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 16:19:56 [info     ] trainer_initialized            architecture=node_adsb_v1 device=cuda train_samples=23212 val_samples=3628
+2026-05-12 16:19:56 [info     ] preloading_data_to_gpu
+2026-05-12 16:19:56 [debug    ] epoch_start                    epoch=1 total_epochs=50
+/data/common/dataiku/config/projects/NODEFDM/lib/python/.venv/lib/python3.12/site-packages/torch/_inductor/compile_fx.py:321: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+  warnings.warn(
+2026-05-12 16:20:17 [info     ] debug_magnitudes               norm_mean=['8568.283203', '-0.001322', '213.622833', '3.253931'] norm_std=['2269.236084', '0.038830', '32.838379', '1.246786'] ode_loss=1.214532
+W0512 16:33:03.977000 3804678 torch/_dynamo/convert_frame.py:1676] [0/8] torch._dynamo hit config.recompile_limit (8)
+W0512 16:33:03.977000 3804678 torch/_dynamo/convert_frame.py:1676] [0/8]    function: 'forward' (/data/common/dataiku/config/projects/NODEFDM/lib/python/packages/node-fdm/src/node_fdm/models/fdm.py:181)
+W0512 16:33:03.977000 3804678 torch/_dynamo/convert_frame.py:1676] [0/8]    last reason: 0/7: tensor 'self.history['raw_alt_m']' size mismatch at index 1. expected 1, actual 2
+W0512 16:33:03.977000 3804678 torch/_dynamo/convert_frame.py:1676] [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+W0512 16:33:03.977000 3804678 torch/_dynamo/convert_frame.py:1676] [0/8] To diagnose recompilation issues, see https://pytorch.org/docs/main/compile/programming_model.recompilation.html
+2026-05-12 16:33:04 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 16:33:04 [debug    ] model_saved                    epoch=1
+2026-05-12 16:33:04 [info     ] epoch_complete                 epoch=1 is_best=True lr=0.0002079999999999997 total_epochs=50 train_loss=0.214051 val_loss=0.071832
+2026-05-12 16:33:04 [debug    ] epoch_start                    epoch=2 total_epochs=50
+2026-05-12 16:44:57 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 16:44:57 [debug    ] model_saved                    epoch=2
+2026-05-12 16:44:57 [info     ] epoch_complete                 epoch=2 is_best=True lr=0.0004059999999999966 total_epochs=50 train_loss=0.068999 val_loss=0.045219
+2026-05-12 16:44:57 [debug    ] epoch_start                    epoch=3 total_epochs=50
+2026-05-12 16:56:48 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 16:56:48 [debug    ] model_saved                    epoch=3
+2026-05-12 16:56:48 [info     ] epoch_complete                 epoch=3 is_best=True lr=0.0006039999999999978 total_epochs=50 train_loss=0.046842 val_loss=0.039853
+2026-05-12 16:56:48 [debug    ] epoch_start                    epoch=4 total_epochs=50
+2026-05-12 17:08:37 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 17:08:37 [debug    ] model_saved                    epoch=4
+2026-05-12 17:08:37 [info     ] epoch_complete                 epoch=4 is_best=True lr=0.0008019999999999982 total_epochs=50 train_loss=0.044106 val_loss=0.038534
+2026-05-12 17:08:37 [debug    ] epoch_start                    epoch=5 total_epochs=50
+2026-05-12 17:20:26 [info     ] epoch_complete                 epoch=5 is_best=False lr=0.001 total_epochs=50 train_loss=0.045797 val_loss=0.039959
+2026-05-12 17:20:26 [debug    ] epoch_start                    epoch=6 total_epochs=50
+2026-05-12 17:32:13 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 17:32:13 [debug    ] model_saved                    epoch=6
+2026-05-12 17:32:13 [info     ] epoch_complete                 epoch=6 is_best=True lr=0.0009780000000000073 total_epochs=50 train_loss=0.041656 val_loss=0.037001
+2026-05-12 17:32:13 [debug    ] epoch_start                    epoch=7 total_epochs=50
+2026-05-12 17:43:58 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 17:43:58 [debug    ] model_saved                    epoch=7
+2026-05-12 17:43:58 [info     ] epoch_complete                 epoch=7 is_best=True lr=0.0009560000000000082 total_epochs=50 train_loss=0.040615 val_loss=0.03668
+2026-05-12 17:43:58 [debug    ] epoch_start                    epoch=8 total_epochs=50
+2026-05-12 17:55:44 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 17:55:44 [debug    ] model_saved                    epoch=8
+2026-05-12 17:55:44 [info     ] epoch_complete                 epoch=8 is_best=True lr=0.0009340000000000075 total_epochs=50 train_loss=0.039988 val_loss=0.03587
+2026-05-12 17:55:44 [debug    ] epoch_start                    epoch=9 total_epochs=50
+2026-05-12 18:07:41 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 18:07:41 [debug    ] model_saved                    epoch=9
+2026-05-12 18:07:41 [info     ] epoch_complete                 epoch=9 is_best=True lr=0.0009120000000000046 total_epochs=50 train_loss=0.039365 val_loss=0.034872
+2026-05-12 18:07:41 [debug    ] epoch_start                    epoch=10 total_epochs=50
+2026-05-12 18:19:26 [info     ] epoch_complete                 epoch=10 is_best=False lr=0.0008900000000000022 total_epochs=50 train_loss=0.038913 val_loss=0.034926
+2026-05-12 18:19:26 [debug    ] epoch_start                    epoch=11 total_epochs=50
+2026-05-12 18:31:14 [info     ] epoch_complete                 epoch=11 is_best=False lr=0.000867999999999998 total_epochs=50 train_loss=0.038413 val_loss=0.036359
+2026-05-12 18:31:14 [debug    ] epoch_start                    epoch=12 total_epochs=50
+2026-05-12 18:42:59 [info     ] epoch_complete                 epoch=12 is_best=False lr=0.0008459999999999935 total_epochs=50 train_loss=0.038079 val_loss=0.035053
+2026-05-12 18:42:59 [debug    ] epoch_start                    epoch=13 total_epochs=50
+2026-05-12 18:54:44 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 18:54:44 [debug    ] model_saved                    epoch=13
+2026-05-12 18:54:44 [info     ] epoch_complete                 epoch=13 is_best=True lr=0.0008239999999999882 total_epochs=50 train_loss=0.037825 val_loss=0.034045
+2026-05-12 18:54:44 [debug    ] epoch_start                    epoch=14 total_epochs=50
+2026-05-12 19:06:29 [info     ] epoch_complete                 epoch=14 is_best=False lr=0.0008019999999999828 total_epochs=50 train_loss=0.03751 val_loss=0.034187
+2026-05-12 19:06:29 [debug    ] epoch_start                    epoch=15 total_epochs=50
+2026-05-12 19:18:16 [info     ] epoch_complete                 epoch=15 is_best=False lr=0.0007799999999999775 total_epochs=50 train_loss=0.037308 val_loss=0.034374
+2026-05-12 19:18:16 [debug    ] epoch_start                    epoch=16 total_epochs=50
+2026-05-12 19:29:50 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 19:29:50 [debug    ] model_saved                    epoch=16
+2026-05-12 19:29:50 [info     ] epoch_complete                 epoch=16 is_best=True lr=0.0007579999999999722 total_epochs=50 train_loss=0.037114 val_loss=0.033923
+2026-05-12 19:29:50 [debug    ] epoch_start                    epoch=17 total_epochs=50
+2026-05-12 19:41:15 [info     ] epoch_complete                 epoch=17 is_best=False lr=0.0007359999999999669 total_epochs=50 train_loss=0.036833 val_loss=0.033927
+2026-05-12 19:41:15 [debug    ] epoch_start                    epoch=18 total_epochs=50
+2026-05-12 19:52:39 [info     ] epoch_complete                 epoch=18 is_best=False lr=0.0007139999999999616 total_epochs=50 train_loss=0.036722 val_loss=0.034078
+2026-05-12 19:52:39 [debug    ] epoch_start                    epoch=19 total_epochs=50
+2026-05-12 20:04:06 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 20:04:06 [debug    ] model_saved                    epoch=19
+2026-05-12 20:04:06 [info     ] epoch_complete                 epoch=19 is_best=True lr=0.0006919999999999563 total_epochs=50 train_loss=0.036635 val_loss=0.033185
+2026-05-12 20:04:06 [debug    ] epoch_start                    epoch=20 total_epochs=50
+2026-05-12 20:15:28 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 20:15:28 [debug    ] model_saved                    epoch=20
+2026-05-12 20:15:28 [info     ] epoch_complete                 epoch=20 is_best=True lr=0.000669999999999951 total_epochs=50 train_loss=0.03626 val_loss=0.032916
+2026-05-12 20:15:28 [debug    ] epoch_start                    epoch=21 total_epochs=50
+2026-05-12 20:26:54 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 20:26:54 [debug    ] model_saved                    epoch=21
+2026-05-12 20:26:54 [info     ] epoch_complete                 epoch=21 is_best=True lr=0.0006479999999999457 total_epochs=50 train_loss=0.036497 val_loss=0.032358
+2026-05-12 20:26:54 [debug    ] epoch_start                    epoch=22 total_epochs=50
+2026-05-12 20:38:21 [info     ] epoch_complete                 epoch=22 is_best=False lr=0.0006259999999999404 total_epochs=50 train_loss=0.037166 val_loss=0.03304
+2026-05-12 20:38:21 [debug    ] epoch_start                    epoch=23 total_epochs=50
+2026-05-12 20:49:46 [info     ] epoch_complete                 epoch=23 is_best=False lr=0.0006039999999999351 total_epochs=50 train_loss=0.03606 val_loss=0.032702
+2026-05-12 20:49:46 [debug    ] epoch_start                    epoch=24 total_epochs=50
+2026-05-12 21:01:09 [info     ] epoch_complete                 epoch=24 is_best=False lr=0.0005819999999999298 total_epochs=50 train_loss=0.035749 val_loss=0.032874
+2026-05-12 21:01:09 [debug    ] epoch_start                    epoch=25 total_epochs=50
+2026-05-12 21:12:56 [info     ] epoch_complete                 epoch=25 is_best=False lr=0.0005599999999999245 total_epochs=50 train_loss=0.037763 val_loss=0.032566
+2026-05-12 21:12:56 [debug    ] epoch_start                    epoch=26 total_epochs=50
+2026-05-12 21:24:23 [info     ] epoch_complete                 epoch=26 is_best=False lr=0.0005379999999999192 total_epochs=50 train_loss=0.035519 val_loss=0.032655
+2026-05-12 21:24:23 [debug    ] epoch_start                    epoch=27 total_epochs=50
+2026-05-12 21:35:47 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 21:35:47 [debug    ] model_saved                    epoch=27
+2026-05-12 21:35:47 [info     ] epoch_complete                 epoch=27 is_best=True lr=0.0005159999999999139 total_epochs=50 train_loss=0.035456 val_loss=0.032339
+2026-05-12 21:35:47 [debug    ] epoch_start                    epoch=28 total_epochs=50
+2026-05-12 21:47:13 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 21:47:13 [debug    ] model_saved                    epoch=28
+2026-05-12 21:47:13 [info     ] epoch_complete                 epoch=28 is_best=True lr=0.0004939999999999086 total_epochs=50 train_loss=0.035553 val_loss=0.032159
+2026-05-12 21:47:13 [debug    ] epoch_start                    epoch=29 total_epochs=50
+2026-05-12 21:58:37 [info     ] epoch_complete                 epoch=29 is_best=False lr=0.0004719999999999097 total_epochs=50 train_loss=0.035268 val_loss=0.032272
+2026-05-12 21:58:37 [debug    ] epoch_start                    epoch=30 total_epochs=50
+2026-05-12 22:10:05 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 22:10:05 [debug    ] model_saved                    epoch=30
+2026-05-12 22:10:05 [info     ] epoch_complete                 epoch=30 is_best=True lr=0.0004499999999999135 total_epochs=50 train_loss=0.035747 val_loss=0.031956
+2026-05-12 22:10:05 [debug    ] epoch_start                    epoch=31 total_epochs=50
+2026-05-12 22:21:29 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-12 22:21:29 [debug    ] model_saved                    epoch=31
+2026-05-12 22:21:29 [info     ] epoch_complete                 epoch=31 is_best=True lr=0.0004279999999999172 total_epochs=50 train_loss=0.034957 val_loss=0.031698
+2026-05-12 22:21:29 [debug    ] epoch_start                    epoch=32 total_epochs=50
+2026-05-12 22:32:55 [info     ] epoch_complete                 epoch=32 is_best=False lr=0.00040599999999991863 total_epochs=50 train_loss=0.034831 val_loss=0.034067
+2026-05-12 22:32:55 [debug    ] epoch_start                    epoch=33 total_epochs=50
+2026-05-12 22:44:20 [info     ] epoch_complete                 epoch=33 is_best=False lr=0.00038399999999991886 total_epochs=50 train_loss=0.037994 val_loss=0.03792
+2026-05-12 22:44:20 [debug    ] epoch_start                    epoch=34 total_epochs=50
+2026-05-12 22:55:44 [info     ] epoch_complete                 epoch=34 is_best=False lr=0.00036199999999992076 total_epochs=50 train_loss=0.036232 val_loss=0.032409
+2026-05-12 22:55:44 [debug    ] epoch_start                    epoch=35 total_epochs=50
+2026-05-12 23:07:08 [info     ] epoch_complete                 epoch=35 is_best=False lr=0.00033999999999992115 total_epochs=50 train_loss=0.034994 val_loss=0.032191
+2026-05-12 23:07:08 [debug    ] epoch_start                    epoch=36 total_epochs=50
+2026-05-12 23:18:29 [info     ] epoch_complete                 epoch=36 is_best=False lr=0.00031799999999992186 total_epochs=50 train_loss=0.034713 val_loss=0.031713
+2026-05-12 23:18:29 [debug    ] epoch_start                    epoch=37 total_epochs=50
+2026-05-12 23:29:56 [info     ] epoch_complete                 epoch=37 is_best=False lr=0.00029599999999992284 total_epochs=50 train_loss=0.03762 val_loss=0.035711
+2026-05-12 23:29:56 [debug    ] epoch_start                    epoch=38 total_epochs=50
+2026-05-12 23:41:20 [info     ] epoch_complete                 epoch=38 is_best=False lr=0.00027399999999992263 total_epochs=50 train_loss=0.038778 val_loss=0.032355
+2026-05-12 23:41:20 [debug    ] epoch_start                    epoch=39 total_epochs=50
+2026-05-12 23:52:45 [info     ] epoch_complete                 epoch=39 is_best=False lr=0.0002519999999999225 total_epochs=50 train_loss=0.035389 val_loss=0.031779
+2026-05-12 23:52:45 [debug    ] epoch_start                    epoch=40 total_epochs=50
+2026-05-13 00:04:11 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 00:04:11 [debug    ] model_saved                    epoch=40
+2026-05-13 00:04:11 [info     ] epoch_complete                 epoch=40 is_best=True lr=0.00022999999999992737 total_epochs=50 train_loss=0.035025 val_loss=0.031659
+2026-05-13 00:04:11 [debug    ] epoch_start                    epoch=41 total_epochs=50
+2026-05-13 00:15:39 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 00:15:39 [debug    ] model_saved                    epoch=41
+2026-05-13 00:15:39 [info     ] epoch_complete                 epoch=41 is_best=True lr=0.00020799999999993445 total_epochs=50 train_loss=0.034371 val_loss=0.031366
+2026-05-13 00:15:39 [debug    ] epoch_start                    epoch=42 total_epochs=50
+2026-05-13 00:27:04 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 00:27:04 [debug    ] model_saved                    epoch=42
+2026-05-13 00:27:04 [info     ] epoch_complete                 epoch=42 is_best=True lr=0.00018599999999994207 total_epochs=50 train_loss=0.034218 val_loss=0.031281
+2026-05-13 00:27:04 [debug    ] epoch_start                    epoch=43 total_epochs=50
+2026-05-13 00:43:22 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 00:43:22 [debug    ] model_saved                    epoch=43
+2026-05-13 00:43:22 [info     ] epoch_complete                 epoch=43 is_best=True lr=0.00016399999999995 total_epochs=50 train_loss=0.03411 val_loss=0.031203
+2026-05-13 00:43:22 [debug    ] epoch_start                    epoch=44 total_epochs=50
+2026-05-13 01:00:59 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 01:00:59 [debug    ] model_saved                    epoch=44
+2026-05-13 01:00:59 [info     ] epoch_complete                 epoch=44 is_best=True lr=0.00014199999999995773 total_epochs=50 train_loss=0.033976 val_loss=0.031029
+2026-05-13 01:00:59 [debug    ] epoch_start                    epoch=45 total_epochs=50
+2026-05-13 01:12:19 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 01:12:19 [debug    ] model_saved                    epoch=45
+2026-05-13 01:12:19 [info     ] epoch_complete                 epoch=45 is_best=True lr=0.00011999999999996525 total_epochs=50 train_loss=0.033848 val_loss=0.031014
+2026-05-13 01:12:19 [debug    ] epoch_start                    epoch=46 total_epochs=50
+2026-05-13 01:23:40 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 01:23:40 [debug    ] model_saved                    epoch=46
+2026-05-13 01:23:40 [info     ] epoch_complete                 epoch=46 is_best=True lr=9.799999999997127e-05 total_epochs=50 train_loss=0.033928 val_loss=0.030961
+2026-05-13 01:23:40 [debug    ] epoch_start                    epoch=47 total_epochs=50
+2026-05-13 01:35:01 [info     ] epoch_complete                 epoch=47 is_best=False lr=7.599999999997659e-05 total_epochs=50 train_loss=0.033715 val_loss=0.031078
+2026-05-13 01:35:01 [debug    ] epoch_start                    epoch=48 total_epochs=50
+2026-05-13 01:46:19 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 01:46:19 [debug    ] model_saved                    epoch=48
+2026-05-13 01:46:19 [info     ] epoch_complete                 epoch=48 is_best=True lr=5.3999999999982325e-05 total_epochs=50 train_loss=0.033645 val_loss=0.030872
+2026-05-13 01:46:19 [debug    ] epoch_start                    epoch=49 total_epochs=50
+2026-05-13 01:57:37 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 01:57:37 [debug    ] model_saved                    epoch=49
+2026-05-13 01:57:37 [info     ] epoch_complete                 epoch=49 is_best=True lr=3.199999999998954e-05 total_epochs=50 train_loss=0.033554 val_loss=0.030834
+2026-05-13 01:57:37 [debug    ] epoch_start                    epoch=50 total_epochs=50
+2026-05-13 02:09:03 [debug    ] meta_saved                     path=data/models/bs_32_seed0/meta.json
+2026-05-13 02:09:03 [debug    ] model_saved                    epoch=50
+2026-05-13 02:09:03 [info     ] epoch_complete                 epoch=50 is_best=True lr=9.999999999996658e-06 total_epochs=50 train_loss=0.033452 val_loss=0.03076
+2026-05-13 02:09:03 [info     ] training_log_saved             path=data/models/bs_32_seed0/training_losses.csv
+2026-05-13 02:09:03 [info     ] training_complete              best_val_loss=0.03076
+2026-05-13 02:09:03 [info     ] train_typecode_done            typecode=A320
+2026-05-13 02:09:03 [info     ] train_done                     typecodes=['A320']
+
+$ uv run fdm train --arch adsb --config results/bs_32_seed0/config.yaml --model-name bs_32_seed0 --epochs 50 --batch-size 32 --lr 0.001 --method rk4 --seq-len 60 --train-limit 5000 --activation silu --seed 0 --device cuda --use-mode-weights --mode-weight-alpha 0.5

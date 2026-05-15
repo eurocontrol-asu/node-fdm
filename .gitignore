@@ -11,6 +11,7 @@ dist/
 *.egg-info/
 *.egg
 .eggs/
+*torch_cache/
 
 # Virtual environments
 .venv/
