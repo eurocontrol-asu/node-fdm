@@ -28,7 +28,7 @@ from typing import Annotated, Any
 import cyclopts
 import structlog
 
-from scripts.sweep_matrix import RunConfig, default_matrix, smoke_matrix
+from scripts.sweep_matrix import RunConfig, default_matrix, run2_matrix, smoke_matrix
 
 __all__ = ["app", "main"]
 
@@ -169,6 +169,12 @@ def _train_args(run: RunConfig, config_path: Path) -> list[str]:
         run.activation,
         "--seed",
         str(run.seed),
+        "--backbone-depth",
+        str(run.backbone_depth),
+        "--head-depth",
+        str(run.head_depth),
+        "--hidden-width",
+        str(run.hidden_width),
         "--device",
         os.environ.get("FDM_DEVICE", "cuda"),
     ]
@@ -279,6 +285,8 @@ def _execute_run(
             (out_dir / "status.json").write_text(json.dumps(status, indent=2))
             return status
 
+    _copy_training_losses(out_dir, run, template)
+
     metrics = _parse_metrics(out_dir, run, template)
     (out_dir / "metrics.json").write_text(json.dumps(metrics, indent=2))
 
@@ -287,6 +295,29 @@ def _execute_run(
     status["wall_clock_sec"] = status["finished_at"] - status["started_at"]
     (out_dir / "status.json").write_text(json.dumps(status, indent=2))
     return status
+
+
+def _copy_training_losses(out_dir: Path, run: RunConfig, template_path: Path) -> None:
+    """Copy per-epoch ``training_losses.csv`` from the model dir into the run dir.
+
+    The trainer writes ``{models_dir}/{model_name}/training_losses.csv`` where
+    ``model_name = run.run_id`` (forced via ``--model-name``). When several
+    typecodes share that run_id (multi-typecode config), each one overwrites
+    the same path — we keep the last one. We don't error out if the file is
+    missing, so the run still completes if the trainer never reached the CSV
+    write step.
+    """
+    import shutil
+
+    import yaml
+
+    cfg = yaml.safe_load(template_path.read_text()) or {}
+    paths = cfg.get("paths", {})
+    data_dir = Path(paths["data_dir"])
+    models_dir = data_dir / paths.get("models_dir", "models")
+    src = models_dir / run.run_id / "training_losses.csv"
+    if src.exists():
+        shutil.copy2(src, out_dir / "training_losses.csv")
 
 
 def _parse_metrics(out_dir: Path, run: RunConfig, template_path: Path) -> dict[str, Any]:
@@ -401,8 +432,12 @@ def _filter_runs(runs: list[RunConfig], state: QueueState) -> list[RunConfig]:
 # ---------------------------------------------------------------------------
 
 
-def _matrix(*, smoke: bool, arch: str) -> list[RunConfig]:
-    return smoke_matrix(arch=arch) if smoke else default_matrix(arch=arch)
+def _matrix(*, smoke: bool, run2: bool, arch: str) -> list[RunConfig]:
+    if smoke:
+        return smoke_matrix(arch=arch)
+    if run2:
+        return run2_matrix(arch=arch)
+    return default_matrix(arch=arch)
 
 
 @app.command
@@ -412,10 +447,14 @@ def plan(
         bool,
         cyclopts.Parameter(help="Use the smoke matrix (capped train_limit, epochs, seeds)"),
     ] = False,
+    run2: Annotated[
+        bool,
+        cyclopts.Parameter(help="Use the run2 matrix (focused sweep after run 1)"),
+    ] = False,
     arch: Annotated[str, cyclopts.Parameter(help="Architecture identifier")] = "adsb",
 ) -> None:
     """Print the matrix that would be executed; touches no files."""
-    runs = _matrix(smoke=smoke, arch=arch)
+    runs = _matrix(smoke=smoke, run2=run2, arch=arch)
     print(f"runs: {len(runs)}")
     print(
         f"{'run_id':<32} {'axis':<14} {'seed':<5} "
@@ -436,6 +475,10 @@ def run(
     smoke: Annotated[
         bool,
         cyclopts.Parameter(help="Use the smoke matrix (capped train_limit, epochs, seeds)"),
+    ] = False,
+    run2: Annotated[
+        bool,
+        cyclopts.Parameter(help="Use the run2 matrix (focused sweep after run 1)"),
     ] = False,
     arch: Annotated[str, cyclopts.Parameter(help="Architecture identifier")] = "adsb",
     config_template: Annotated[
@@ -475,13 +518,18 @@ def run(
 ) -> None:
     """Execute the sweep with a queue, resuming any completed runs from disk."""
     if results_dir is None:
-        results_dir = Path("results_smoke") if smoke else Path("results")
+        if smoke:
+            results_dir = Path("results_smoke")
+        elif run2:
+            results_dir = Path("results_run2")
+        else:
+            results_dir = Path("results")
     results_dir.mkdir(parents=True, exist_ok=True)
 
     if timeout_s is None and smoke:
         timeout_s = 1800  # 30 min cap per smoke run
 
-    runs_all = _matrix(smoke=smoke, arch=arch)
+    runs_all = _matrix(smoke=smoke, run2=run2, arch=arch)
     state = _load_queue(results_dir)
     state.running = []  # discard stale running entries from a prior crash
     todo = _filter_runs(runs_all, state)

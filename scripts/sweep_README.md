@@ -34,6 +34,7 @@ results_smoke/{run_id}/
 ├── predict.log
 ├── evaluate.log
 ├── status.json         # {status, exit_codes, wall_clock_sec, gpu_id}
+├── training_losses.csv # per-epoch (train_loss, val_loss) — copied from model_dir
 └── metrics.json        # parsed performance.parquet (score_primary + breakdown)
 ```
 

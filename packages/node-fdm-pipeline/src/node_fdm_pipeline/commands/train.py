@@ -38,6 +38,9 @@ class _TrainOverrides:
     activation: str | None = None
     seed: int | None = None
     mode_weight_alpha: float | None = None
+    backbone_depth: int | None = None
+    head_depth: int | None = None
+    hidden_width: int | None = None
 
 
 @dataclass(frozen=True)
@@ -86,7 +89,11 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
     return TrainingConfig(
         architecture_name=ctx.info.name,
         model_name=ov.model_name or f"{ctx.info.name}_{acft}",
-        model_params=(3, 2, 48),
+        model_params=(
+            ov.backbone_depth or 3,
+            ov.head_depth or 2,
+            ov.hidden_width or 48,
+        ),
         step=4.0,
         shift=ov.shift or effective_seq_len,
         lr=ov.lr or 5e-4,
@@ -204,6 +211,9 @@ def run_training(
     activation: str | None = None,
     seed: int | None = None,
     mode_weight_alpha: float | None = None,
+    backbone_depth: int | None = None,
+    head_depth: int | None = None,
+    hidden_width: int | None = None,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
 
@@ -254,6 +264,9 @@ def run_training(
             activation=activation,
             seed=seed,
             mode_weight_alpha=mode_weight_alpha,
+            backbone_depth=backbone_depth,
+            head_depth=head_depth,
+            hidden_width=hidden_width,
         ),
         cfg_use_mode_weights=cfg.training.use_mode_weights,
         cfg_mode_weight_alpha=cfg.training.mode_weight_alpha,

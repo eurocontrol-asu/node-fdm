@@ -22,6 +22,7 @@ __all__ = [
     "SweepAxes",
     "build_matrix",
     "default_matrix",
+    "run2_matrix",
     "smoke_matrix",
 ]
 
@@ -39,6 +40,9 @@ class Baseline(BaseModel, frozen=True):
     seq_len: int = 60
     method: Literal["euler", "rk4"] = "rk4"
     predict_limit: int | None = None
+    backbone_depth: int = 3
+    head_depth: int = 2
+    hidden_width: int = 48
 
 
 class SweepAxes(BaseModel, frozen=True):
@@ -75,6 +79,9 @@ class RunConfig(BaseModel, frozen=True):
     seq_len: int
     method: str
     predict_limit: int | None = None
+    backbone_depth: int = 3
+    head_depth: int = 2
+    hidden_width: int = 48
 
     arch: str = "adsb"
 
@@ -166,6 +173,9 @@ def build_matrix(
                     seq_len=baseline.seq_len,
                     method=baseline.method,
                     predict_limit=baseline.predict_limit,
+                    backbone_depth=baseline.backbone_depth,
+                    head_depth=baseline.head_depth,
+                    hidden_width=baseline.hidden_width,
                     arch=arch,
                     **kw,  # type: ignore[arg-type]
                 )
@@ -176,6 +186,93 @@ def build_matrix(
 def default_matrix(*, arch: str = "adsb") -> list[RunConfig]:
     """Production sweep: full axes, 3 seeds (~30 runs)."""
     return build_matrix(baseline=Baseline(), axes=SweepAxes(), arch=arch)
+
+
+def run2_matrix(*, arch: str = "adsb") -> list[RunConfig]:
+    """Run 2 sweep: focused around run-1 free-wins, exploring lr / seq_len / capacity.
+
+    Baseline (figée d'après run 1) :
+        bs=64, lr=1e-3, weighting=off, activation=relu, epochs=50, seq_len=60,
+        backbone_depth=3, head_depth=2, hidden_width=48.
+
+    Axes (encadrement symétrique autour de la baseline) :
+        * batch_size : {32, 128}
+        * lr         : {8.5e-4, 1.5e-3}
+        * seq_len    : {30, 120}
+        * activation : {gelu}
+        * hidden_width   : {24, 96}
+        * backbone_depth : {2, 4}
+
+    12 configs x 3 seeds = 36 runs.
+    """
+    base = Baseline(
+        batch_size=64,
+        epochs=50,
+        lr=1e-3,
+        use_mode_weights=False,
+        mode_weight_alpha=0.5,
+        activation="silu",  # placeholder; baseline run2 forces relu below
+        train_limit=5000,
+        seq_len=60,
+        method="rk4",
+        backbone_depth=3,
+        head_depth=2,
+        hidden_width=48,
+    )
+
+    seeds = (0, 1, 2)
+
+    # Each entry: (axis_label, dict of fields overriding baseline for that config)
+    variants: list[tuple[str, dict[str, object]]] = [
+        ("baseline", {"activation": "relu"}),
+        # batch_size
+        ("bs_32", {"activation": "relu", "batch_size": 32}),
+        ("bs_128", {"activation": "relu", "batch_size": 128}),
+        # learning rate
+        ("lr_8.5e-4", {"activation": "relu", "lr": 8.5e-4}),
+        ("lr_1.5e-3", {"activation": "relu", "lr": 1.5e-3}),
+        # sequence length
+        ("seq_30", {"activation": "relu", "seq_len": 30}),
+        ("seq_120", {"activation": "relu", "seq_len": 120}),
+        # activation
+        ("act_gelu", {"activation": "gelu"}),
+        # hidden width (capacity)
+        ("hidden_24", {"activation": "relu", "hidden_width": 24}),
+        ("hidden_96", {"activation": "relu", "hidden_width": 96}),
+        # backbone depth
+        ("backbone_2", {"activation": "relu", "backbone_depth": 2}),
+        ("backbone_4", {"activation": "relu", "backbone_depth": 4}),
+    ]
+
+    runs: list[RunConfig] = []
+    for axis_label, override in variants:
+        for seed in seeds:
+            kw = {
+                "batch_size": base.batch_size,
+                "epochs": base.epochs,
+                "lr": base.lr,
+                "use_mode_weights": base.use_mode_weights,
+                "mode_weight_alpha": base.mode_weight_alpha,
+                "activation": base.activation,
+                "backbone_depth": base.backbone_depth,
+                "head_depth": base.head_depth,
+                "hidden_width": base.hidden_width,
+                "seq_len": base.seq_len,
+                **override,
+            }
+            runs.append(
+                RunConfig(
+                    run_id=f"{axis_label}_seed{seed}",
+                    axis=axis_label,
+                    seed=seed,
+                    train_limit=base.train_limit,
+                    method=base.method,
+                    predict_limit=base.predict_limit,
+                    arch=arch,
+                    **kw,  # type: ignore[arg-type]
+                )
+            )
+    return runs
 
 
 def smoke_matrix(*, arch: str = "adsb") -> list[RunConfig]:

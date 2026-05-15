@@ -135,6 +135,27 @@ def train(
             help="Override cfg.training.mode_weight_alpha (power-law exponent in [0,1])",
         ),
     ] = None,
+    backbone_depth: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--backbone-depth",
+            help="Number of hidden layers in the shared backbone MLP (default: 3)",
+        ),
+    ] = None,
+    head_depth: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--head-depth",
+            help="Number of hidden layers per output head (default: 2)",
+        ),
+    ] = None,
+    hidden_width: Annotated[
+        int | None,
+        cyclopts.Parameter(
+            name="--hidden-width",
+            help="Hidden-layer width (neurons) for backbone and heads (default: 48)",
+        ),
+    ] = None,
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
     from node_fdm_pipeline.commands.train import run_training
@@ -157,6 +178,9 @@ def train(
         activation=activation,
         seed=seed,
         mode_weight_alpha=mode_weight_alpha,
+        backbone_depth=backbone_depth,
+        head_depth=head_depth,
+        hidden_width=hidden_width,
     )
 
 
