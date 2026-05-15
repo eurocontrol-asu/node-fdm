@@ -1,0 +1,16 @@
+{
+  "run_id": "weighting_off_seed2",
+  "axis": "weighting_off",
+  "seed": 2,
+  "batch_size": 128,
+  "epochs": 50,
+  "lr": 0.001,
+  "use_mode_weights": false,
+  "mode_weight_alpha": 0.5,
+  "activation": "silu",
+  "train_limit": 5000,
+  "seq_len": 60,
+  "method": "rk4",
+  "predict_limit": null,
+  "arch": "adsb"
+}

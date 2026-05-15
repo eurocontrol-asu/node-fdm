@@ -1,0 +1,14 @@
+{
+  "run_id": "lr_0.0005_seed0",
+  "gpu_id": 1,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1778649529.199621,
+  "status": "completed",
+  "finished_at": 1778665573.9228995,
+  "wall_clock_sec": 16044.723278522491
+}

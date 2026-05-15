@@ -1,0 +1,14 @@
+{
+  "run_id": "weighting_off_seed0",
+  "gpu_id": 1,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1778665574.2366269,
+  "status": "completed",
+  "finished_at": 1778681724.58341,
+  "wall_clock_sec": 16150.346783161163
+}

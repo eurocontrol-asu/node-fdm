@@ -1,0 +1,16 @@
+{
+  "run_id": "lr_0.003_seed0",
+  "axis": "lr_0.003",
+  "seed": 0,
+  "batch_size": 128,
+  "epochs": 50,
+  "lr": 0.003,
+  "use_mode_weights": true,
+  "mode_weight_alpha": 0.5,
+  "activation": "silu",
+  "train_limit": 5000,
+  "seq_len": 60,
+  "method": "rk4",
+  "predict_limit": null,
+  "arch": "adsb"
+}

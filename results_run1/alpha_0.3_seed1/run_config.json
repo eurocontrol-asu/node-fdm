@@ -1,0 +1,16 @@
+{
+  "run_id": "alpha_0.3_seed1",
+  "axis": "alpha_0.3",
+  "seed": 1,
+  "batch_size": 128,
+  "epochs": 50,
+  "lr": 0.001,
+  "use_mode_weights": true,
+  "mode_weight_alpha": 0.3,
+  "activation": "silu",
+  "train_limit": 5000,
+  "seq_len": 60,
+  "method": "rk4",
+  "predict_limit": null,
+  "arch": "adsb"
+}
