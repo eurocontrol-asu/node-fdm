@@ -23,6 +23,7 @@ __all__ = [
     "build_matrix",
     "default_matrix",
     "run2_matrix",
+    "run3_matrix",
     "smoke_matrix",
 ]
 
@@ -242,6 +243,82 @@ def run2_matrix(*, arch: str = "adsb") -> list[RunConfig]:
         # backbone depth
         ("backbone_2", {"activation": "relu", "backbone_depth": 2}),
         ("backbone_4", {"activation": "relu", "backbone_depth": 4}),
+    ]
+
+    runs: list[RunConfig] = []
+    for axis_label, override in variants:
+        for seed in seeds:
+            kw = {
+                "batch_size": base.batch_size,
+                "epochs": base.epochs,
+                "lr": base.lr,
+                "use_mode_weights": base.use_mode_weights,
+                "mode_weight_alpha": base.mode_weight_alpha,
+                "activation": base.activation,
+                "backbone_depth": base.backbone_depth,
+                "head_depth": base.head_depth,
+                "hidden_width": base.hidden_width,
+                "seq_len": base.seq_len,
+                **override,
+            }
+            runs.append(
+                RunConfig(
+                    run_id=f"{axis_label}_seed{seed}",
+                    axis=axis_label,
+                    seed=seed,
+                    train_limit=base.train_limit,
+                    method=base.method,
+                    predict_limit=base.predict_limit,
+                    arch=arch,
+                    **kw,  # type: ignore[arg-type]
+                )
+            )
+    return runs
+
+
+def run3_matrix(*, arch: str = "adsb") -> list[RunConfig]:
+    """Run 3 sweep: integrate seq=30 and backbone=2 as new baseline.
+
+    Baseline (cumule les acquis run 1 + run 2) :
+        bs=32, lr=1e-3, weighting=off, activation=relu, epochs=50, seq_len=30,
+        backbone_depth=2, head_depth=2, hidden_width=48.
+
+    Axes :
+        * activation : {gelu}
+        * seq_len    : {15, 60}
+        * batch_size : {16, 64}
+        * backbone_depth : {3}
+        * hidden_width   : {32, 64}
+
+    9 configs x 3 seeds = 27 runs.
+    """
+    base = Baseline(
+        batch_size=32,
+        epochs=50,
+        lr=1e-3,
+        use_mode_weights=False,
+        mode_weight_alpha=0.5,
+        activation="relu",
+        train_limit=5000,
+        seq_len=30,
+        method="rk4",
+        backbone_depth=2,
+        head_depth=2,
+        hidden_width=48,
+    )
+
+    seeds = (0, 1, 2)
+
+    variants: list[tuple[str, dict[str, object]]] = [
+        ("baseline", {}),
+        ("act_gelu", {"activation": "gelu"}),
+        ("seq_15", {"seq_len": 15}),
+        ("seq_60", {"seq_len": 60}),
+        ("bs_16", {"batch_size": 16}),
+        ("bs_64", {"batch_size": 64}),
+        ("backbone_3", {"backbone_depth": 3}),
+        ("hidden_32", {"hidden_width": 32}),
+        ("hidden_64", {"hidden_width": 64}),
     ]
 
     runs: list[RunConfig] = []
