@@ -1,0 +1,171 @@
+2026-05-16 13:17:29 [info     ] train_start                    arch=adsb device=cuda typecodes=['A320']
+2026-05-16 13:17:29 [info     ] train_typecode                 typecode=A320
+2026-05-16 13:17:29 [info     ] loading_data                   train_flights=1594 val_flights=247
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_g_sin_gamma_ms2
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_cos_gamma
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_q_pa
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_g_over_v
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_lat_wind_ms
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_drift_rad
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_track_rad
+2026-05-16 13:17:29 [warning  ] e1_column_missing              column=fdm_heading_diff_rad
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_g_sin_gamma_ms2
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_cos_gamma
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_q_pa
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_g_over_v
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_lat_wind_ms
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_drift_rad
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_track_rad
+2026-05-16 13:17:33 [warning  ] e1_column_missing              column=fdm_heading_diff_rad
+2026-05-16 13:17:34 [info     ] data_loaded                    train_samples=23212 val_samples=3628
+2026-05-16 13:17:50 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 13:17:50 [info     ] trainer_initialized            architecture=node_adsb_v1 device=cuda train_samples=23212 val_samples=3628
+2026-05-16 13:17:50 [info     ] preloading_data_to_gpu
+2026-05-16 13:17:50 [debug    ] epoch_start                    epoch=1 total_epochs=50
+/data/common/dataiku/config/projects/NODEFDM/lib/python/.venv/lib/python3.12/site-packages/torch/_inductor/compile_fx.py:321: UserWarning: TensorFloat32 tensor cores for float32 matrix multiplication available but not enabled. Consider setting `torch.set_float32_matmul_precision('high')` for better performance.
+  warnings.warn(
+2026-05-16 13:18:13 [info     ] debug_magnitudes               norm_mean=['8568.283203', '-0.001322', '213.622833', '3.253931'] norm_std=['2269.236084', '0.038830', '32.838379', '1.246786'] ode_loss=1.493363
+W0516 13:25:09.440000 542927 torch/_dynamo/convert_frame.py:1676] [0/8] torch._dynamo hit config.recompile_limit (8)
+W0516 13:25:09.440000 542927 torch/_dynamo/convert_frame.py:1676] [0/8]    function: 'forward' (/data/common/dataiku/config/projects/NODEFDM/lib/python/packages/node-fdm/src/node_fdm/models/fdm.py:181)
+W0516 13:25:09.440000 542927 torch/_dynamo/convert_frame.py:1676] [0/8]    last reason: 0/7: tensor 'self.history['raw_alt_m']' size mismatch at index 1. expected 1, actual 2
+W0516 13:25:09.440000 542927 torch/_dynamo/convert_frame.py:1676] [0/8] To log all recompilation reasons, use TORCH_LOGS="recompiles".
+W0516 13:25:09.440000 542927 torch/_dynamo/convert_frame.py:1676] [0/8] To diagnose recompilation issues, see https://pytorch.org/docs/main/compile/programming_model.recompilation.html
+2026-05-16 13:25:10 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 13:25:10 [debug    ] model_saved                    epoch=1
+2026-05-16 13:25:10 [info     ] epoch_complete                 epoch=1 is_best=True lr=0.0002080000000000004 total_epochs=50 train_loss=0.253574 val_loss=0.087807
+2026-05-16 13:25:10 [debug    ] epoch_start                    epoch=2 total_epochs=50
+2026-05-16 13:31:04 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 13:31:04 [debug    ] model_saved                    epoch=2
+2026-05-16 13:31:04 [info     ] epoch_complete                 epoch=2 is_best=True lr=0.0004060000000000004 total_epochs=50 train_loss=0.071574 val_loss=0.046522
+2026-05-16 13:31:04 [debug    ] epoch_start                    epoch=3 total_epochs=50
+2026-05-16 13:36:55 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 13:36:55 [debug    ] model_saved                    epoch=3
+2026-05-16 13:36:55 [info     ] epoch_complete                 epoch=3 is_best=True lr=0.0006040000000000011 total_epochs=50 train_loss=0.044504 val_loss=0.036351
+2026-05-16 13:36:55 [debug    ] epoch_start                    epoch=4 total_epochs=50
+2026-05-16 13:42:49 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 13:42:49 [debug    ] model_saved                    epoch=4
+2026-05-16 13:42:49 [info     ] epoch_complete                 epoch=4 is_best=True lr=0.000801999999999999 total_epochs=50 train_loss=0.039001 val_loss=0.034463
+2026-05-16 13:42:49 [debug    ] epoch_start                    epoch=5 total_epochs=50
+2026-05-16 13:48:44 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 13:48:44 [debug    ] model_saved                    epoch=5
+2026-05-16 13:48:44 [info     ] epoch_complete                 epoch=5 is_best=True lr=0.001 total_epochs=50 train_loss=0.038539 val_loss=0.033639
+2026-05-16 13:48:44 [debug    ] epoch_start                    epoch=6 total_epochs=50
+2026-05-16 13:54:37 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 13:54:37 [debug    ] model_saved                    epoch=6
+2026-05-16 13:54:37 [info     ] epoch_complete                 epoch=6 is_best=True lr=0.0009779999999999947 total_epochs=50 train_loss=0.03644 val_loss=0.032089
+2026-05-16 13:54:37 [debug    ] epoch_start                    epoch=7 total_epochs=50
+2026-05-16 14:00:32 [info     ] epoch_complete                 epoch=7 is_best=False lr=0.0009559999999999942 total_epochs=50 train_loss=0.035076 val_loss=0.032217
+2026-05-16 14:00:32 [debug    ] epoch_start                    epoch=8 total_epochs=50
+2026-05-16 14:06:26 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 14:06:26 [debug    ] model_saved                    epoch=8
+2026-05-16 14:06:26 [info     ] epoch_complete                 epoch=8 is_best=True lr=0.0009339999999999934 total_epochs=50 train_loss=0.034665 val_loss=0.030992
+2026-05-16 14:06:26 [debug    ] epoch_start                    epoch=9 total_epochs=50
+2026-05-16 14:12:17 [info     ] epoch_complete                 epoch=9 is_best=False lr=0.0009119999999999924 total_epochs=50 train_loss=0.035343 val_loss=0.031133
+2026-05-16 14:12:17 [debug    ] epoch_start                    epoch=10 total_epochs=50
+2026-05-16 14:18:11 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 14:18:11 [debug    ] model_saved                    epoch=10
+2026-05-16 14:18:11 [info     ] epoch_complete                 epoch=10 is_best=True lr=0.0008899999999999917 total_epochs=50 train_loss=0.033593 val_loss=0.030447
+2026-05-16 14:18:11 [debug    ] epoch_start                    epoch=11 total_epochs=50
+2026-05-16 14:24:03 [info     ] epoch_complete                 epoch=11 is_best=False lr=0.0008679999999999905 total_epochs=50 train_loss=0.03496 val_loss=0.03094
+2026-05-16 14:24:03 [debug    ] epoch_start                    epoch=12 total_epochs=50
+2026-05-16 14:29:56 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 14:29:56 [debug    ] model_saved                    epoch=12
+2026-05-16 14:29:56 [info     ] epoch_complete                 epoch=12 is_best=True lr=0.000845999999999989 total_epochs=50 train_loss=0.03346 val_loss=0.030418
+2026-05-16 14:29:56 [debug    ] epoch_start                    epoch=13 total_epochs=50
+2026-05-16 14:35:50 [info     ] epoch_complete                 epoch=13 is_best=False lr=0.0008239999999999856 total_epochs=50 train_loss=0.042959 val_loss=0.032872
+2026-05-16 14:35:50 [debug    ] epoch_start                    epoch=14 total_epochs=50
+2026-05-16 14:41:45 [info     ] epoch_complete                 epoch=14 is_best=False lr=0.0008019999999999825 total_epochs=50 train_loss=0.035159 val_loss=0.030911
+2026-05-16 14:41:45 [debug    ] epoch_start                    epoch=15 total_epochs=50
+2026-05-16 14:47:39 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 14:47:39 [debug    ] model_saved                    epoch=15
+2026-05-16 14:47:39 [info     ] epoch_complete                 epoch=15 is_best=True lr=0.0007799999999999793 total_epochs=50 train_loss=0.033292 val_loss=0.030369
+2026-05-16 14:47:39 [debug    ] epoch_start                    epoch=16 total_epochs=50
+2026-05-16 14:53:32 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 14:53:32 [debug    ] model_saved                    epoch=16
+2026-05-16 14:53:32 [info     ] epoch_complete                 epoch=16 is_best=True lr=0.0007579999999999761 total_epochs=50 train_loss=0.033611 val_loss=0.030019
+2026-05-16 14:53:32 [debug    ] epoch_start                    epoch=17 total_epochs=50
+2026-05-16 14:59:27 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 14:59:27 [debug    ] model_saved                    epoch=17
+2026-05-16 14:59:27 [info     ] epoch_complete                 epoch=17 is_best=True lr=0.0007359999999999731 total_epochs=50 train_loss=0.032398 val_loss=0.029422
+2026-05-16 14:59:27 [debug    ] epoch_start                    epoch=18 total_epochs=50
+2026-05-16 15:05:21 [info     ] epoch_complete                 epoch=18 is_best=False lr=0.0007139999999999699 total_epochs=50 train_loss=0.032293 val_loss=0.029634
+2026-05-16 15:05:21 [debug    ] epoch_start                    epoch=19 total_epochs=50
+2026-05-16 15:11:15 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 15:11:15 [debug    ] model_saved                    epoch=19
+2026-05-16 15:11:15 [info     ] epoch_complete                 epoch=19 is_best=True lr=0.0006919999999999653 total_epochs=50 train_loss=0.032026 val_loss=0.029171
+2026-05-16 15:11:15 [debug    ] epoch_start                    epoch=20 total_epochs=50
+2026-05-16 15:17:11 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 15:17:11 [debug    ] model_saved                    epoch=20
+2026-05-16 15:17:11 [info     ] epoch_complete                 epoch=20 is_best=True lr=0.0006699999999999609 total_epochs=50 train_loss=0.031984 val_loss=0.028923
+2026-05-16 15:17:11 [debug    ] epoch_start                    epoch=21 total_epochs=50
+2026-05-16 15:23:04 [info     ] epoch_complete                 epoch=21 is_best=False lr=0.0006479999999999558 total_epochs=50 train_loss=0.03193 val_loss=0.029299
+2026-05-16 15:23:04 [debug    ] epoch_start                    epoch=22 total_epochs=50
+2026-05-16 15:28:59 [info     ] epoch_complete                 epoch=22 is_best=False lr=0.0006259999999999505 total_epochs=50 train_loss=0.031978 val_loss=0.029181
+2026-05-16 15:28:59 [debug    ] epoch_start                    epoch=23 total_epochs=50
+2026-05-16 15:34:56 [info     ] epoch_complete                 epoch=23 is_best=False lr=0.0006039999999999452 total_epochs=50 train_loss=0.031737 val_loss=0.029344
+2026-05-16 15:34:56 [debug    ] epoch_start                    epoch=24 total_epochs=50
+2026-05-16 15:40:50 [info     ] epoch_complete                 epoch=24 is_best=False lr=0.0005819999999999399 total_epochs=50 train_loss=0.031487 val_loss=0.029065
+2026-05-16 15:40:50 [debug    ] epoch_start                    epoch=25 total_epochs=50
+2026-05-16 15:46:45 [info     ] epoch_complete                 epoch=25 is_best=False lr=0.0005599999999999346 total_epochs=50 train_loss=0.032153 val_loss=0.030627
+2026-05-16 15:46:45 [debug    ] epoch_start                    epoch=26 total_epochs=50
+2026-05-16 15:52:39 [info     ] epoch_complete                 epoch=26 is_best=False lr=0.0005379999999999293 total_epochs=50 train_loss=0.0318 val_loss=0.030864
+2026-05-16 15:52:39 [debug    ] epoch_start                    epoch=27 total_epochs=50
+2026-05-16 15:59:36 [info     ] epoch_complete                 epoch=27 is_best=False lr=0.000515999999999924 total_epochs=50 train_loss=0.032012 val_loss=0.028998
+2026-05-16 15:59:36 [debug    ] epoch_start                    epoch=28 total_epochs=50
+2026-05-16 16:05:30 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 16:05:30 [debug    ] model_saved                    epoch=28
+2026-05-16 16:05:30 [info     ] epoch_complete                 epoch=28 is_best=True lr=0.0004939999999999187 total_epochs=50 train_loss=0.031135 val_loss=0.028842
+2026-05-16 16:05:30 [debug    ] epoch_start                    epoch=29 total_epochs=50
+2026-05-16 16:11:20 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 16:11:20 [debug    ] model_saved                    epoch=29
+2026-05-16 16:11:20 [info     ] epoch_complete                 epoch=29 is_best=True lr=0.00047199999999991997 total_epochs=50 train_loss=0.0311 val_loss=0.028427
+2026-05-16 16:11:20 [debug    ] epoch_start                    epoch=30 total_epochs=50
+2026-05-16 16:17:14 [info     ] epoch_complete                 epoch=30 is_best=False lr=0.00044999999999992393 total_epochs=50 train_loss=0.031026 val_loss=0.028761
+2026-05-16 16:17:14 [debug    ] epoch_start                    epoch=31 total_epochs=50
+2026-05-16 16:23:06 [debug    ] meta_saved                     path=data/models/hidden_24_seed2/meta.json
+2026-05-16 16:23:06 [debug    ] model_saved                    epoch=31
+2026-05-16 16:23:06 [info     ] epoch_complete                 epoch=31 is_best=True lr=0.0004279999999999269 total_epochs=50 train_loss=0.030901 val_loss=0.028375
+2026-05-16 16:23:06 [debug    ] epoch_start                    epoch=32 total_epochs=50
+2026-05-16 16:28:57 [info     ] epoch_complete                 epoch=32 is_best=False lr=0.0004059999999999309 total_epochs=50 train_loss=0.030855 val_loss=0.028868
+2026-05-16 16:28:57 [debug    ] epoch_start                    epoch=33 total_epochs=50
+2026-05-16 16:34:52 [info     ] epoch_complete                 epoch=33 is_best=False lr=0.0003839999999999346 total_epochs=50 train_loss=0.03114 val_loss=0.039698
+2026-05-16 16:34:52 [debug    ] epoch_start                    epoch=34 total_epochs=50
+2026-05-16 16:40:47 [info     ] epoch_complete                 epoch=34 is_best=False lr=0.0003619999999999374 total_epochs=50 train_loss=0.032995 val_loss=0.028748
+2026-05-16 16:40:47 [debug    ] epoch_start                    epoch=35 total_epochs=50
+2026-05-16 16:46:41 [info     ] epoch_complete                 epoch=35 is_best=False lr=0.0003399999999999421 total_epochs=50 train_loss=0.030885 val_loss=0.02844
+2026-05-16 16:46:41 [debug    ] epoch_start                    epoch=36 total_epochs=50
+2026-05-16 16:52:33 [info     ] epoch_complete                 epoch=36 is_best=False lr=0.00031799999999994485 total_epochs=50 train_loss=0.030863 val_loss=0.028959
+2026-05-16 16:52:33 [debug    ] epoch_start                    epoch=37 total_epochs=50
+2026-05-16 16:58:29 [info     ] epoch_complete                 epoch=37 is_best=False lr=0.00029599999999994756 total_epochs=50 train_loss=0.034332 val_loss=0.031256
+2026-05-16 16:58:29 [debug    ] epoch_start                    epoch=38 total_epochs=50
+2026-05-16 17:04:24 [info     ] epoch_complete                 epoch=38 is_best=False lr=0.0002739999999999507 total_epochs=50 train_loss=0.031854 val_loss=0.029137
+2026-05-16 17:04:24 [debug    ] epoch_start                    epoch=39 total_epochs=50
+2026-05-16 17:10:19 [info     ] epoch_complete                 epoch=39 is_best=False lr=0.0002519999999999539 total_epochs=50 train_loss=0.030997 val_loss=0.028615
+2026-05-16 17:10:19 [debug    ] epoch_start                    epoch=40 total_epochs=50
+2026-05-16 17:16:13 [info     ] epoch_complete                 epoch=40 is_best=False lr=0.00022999999999995737 total_epochs=50 train_loss=0.031158 val_loss=0.02872
+2026-05-16 17:16:13 [debug    ] epoch_start                    epoch=41 total_epochs=50
+2026-05-16 17:22:09 [info     ] epoch_complete                 epoch=41 is_best=False lr=0.00020799999999996188 total_epochs=50 train_loss=0.030939 val_loss=0.028621
+2026-05-16 17:22:09 [debug    ] epoch_start                    epoch=42 total_epochs=50
+2026-05-16 17:28:05 [info     ] epoch_complete                 epoch=42 is_best=False lr=0.0001859999999999664 total_epochs=50 train_loss=0.030764 val_loss=0.028613
+2026-05-16 17:28:05 [debug    ] epoch_start                    epoch=43 total_epochs=50
+2026-05-16 17:34:00 [info     ] epoch_complete                 epoch=43 is_best=False lr=0.00016399999999997095 total_epochs=50 train_loss=0.030652 val_loss=0.028617
+2026-05-16 17:34:00 [debug    ] epoch_start                    epoch=44 total_epochs=50
+2026-05-16 17:39:54 [info     ] epoch_complete                 epoch=44 is_best=False lr=0.00014199999999997548 total_epochs=50 train_loss=0.03055 val_loss=0.0285
+2026-05-16 17:39:54 [debug    ] epoch_start                    epoch=45 total_epochs=50
+2026-05-16 17:45:49 [info     ] epoch_complete                 epoch=45 is_best=False lr=0.00011999999999997995 total_epochs=50 train_loss=0.030515 val_loss=0.028507
+2026-05-16 17:45:49 [debug    ] epoch_start                    epoch=46 total_epochs=50
+2026-05-16 17:51:43 [info     ] epoch_complete                 epoch=46 is_best=False lr=9.799999999998395e-05 total_epochs=50 train_loss=0.031035 val_loss=0.028944
+2026-05-16 17:51:43 [debug    ] epoch_start                    epoch=47 total_epochs=50
+2026-05-16 17:57:43 [info     ] epoch_complete                 epoch=47 is_best=False lr=7.599999999998802e-05 total_epochs=50 train_loss=0.03061 val_loss=0.028904
+2026-05-16 17:57:43 [debug    ] epoch_start                    epoch=48 total_epochs=50
+2026-05-16 18:03:43 [info     ] epoch_complete                 epoch=48 is_best=False lr=5.399999999999204e-05 total_epochs=50 train_loss=0.030585 val_loss=0.028687
+2026-05-16 18:03:43 [debug    ] epoch_start                    epoch=49 total_epochs=50
+2026-05-16 18:09:46 [info     ] epoch_complete                 epoch=49 is_best=False lr=3.199999999999529e-05 total_epochs=50 train_loss=0.030419 val_loss=0.028508
+2026-05-16 18:09:46 [debug    ] epoch_start                    epoch=50 total_epochs=50
+2026-05-16 18:15:44 [info     ] epoch_complete                 epoch=50 is_best=False lr=9.999999999998564e-06 total_epochs=50 train_loss=0.030398 val_loss=0.028527
+2026-05-16 18:15:44 [info     ] training_log_saved             path=data/models/hidden_24_seed2/training_losses.csv
+2026-05-16 18:15:44 [info     ] training_complete              best_val_loss=0.028375
+2026-05-16 18:15:44 [info     ] train_typecode_done            typecode=A320
+2026-05-16 18:15:44 [info     ] train_done                     typecodes=['A320']
+
+$ uv run fdm train --arch adsb --config results_run2/hidden_24_seed2/config.yaml --model-name hidden_24_seed2 --epochs 50 --batch-size 64 --lr 0.001 --method rk4 --seq-len 60 --train-limit 5000 --activation relu --seed 2 --backbone-depth 3 --head-depth 2 --hidden-width 24 --device cuda --no-use-mode-weights
