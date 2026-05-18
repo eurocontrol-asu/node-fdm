@@ -394,3 +394,166 @@ class TestComputeStatsExtended:
                 v = stats[col][key]
                 assert isinstance(v, float), f"{col}.{key} should be float"
                 assert not (v != v), f"{col}.{key} is NaN"
+
+
+def test_flight_sample_carries_flight_features() -> None:
+    """AC1: FlightSample carries optional flight-level feature tensors."""
+    flight_features = torch.zeros((4, 5))
+    sample = FlightSample(
+        x=torch.zeros((4, 2)),
+        u=torch.zeros((4, 1)),
+        e=torch.zeros((4, 1)),
+        dx=torch.zeros((4, 2)),
+        flight_features=flight_features,
+    )
+    default_sample = FlightSample(
+        x=torch.zeros((4, 2)),
+        u=torch.zeros((4, 1)),
+        e=torch.zeros((4, 1)),
+        dx=torch.zeros((4, 2)),
+    )
+
+    assert sample.flight_features is flight_features
+    assert default_sample.flight_features is None
+
+
+def test_compute_stats_flight_feature_cols() -> None:
+    """AC2: compute_stats aggregates named flight feature columns positionally."""
+    x_cols = ["era_tas_ms", "fdm_gamma_rad"]
+    u_cols = ["cmd"]
+    e_cols = ["rho"]
+    dx_cols = ["fdm_d_tas_ms2", "fdm_d_gamma_rads"]
+    flight_feature_cols = [
+        "dist_total_flight",
+        "dist_phase_flight",
+        "mass_proxy_flight",
+        "fuel_proxy_flight",
+        "time_proxy_flight",
+    ]
+    samples = [
+        FlightSample(
+            x=torch.zeros((2, len(x_cols))),
+            u=torch.zeros((2, len(u_cols))),
+            e=torch.zeros((2, len(e_cols))),
+            dx=torch.zeros((2, len(dx_cols))),
+            flight_features=torch.tensor([[1.0, 2.0, 3.0, 4.0, 5.0]] * 2),
+        )
+        for _ in range(3)
+    ]
+
+    stats = compute_stats(
+        samples,
+        x_cols,
+        u_cols,
+        e_cols,
+        dx_cols,
+        flight_feature_cols=flight_feature_cols,
+    )
+
+    for index, col in enumerate(flight_feature_cols, start=1):
+        assert stats[col]["mean"] == pytest.approx(float(index))
+        assert stats[col]["std"] == pytest.approx(1e-6)
+        assert stats[col]["max"] == pytest.approx(float(index))
+        assert stats[col]["p999"] == pytest.approx(float(index))
+        assert "iqr" not in stats[col]
+
+
+def test_compute_stats_flight_feature_cols_neutral_fallback() -> None:
+    """AC2: missing flight feature tensors produce neutral stats."""
+    samples = [
+        FlightSample(
+            x=torch.zeros((2, 2)),
+            u=torch.zeros((2, 1)),
+            e=torch.zeros((2, 1)),
+            dx=torch.zeros((2, 2)),
+        )
+    ]
+
+    stats = compute_stats(
+        samples,
+        ["era_tas_ms", "fdm_gamma_rad"],
+        ["cmd"],
+        ["rho"],
+        ["fdm_d_tas_ms2", "fdm_d_gamma_rads"],
+        flight_feature_cols=["dist_total_flight", "mass_proxy_flight"],
+    )
+
+    neutral = {"mean": 0.0, "std": 1e-6, "max": 0.0, "p999": 0.0}
+    assert stats["dist_total_flight"] == neutral
+    assert stats["mass_proxy_flight"] == neutral
+
+
+def test_derived_features_registers_t_minus_d_and_lift() -> None:
+    """AC3, AC4: new inverse physics outputs are registered as derived features."""
+    from node_fdm.dataset import DERIVED_FEATURES
+
+    assert callable(DERIVED_FEATURES["fdm_t_minus_d_N"])
+    assert callable(DERIVED_FEATURES["fdm_lift_N"])
+
+
+def test_t_minus_d_computer_matches_newton() -> None:
+    """AC3: fdm_t_minus_d_N computes m_ref * (d_tas + G * sin(gamma))."""
+    import numpy as np
+
+    from node_fdm.dataset import DERIVED_FEATURES
+    from node_fdm_data.physics.constants import G
+    from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
+
+    x_cols = ["era_tas_ms", "fdm_gamma_rad"]
+    e_cols = ["rho"]
+    dx_cols = ["fdm_d_tas_ms2", "fdm_d_gamma_rads"]
+    x_arr = np.array([[240.0, 0.05]], dtype=np.float64)
+    e_arr = np.zeros((1, len(e_cols)), dtype=np.float64)
+    dx_arr = np.array([[0.2, 0.001]], dtype=np.float64)
+
+    result = DERIVED_FEATURES["fdm_t_minus_d_N"](x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
+
+    m_ref = (A320_OEW_KG + A320_MTOW_KG) / 2.0
+    expected = m_ref * (0.2 + G * np.sin(0.05))
+    np.testing.assert_allclose(result[0], expected, rtol=0.0, atol=1e-3)
+
+
+def test_lift_computer_matches_newton() -> None:
+    """AC4: fdm_lift_N computes m_ref * G * ((V/G) * d_gamma + cos(gamma))."""
+    import numpy as np
+
+    from node_fdm.dataset import DERIVED_FEATURES
+    from node_fdm_data.physics.constants import G
+    from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
+
+    x_cols = ["era_tas_ms", "fdm_gamma_rad"]
+    e_cols = ["rho"]
+    dx_cols = ["fdm_d_tas_ms2", "fdm_d_gamma_rads"]
+    x_arr = np.array([[240.0, 0.02]], dtype=np.float64)
+    e_arr = np.zeros((1, len(e_cols)), dtype=np.float64)
+    dx_arr = np.array([[0.2, 0.001]], dtype=np.float64)
+
+    result = DERIVED_FEATURES["fdm_lift_N"](x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
+
+    m_ref = (A320_OEW_KG + A320_MTOW_KG) / 2.0
+    expected = m_ref * G * ((240.0 / G) * 0.001 + np.cos(0.02))
+    np.testing.assert_allclose(result[0], expected, rtol=0.0, atol=1e-3)
+
+
+def test_compute_stats_derived_cols_includes_new_outputs() -> None:
+    """AC3, AC4: compute_stats derives p999 caps for new output columns."""
+    samples = [
+        FlightSample(
+            x=torch.tensor([[240.0, 0.02], [245.0, 0.03]]),
+            u=torch.zeros((2, 0)),
+            e=torch.ones((2, 1)),
+            dx=torch.tensor([[0.2, 0.001], [0.25, 0.0015]]),
+        )
+    ]
+
+    stats = compute_stats(
+        samples,
+        ["era_tas_ms", "fdm_gamma_rad"],
+        [],
+        ["rho"],
+        ["fdm_d_tas_ms2", "fdm_d_gamma_rads"],
+        derived_cols=["fdm_t_minus_d_N", "fdm_lift_N"],
+    )
+
+    assert stats["fdm_t_minus_d_N"]["p999"] > 0.0
+    assert stats["fdm_lift_N"]["p999"] > 0.0

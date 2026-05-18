@@ -16,6 +16,7 @@ from torch.utils.data import Dataset
 
 from node_fdm_data.physics.constants import G, R
 from node_fdm_data.physics.isa import isa_pressure, isa_temperature
+from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
 
 __all__ = [
     "DERIVED_FEATURES",
@@ -38,6 +39,7 @@ __all__ = [
 # Must match ``layers.physics.V_MIN_CLAMP`` so derived stats reflect the
 # exact algebraic inverse of what the PhysicsLayer applies at runtime.
 _V_MIN_CLAMP: float = 50.0
+_M_REF_KG: float = (A320_OEW_KG + A320_MTOW_KG) / 2.0
 
 
 def _compute_g_sin_gamma(
@@ -145,6 +147,36 @@ def _compute_n_z_residual(
     return np.asarray((v_safe / G) * d_gamma + np.cos(gamma) - 1.0, dtype=np.float64)
 
 
+def _compute_t_minus_d_n(
+    x_arr: np.ndarray,
+    e_arr: np.ndarray,
+    dx_arr: np.ndarray,
+    x_cols: list[str],
+    e_cols: list[str],
+    dx_cols: list[str],
+) -> np.ndarray:
+    """Inverse PhysicsLayer for ``fdm_t_minus_d_N = m_ref * (d_tas + g*sin(gamma))``."""
+    gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
+    d_tas = dx_arr[:, dx_cols.index("fdm_d_tas_ms2")].astype(np.float64)
+    return np.asarray(_M_REF_KG * (d_tas + G * np.sin(gamma)), dtype=np.float64)
+
+
+def _compute_lift_n(
+    x_arr: np.ndarray,
+    e_arr: np.ndarray,
+    dx_arr: np.ndarray,
+    x_cols: list[str],
+    e_cols: list[str],
+    dx_cols: list[str],
+) -> np.ndarray:
+    """Inverse PhysicsLayer for ``fdm_lift_N = m_ref * g * n_z``."""
+    gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
+    tas = x_arr[:, x_cols.index("era_tas_ms")].astype(np.float64)
+    d_gamma = dx_arr[:, dx_cols.index("fdm_d_gamma_rads")].astype(np.float64)
+    v_safe = np.maximum(tas, _V_MIN_CLAMP)
+    return np.asarray(_M_REF_KG * G * ((v_safe / G) * d_gamma + np.cos(gamma)), dtype=np.float64)
+
+
 def _compute_phi_bank(
     x_arr: np.ndarray,
     e_arr: np.ndarray,
@@ -176,6 +208,8 @@ DERIVED_FEATURES: dict[str, _DerivedFn] = {
     # Inverse PhysicsLayer (NN-output targets — used to derive p999 caps).
     "fdm_a_spec_ms2": _compute_a_spec,
     "fdm_n_z_residual": _compute_n_z_residual,
+    "fdm_t_minus_d_N": _compute_t_minus_d_n,
+    "fdm_lift_N": _compute_lift_n,
     "fdm_phi_bank_rad": _compute_phi_bank,
 }
 
@@ -241,6 +275,7 @@ def compute_stats(
     dx_cols: list[str],
     *,
     e1_cols: list[str] | None = None,
+    flight_feature_cols: list[str] | None = None,
     derived_cols: list[str] | None = None,
     derived_scale_floor_ratio: float = 0.0,
 ) -> dict[str, dict[str, float]]:
@@ -258,6 +293,9 @@ def compute_stats(
         e1_cols: Optional extra environment column names. When provided, each
             column is sourced from ``s.e1`` (positional) when available, else
             falls back to a ``DERIVED_FEATURES`` analytic computer.
+        flight_feature_cols: Optional flight-level feature column names. When
+            provided, each column is sourced positionally from
+            ``s.flight_features`` when available.
         derived_cols: Optional list of NN-output / derived columns to compute
             purely from ``DERIVED_FEATURES``. Used for stats on quantities
             that the trainable layer emits (e.g. ``fdm_a_spec_ms2``) but that
@@ -330,6 +368,26 @@ def compute_stats(
             if col not in DERIVED_FEATURES:
                 continue
             stats[col] = _compute_derived_stats(samples, col, x_cols, e_cols, dx_cols)
+
+    if flight_feature_cols:
+        flight_feature_tensors = [
+            s.flight_features for s in samples if s.flight_features is not None
+        ]
+        if flight_feature_tensors:
+            flight_features_all = torch.cat(flight_feature_tensors, dim=0)
+            n_flight_features = flight_features_all.shape[1]
+            for i, col in enumerate(flight_feature_cols[:n_flight_features]):
+                vals = flight_features_all[:, i]
+                abs_vals = vals.abs()
+                stats[col] = {
+                    "mean": vals.mean().item(),
+                    "std": vals.std().item() + 1e-6,
+                    "max": abs_vals.max().item(),
+                    "p999": torch.quantile(abs_vals, 0.999).item(),
+                }
+        else:
+            for col in flight_feature_cols:
+                stats[col] = {"mean": 0.0, "std": 1e-6, "max": 0.0, "p999": 0.0}
 
     # Pure NN-output derived columns (never present in any tensor; fed to
     # _create_structured_layer for OutputDenormalizer scale via p999).

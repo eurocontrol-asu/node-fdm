@@ -25,7 +25,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, optional tracking loss on autopilot targets (`lambda_tracking`), projected integration via `ClampedEuler`/`ClampedRK4` when `x_bounds` present, `grad_clip_norm` default 10.0, optional class-imbalance rebalancing via `use_mode_weights` (effective-number weights from `fdm_mode_label`), model weights + optimizer checkpoint save/load |
 | `training.weighting` | `auto_beta`, `compute_mode_weights`, `attach_sample_weights`, `boot_mode_weights` — Cui 2019 effective-number sample weights over the 13 flight modes, normalised so the dataset-weighted mean is 1 |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
-| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1, optional flight_features); `compute_stats` with p99.9 percentile (`p999`), NaN-safe e1 handling, and DX-precedence for overlapping e1 columns |
+| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1, optional flight_features); `compute_stats` with p99.9 percentile (`p999`), NaN-safe e1 handling, DX-precedence for overlapping e1 columns, flight-level feature stats, and `DERIVED_FEATURES` caps for inverse-physics outputs such as `fdm_t_minus_d_N` and `fdm_lift_N` |
 | `loader` | `get_train_val_data` — build datasets from split DataFrame (NaN/inf filtered in x, u, e, dx, and e1 columns), optionally requiring routing and attaching `FLIGHT_FEATURE_COLS` flight features |
 | `losses` | `get_loss` factory |
 | `callbacks` | `TrainingCallback` protocol + `ConsoleCallback` |
@@ -138,6 +138,11 @@ dataset = FlightDataset(samples=[sample, ...])
 print(len(dataset))       # number of samples
 print(dataset[0].x.shape) # [seq_len, n_x]
 ```
+
+`compute_stats(..., flight_feature_cols=[...])` adds mean/std/max/p999 stats
+for columns sourced positionally from `FlightSample.flight_features`. Derived
+output columns listed in `DERIVED_FEATURES`, including `fdm_t_minus_d_N` and
+`fdm_lift_N`, can be requested through `derived_cols`.
 
 ## Development
 
