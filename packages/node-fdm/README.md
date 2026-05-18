@@ -25,8 +25,8 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `trainer` | `ODETrainer` + `TrainingConfig` — ODE rollout loss with per-variable `alpha_dict` weighting, optional tracking loss on autopilot targets (`lambda_tracking`), projected integration via `ClampedEuler`/`ClampedRK4` when `x_bounds` present, `grad_clip_norm` default 10.0, optional class-imbalance rebalancing via `use_mode_weights` (effective-number weights from `fdm_mode_label`), model weights + optimizer checkpoint save/load |
 | `training.weighting` | `auto_beta`, `compute_mode_weights`, `attach_sample_weights`, `boot_mode_weights` — Cui 2019 effective-number sample weights over the 13 flight modes, normalised so the dataset-weighted mean is 1 |
 | `predictor` | `NodeFDMPredictor` + `ModelMeta` (typed metadata, euler/rk4 integration) |
-| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1); `compute_stats` with p99.9 percentile (`p999`), NaN-safe e1 handling, and DX-precedence for overlapping e1 columns |
-| `loader` | `get_train_val_data` — build datasets from split DataFrame (NaN/inf filtered in x, u, e, dx, and e1 columns) |
+| `dataset` | `FlightDataset` → `FlightSample` (typed tensors: x, u, e, dx, optional e1, optional flight_features); `compute_stats` with p99.9 percentile (`p999`), NaN-safe e1 handling, and DX-precedence for overlapping e1 columns |
+| `loader` | `get_train_val_data` — build datasets from split DataFrame (NaN/inf filtered in x, u, e, dx, and e1 columns), optionally requiring routing and attaching `FLIGHT_FEATURE_COLS` flight features |
 | `losses` | `get_loss` factory |
 | `callbacks` | `TrainingCallback` protocol + `ConsoleCallback` |
 
@@ -123,8 +123,15 @@ result = predictor.predict_flight(x_init, u_seq, e_seq)
 ```python
 from node_fdm.dataset import FlightDataset, FlightSample
 
-# FlightSample is a frozen dataclass (e1 is optional for extra environment columns)
-sample = FlightSample(x=x_tensor, u=u_tensor, e=e_tensor, dx=dx_tensor, e1=e1_tensor)
+# FlightSample is a frozen dataclass (e1 and flight_features are optional tensors)
+sample = FlightSample(
+    x=x_tensor,
+    u=u_tensor,
+    e=e_tensor,
+    dx=dx_tensor,
+    e1=e1_tensor,
+    flight_features=flight_features_tensor,
+)
 
 # FlightDataset wraps a list of samples
 dataset = FlightDataset(samples=[sample, ...])

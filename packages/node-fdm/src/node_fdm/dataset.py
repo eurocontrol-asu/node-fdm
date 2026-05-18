@@ -192,6 +192,8 @@ class FlightSample:
         e1: Optional extra environment tensor of shape ``(seq_len, n_e1)``.
         w: Optional per-sample training weight of shape ``(seq_len,)``
             populated when mode-balanced loss weighting is enabled.
+        flight_features: Optional flight-level feature tensor of shape
+            ``(seq_len, n_features)``.
     """
 
     x: torch.Tensor
@@ -200,6 +202,7 @@ class FlightSample:
     dx: torch.Tensor
     e1: torch.Tensor | None = field(default=None)
     w: torch.Tensor | None = field(default=None)
+    flight_features: torch.Tensor | None = field(default=None)
 
 
 class FlightDataset(Dataset[FlightSample]):

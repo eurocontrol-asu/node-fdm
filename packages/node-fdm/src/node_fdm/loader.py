@@ -12,8 +12,19 @@ import structlog
 import torch
 
 from node_fdm.dataset import FlightDataset, FlightSample
+from node_fdm_data.physics.isa import isa_temperature
+
+# Flight-level MassEncoder features emitted in this order when requested.
+FLIGHT_FEATURE_COLS: list[str] = [
+    "dist_total_flight",
+    "dist_adep_at_t0",
+    "cruise_alt_max_flight",
+    "wind_long_mean_flight",
+    "temp_isa_dev_mean_flight",
+]
 
 __all__ = [
+    "FLIGHT_FEATURE_COLS",
     "get_train_val_data",
 ]
 
@@ -48,6 +59,8 @@ def _load_and_window(
     *,
     flight_limit: int | None = None,
     e1_cols: list[str] | None = None,
+    flight_feature_cols: list[str] | None = None,
+    require_routing: bool = False,
 ) -> list[FlightSample]:
     """Group flights and slice into fixed-length windows.
 
@@ -62,12 +75,20 @@ def _load_and_window(
         shift: Step between windows.
         flight_limit: Max number of flights to process.
         e1_cols: Optional extra environment column names.
+        flight_feature_cols: Optional flight-level feature names to attach.
+        require_routing: Whether to drop flights with no routing data.
 
     Returns:
         List of windowed :class:`FlightSample` instances.
     """
     samples: list[FlightSample] = []
-    all_cols = x_cols + u_cols + e_cols + dx_cols
+    requested_flight_feature_cols = flight_feature_cols or []
+    has_flight_features = bool(requested_flight_feature_cols)
+    _require_routing = require_routing or has_flight_features
+    routing_cols = ["fdm_adep_dist_m", "fdm_ades_dist_m"]
+    aggregate_source_cols = ["raw_alt_m", "fdm_long_wind_ms", "era_temp_K"]
+    feature_source_cols = routing_cols + aggregate_source_cols if has_flight_features else []
+    all_cols = x_cols + u_cols + e_cols + dx_cols + feature_source_cols
 
     # Verify all columns exist
     missing = [c for c in all_cols if c not in flights_df.columns]
@@ -86,6 +107,8 @@ def _load_and_window(
 
     has_distance_flag = "fdm_flag_distance_ok" in flights_df.columns
     has_weight_col = "fdm_train_weight" in flights_df.columns
+    flights_dropped_no_routing = 0
+    flight_aggregates: dict[object, dict[str, float]] = {}
 
     flight_ids = flights_df.get_column("meta_flight_id").unique().sort().to_list()
     if flight_limit is not None:
@@ -93,9 +116,31 @@ def _load_and_window(
 
     for fid in flight_ids:
         df = flights_df.filter(pl.col("meta_flight_id") == fid)
+        if _require_routing:
+            routing_presence = df.select(
+                [
+                    pl.col("fdm_adep_dist_m").is_not_null().any().alias("has_adep"),
+                    pl.col("fdm_ades_dist_m").is_not_null().any().alias("has_ades"),
+                ]
+            ).row(0, named=True)
+            if not routing_presence["has_adep"] and not routing_presence["has_ades"]:
+                flights_dropped_no_routing += 1
+                continue
+
         n_rows = len(df)
         if n_rows < seq_len:
             continue
+
+        if has_flight_features:
+            alt_arr = df.get_column("raw_alt_m").to_numpy().astype(np.float32)
+            temp_arr = df.get_column("era_temp_K").to_numpy().astype(np.float32)
+            wind_arr = df.get_column("fdm_long_wind_ms").to_numpy().astype(np.float32)
+            temp_isa_dev = temp_arr - isa_temperature(alt_arr)
+            flight_aggregates[fid] = {
+                "cruise_alt_max_flight": float(np.nanmax(alt_arr)),
+                "wind_long_mean_flight": float(np.nanmean(wind_arr)),
+                "temp_isa_dev_mean_flight": float(np.nanmean(temp_isa_dev)),
+            }
 
         # Extract arrays (empty col lists → zero-width arrays)
         x_arr = df.select(x_cols).to_numpy().astype(np.float32)
@@ -119,6 +164,12 @@ def _load_and_window(
         w_arr: np.ndarray | None = None
         if has_weight_col:
             w_arr = df.get_column("fdm_train_weight").to_numpy().astype(np.float32)
+
+        adep_arr: np.ndarray | None = None
+        ades_arr: np.ndarray | None = None
+        if has_flight_features:
+            adep_arr = df.get_column("fdm_adep_dist_m").to_numpy().astype(np.float32)
+            ades_arr = df.get_column("fdm_ades_dist_m").to_numpy().astype(np.float32)
 
         for start in range(0, n_rows - seq_len + 1, shift):
             end = start + seq_len
@@ -156,6 +207,24 @@ def _load_and_window(
             if w_arr is not None:
                 w_tensor = torch.from_numpy(w_arr[start:end].copy())
 
+            flight_features_tensor: torch.Tensor | None = None
+            if has_flight_features:
+                if adep_arr is None or ades_arr is None:
+                    continue
+                adep_at_t0 = float(adep_arr[start])
+                ades_at_t0 = float(ades_arr[start])
+                if not np.isfinite(adep_at_t0) or not np.isfinite(ades_at_t0):
+                    continue
+                feature_values = {
+                    "dist_total_flight": adep_at_t0 + ades_at_t0,
+                    "dist_adep_at_t0": adep_at_t0,
+                    **flight_aggregates[fid],
+                }
+                feature_row = [feature_values[col] for col in requested_flight_feature_cols]
+                flight_features_tensor = (
+                    torch.tensor(feature_row, dtype=torch.float32).unsqueeze(0).expand(seq_len, -1)
+                )
+
             samples.append(
                 FlightSample(
                     x=torch.from_numpy(x_arr[start:end].copy()),
@@ -164,8 +233,12 @@ def _load_and_window(
                     dx=torch.from_numpy(dx_arr[start:end].copy()),
                     e1=e1_tensor,
                     w=w_tensor,
+                    flight_features=flight_features_tensor,
                 )
             )
+
+    if _require_routing:
+        log.info("flights_dropped_no_routing", count=flights_dropped_no_routing)
 
     return samples
 
@@ -182,6 +255,8 @@ def get_train_val_data(
     train_limit: int | None = None,
     val_limit: int | None = None,
     e1_cols: list[str] | None = None,
+    flight_feature_cols: list[str] | None = None,
+    require_routing: bool = False,
 ) -> tuple[FlightDataset, FlightDataset]:
     """Create training and validation datasets from Delta Table data.
 
@@ -202,6 +277,8 @@ def get_train_val_data(
         shift: Step between consecutive windows.
         train_limit: Max number of training flights to load.
         val_limit: Max number of validation flights to load.
+        flight_feature_cols: Optional flight-level feature names to attach.
+        require_routing: Whether to drop flights with no routing data.
 
     Returns:
         Tuple of ``(train_dataset, val_dataset)``.
@@ -227,6 +304,8 @@ def get_train_val_data(
         shift=shift,
         flight_limit=train_limit,
         e1_cols=e1_cols,
+        flight_feature_cols=flight_feature_cols,
+        require_routing=require_routing,
     )
     val_samples = _load_and_window(
         val_df,
@@ -238,7 +317,37 @@ def get_train_val_data(
         shift=shift,
         flight_limit=val_limit,
         e1_cols=e1_cols,
+        flight_feature_cols=flight_feature_cols,
+        require_routing=require_routing,
     )
+
+    if flight_feature_cols or require_routing:
+        routing_df = data_df.select(
+            [
+                pl.col("meta_flight_id"),
+                pl.col("fdm_adep_dist_m").is_not_null().over("meta_flight_id").alias("has_adep"),
+                pl.col("fdm_ades_dist_m").is_not_null().over("meta_flight_id").alias("has_ades"),
+            ]
+        )
+        routing_summary = routing_df.group_by("meta_flight_id").agg(
+            [
+                pl.col("has_adep").any(),
+                pl.col("has_ades").any(),
+            ]
+        )
+        n_flights_with_routing = routing_summary.filter(
+            pl.col("has_adep") | pl.col("has_ades")
+        ).height
+        n_flights_dropped = routing_summary.height - n_flights_with_routing
+        n_samples_with_features = sum(
+            sample.flight_features is not None for sample in train_samples + val_samples
+        )
+        log.info(
+            "flight_features_loaded",
+            n_flights_with_routing=n_flights_with_routing,
+            n_flights_dropped=n_flights_dropped,
+            n_samples_with_features=n_samples_with_features,
+        )
 
     log.info(
         "data_loaded",

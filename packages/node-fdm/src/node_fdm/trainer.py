@@ -11,9 +11,9 @@ import csv
 import json
 import math
 import random
-from collections.abc import Sequence
+from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import numpy as np
 import structlog
@@ -228,7 +228,7 @@ class ODETrainer:
             activation=config.activation,
         ).to(self.device)
         if self.device.type == "cuda":
-            self.model = torch.compile(self.model)
+            self.model = cast(FlightDynamicsModel, torch.compile(self.model))
 
         self.optimizer = torch.optim.AdamW(
             self.model.parameters(),
@@ -814,9 +814,10 @@ class ODETrainer:
         records: list[dict[str, float]] = []
         loss_csv_path = self.model_dir / "training_losses.csv"
 
-        steps_per_epoch = (
-            n_train_batches if use_cuda else max(len(train_loader), 1)  # type: ignore[possibly-undefined]
-        )
+        if use_cuda:
+            steps_per_epoch = n_train_batches
+        else:
+            steps_per_epoch = max(len(train_loader), 1)
         self.scheduler = self._build_scheduler(steps_per_epoch=steps_per_epoch)
 
         for epoch in range(1, epochs + 1):
@@ -828,11 +829,16 @@ class ODETrainer:
             total_loss = 0.0
             n_batches = 0
 
-            train_batches = (
-                self._iter_preloaded(train_stacked, self.config.batch_size, shuffle=True)
-                if use_cuda
-                else train_loader  # type: ignore[possibly-undefined]
-            )
+            train_batches: Iterable[tuple[torch.Tensor, ...]]
+            if use_cuda:
+                assert train_stacked is not None
+                train_batches = self._iter_preloaded(
+                    train_stacked,
+                    self.config.batch_size,
+                    shuffle=True,
+                )
+            else:
+                train_batches = cast(Iterable[tuple[torch.Tensor, ...]], train_loader)
             for batch in train_batches:
                 loss = self._compute_batch_loss(batch)
                 self.optimizer.zero_grad()
@@ -855,11 +861,16 @@ class ODETrainer:
             self.model.eval()
             val_total = 0.0
             val_batches = 0
-            val_iter = (
-                self._iter_preloaded(val_stacked, self.config.val_batch_size, shuffle=False)
-                if use_cuda
-                else val_loader  # type: ignore[possibly-undefined]
-            )
+            val_iter: Iterable[tuple[torch.Tensor, ...]]
+            if use_cuda:
+                assert val_stacked is not None
+                val_iter = self._iter_preloaded(
+                    val_stacked,
+                    self.config.val_batch_size,
+                    shuffle=False,
+                )
+            else:
+                val_iter = cast(Iterable[tuple[torch.Tensor, ...]], val_loader)
             with torch.no_grad():
                 for batch in val_iter:
                     loss = self._compute_batch_loss(batch)
