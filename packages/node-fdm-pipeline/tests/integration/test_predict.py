@@ -30,6 +30,20 @@ def _make_delta_df(
         "meta_aircraft_type": [acft] * n,
         "meta_split": [split] * n,
         "fdm_flag_valid": [True] * n,
+        "fdm_flag_crop_start": [0] * n,
+        "fdm_flag_crop_end": [n - 1] * n,
+        "raw_timestamp": list(range(n)),
+        # columns consumed by run_predict_bada → _run_predict_bada_typecode
+        "raw_alt_m": [3000.0] * n,
+        "era_tas_ms": [230.0] * n,
+        "era_temp_K": [288.15] * n,
+        "era_mach": [0.82] * n,
+        "fdm_cas_ms": [144.0] * n,
+        "fdm_cas_sel_ms": [144.0] * n,
+        "fdm_mach_sel": [0.82] * n,
+        "fdm_vz_sel_ms": [0.0] * n,
+        "fdm_alt_target_m": [10668.0] * n,
+        "fdm_long_wind_ms": [5.0] * n,
         # common feature columns used by mocked architectures
         "distance_m": [float(i * 1000) for i in range(n)],
         "alt_sel_m": [10668.0] * n,
@@ -116,7 +130,7 @@ typecodes:
         )
 
         # Check output dir was created
-        predict_dir = tmp_path / "data" / "predicted_flights" / "A320"
+        predict_dir = tmp_path / "data" / "predicted_flights" / "node_adsb_v1_A320" / "A320"
         assert predict_dir.exists()
 
         # Check predictor was called
@@ -346,6 +360,9 @@ typecodes:
                 "meta_aircraft_type": ["A320"] * n,
                 "meta_split": ["test"] * n,
                 "fdm_flag_valid": [True] * n,
+                "fdm_flag_crop_start": [0] * n,
+                "fdm_flag_crop_end": [n - 1] * n,
+                "raw_timestamp": list(range(n)),
                 "altitude_ft": [35000.0] * n,
                 "mach_sel": mach_sel,
                 "cas_sel_kt": [280.0] * n,
@@ -376,7 +393,12 @@ typecodes:
         "nan_fraction, expected_rows",
         [
             pytest.param(0.0, 100, id="clean_flight_all_rows"),
-            pytest.param(0.6, 40, id="filter_nan_rows"),
+            # Post-AXM (commit 53025e5): _load_test_df ffill/bfills numeric
+            # state/exo columns and predict no longer drops NaN rows --- the
+            # full timeline is forwarded to the predictor (crop_start/end is
+            # the only slicing knob). Non-prefixed columns like ``mach_sel``
+            # remain NaN but the row count is preserved.
+            pytest.param(0.6, 100, id="nan_rows_passthrough"),
             pytest.param(0.9, None, id="skip_above_threshold"),
         ],
     )

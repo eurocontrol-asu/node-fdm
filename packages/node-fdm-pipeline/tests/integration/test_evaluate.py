@@ -22,6 +22,9 @@ def _make_gt_df(
             "meta_aircraft_type": [acft] * n,
             "meta_split": ["test"] * n,
             "fdm_flag_valid": [True] * n,
+            "fdm_flag_crop_start": [0] * n,
+            "fdm_flag_crop_end": [n - 1] * n,
+            "raw_timestamp": np.arange(n, dtype=np.int64),
             "raw_alt_m": np.linspace(1500, 3000, n),
             "era_tas_ms": np.linspace(200, 250, n),
             "fdm_gamma_rad": np.linspace(-0.01, 0.01, n),
@@ -96,7 +99,7 @@ class TestEvaluateTypecode:
         result = evaluate_typecode(
             "A320",
             acft_df=acft_df,
-            predict_acft_dir=predict_dir,
+            predict_acft_dir=predict_dir / "A320",
             bada_dir=bada_dir,
             variables=variables,
         )
@@ -211,7 +214,7 @@ typecodes:
         config = self._make_config(tmp_path, data_dir)
         run_evaluate(arch="adsb", config=config)
 
-        output = data_dir / "performance.parquet"
+        output = data_dir / "model_performance" / "node_adsb_v1" / "performance.parquet"
         assert output.exists()
         result = pl.read_parquet(output)
         assert len(result) > 0
@@ -238,4 +241,6 @@ typecodes:
         run_evaluate(arch="adsb", config=config)
 
         # No output file created
-        assert not (data_dir / "performance.parquet").exists()
+        assert not (
+            data_dir / "model_performance" / "node_adsb_v1" / "performance.parquet"
+        ).exists()

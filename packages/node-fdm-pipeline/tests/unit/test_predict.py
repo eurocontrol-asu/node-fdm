@@ -36,6 +36,8 @@ def _make_flight_df(  # noqa: PLR0913
 ) -> pl.DataFrame:
     base = {
         "meta_flight_id": ["F1"] * n,
+        "fdm_flag_crop_start": [0] * n,
+        "fdm_flag_crop_end": [n - 1] * n,
         "raw_lat_deg": [lat0] * n,
         "raw_lon_deg": [lon0] * n,
         "era_u_wind_ms": [u_wind] * n,
@@ -47,7 +49,15 @@ def _make_flight_df(  # noqa: PLR0913
         "u0": [0.0] * n,
     }
     needed = (
-        {"meta_flight_id", "raw_lat_deg", "raw_lon_deg", "era_u_wind_ms", "era_v_wind_ms"}
+        {
+            "meta_flight_id",
+            "fdm_flag_crop_start",
+            "fdm_flag_crop_end",
+            "raw_lat_deg",
+            "raw_lon_deg",
+            "era_u_wind_ms",
+            "era_v_wind_ms",
+        }
         | set(x_cols)
         | set(u_cols)
         | set(e_cols)
