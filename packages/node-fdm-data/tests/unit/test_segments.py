@@ -2634,12 +2634,18 @@ class TestTasTargetForwardBackwardFill:
             }
         )
 
-    def test_tas_target_filled_no_nan(self, segment_config_full: dict[str, Any]) -> None:
-        """AC1: fdm_tas_target_kt has zero NaN after ffill+bfill."""
+    def test_tas_target_known_matches_non_nan_mask(
+        self, segment_config_full: dict[str, Any]
+    ) -> None:
+        """fdm_tas_target_kt is NaN-preserving; fdm_tas_target_known is its non-NaN mask."""
         df = self._make_single_plateau_flight()
         result = build_selected_params(df, segment_config_full)
         assert "fdm_tas_target_kt" in result.columns
-        assert int(result["fdm_tas_target_kt"].is_nan().sum()) == 0
+        assert "fdm_tas_target_known" in result.columns
+        target_non_nan = ~result["fdm_tas_target_kt"].is_nan().to_numpy()
+        known = result["fdm_tas_target_known"].to_numpy()
+        np.testing.assert_array_equal(known, target_non_nan)
+        assert int(known.sum()) > 0, "expected at least one detected target row"
 
     def test_tas_target_known_unaffected_by_fill(
         self, segment_config_full: dict[str, Any]
