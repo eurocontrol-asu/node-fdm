@@ -28,9 +28,11 @@ __all__ = [
     "PhysicsLayer",
 ]
 
+# Standard gravity used by both longitudinal and lateral dynamics equations.
 G: float = 9.80665
 """Standard gravity (m/s²)."""
 
+# Minimum true airspeed used to keep angular-rate divisions numerically stable.
 V_MIN_CLAMP: float = 50.0
 """Lower bound on TAS for the ``1/V`` term (m/s).
 
@@ -44,7 +46,7 @@ from blowing up when an intermediate ODE substep produces a corrupted TAS
 
 
 class PhysicsLayer(nn.Module):
-    """Apply gravity analytically to ``(a_spec, n_z)`` and emit ``(d_tas, d_gamma)``."""
+    """Apply analytic flight dynamics in legacy or Newton force mode."""
 
     def __init__(
         self,
@@ -61,43 +63,55 @@ class PhysicsLayer(nn.Module):
         del input_stats  # unused
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
-        """Convert aerodynamic outputs into ODE derivatives.
+        """Convert model outputs into ODE derivatives.
 
-        The NN emits ``fdm_n_z_residual = n_z - 1`` (a quantity centered on
-        zero) rather than ``n_z`` itself, so symmetric denormalize modes
-        (``"scaled"``, ``"normal_clamp"``) behave correctly.  This layer
-        adds ``1`` back before applying the dynamics equation.
+        Newton mode is selected when ``fdm_t_minus_d_N`` is present. It
+        consumes thrust-minus-drag, lift, mass, true airspeed and flight path
+        angle, then emits translational, angular and mass derivatives.
+
+        Legacy mode consumes ``fdm_a_spec_ms2`` and ``fdm_n_z_residual``. The
+        NN emits ``fdm_n_z_residual = n_z - 1`` (a quantity centered on zero)
+        rather than ``n_z`` itself, so symmetric denormalize modes
+        (``"scaled"``, ``"normal_clamp"``) behave correctly. This layer adds
+        ``1`` back before applying the dynamics equation.
 
         When ``fdm_phi_bank_rad`` is present in the input mapping (lateral
         channel), this layer also emits ``fdm_d_heading_rads`` from the
         coordinated-turn equation ``d_heading = (g/V)·tan(phi_bank)``.
         ``phi_bank`` is hard-capped upstream (StructuredLayer cap=1.0 rad);
-        the resulting rate can exceed ±0.1 rad/s and is bounded again by
-        the projected integrator's ``dx_bounds``.
+        the resulting rate can exceed ±0.1 rad/s and is bounded again by the
+        projected integrator's ``dx_bounds``.
 
         Args:
-            x: Mapping containing ``fdm_a_spec_ms2``, ``fdm_n_z_residual``,
-                ``era_tas_ms``, ``fdm_gamma_rad`` and (optional)
-                ``fdm_phi_bank_rad``.
+            x: Mapping containing either Newton-mode force columns or legacy
+                acceleration/load-factor columns, plus ``era_tas_ms``,
+                ``fdm_gamma_rad`` and optional ``fdm_phi_bank_rad``.
 
         Returns:
-            Dictionary with ``fdm_d_tas_ms2``, ``fdm_d_gamma_rads``,
-            ``fdm_n_z`` and (when phi_bank is provided) ``fdm_d_heading_rads``.
+            Dictionary with ODE derivatives for the selected mode and, when
+            phi_bank is provided, ``fdm_d_heading_rads``.
         """
-        a_spec = x["fdm_a_spec_ms2"]
-        n_z = x["fdm_n_z_residual"] + 1.0
         tas = x["era_tas_ms"]
         gamma = x["fdm_gamma_rad"]
-
         tas_safe = torch.clamp(tas, min=V_MIN_CLAMP)
-        d_tas = a_spec - G * torch.sin(gamma)
-        d_gamma = (G / tas_safe) * (n_z - torch.cos(gamma))
 
-        out: dict[str, torch.Tensor] = {
-            "fdm_d_tas_ms2": d_tas,
-            "fdm_d_gamma_rads": d_gamma,
-            "fdm_n_z": n_z,
-        }
+        if "fdm_t_minus_d_N" in x:
+            t_minus_d = x["fdm_t_minus_d_N"]
+            lift = x["fdm_lift_N"]
+            mass = x["fdm_mass_kg"]
+            out: dict[str, torch.Tensor] = {
+                "fdm_d_tas_ms2": t_minus_d / mass - G * torch.sin(gamma),
+                "fdm_d_gamma_rads": (lift / mass - G * torch.cos(gamma)) / tas_safe,
+                "fdm_d_mass_kgs": torch.zeros_like(mass),
+            }
+        else:
+            a_spec = x["fdm_a_spec_ms2"]
+            n_z = x["fdm_n_z_residual"] + 1.0
+            out = {
+                "fdm_d_tas_ms2": a_spec - G * torch.sin(gamma),
+                "fdm_d_gamma_rads": (G / tas_safe) * (n_z - torch.cos(gamma)),
+                "fdm_n_z": n_z,
+            }
 
         if "fdm_phi_bank_rad" in x:
             phi_bank = x["fdm_phi_bank_rad"]
