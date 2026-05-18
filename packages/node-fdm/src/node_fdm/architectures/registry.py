@@ -100,6 +100,15 @@ class ArchitectureSpec(BaseModel, frozen=True):
     straight-flight for ``phi_bank``) and yields a scale that reflects the
     natural unit of the *active* signal.
     """
+    flight_feature_cols: list[str] = Field(default_factory=list)
+    """Per-flight feature columns consumed by the MassEncoder (upstream).
+
+    These columns drive the MassEncoder, which runs *outside*
+    ``FlightDynamicsModel`` (encoder-decoder pattern) and feeds an estimated
+    mass into the projected integrator. The listed columns must be present
+    in the dataset via the loader's ``flight_feature_cols`` kwarg. Empty for
+    architectures without a mass-encoder branch (e.g. ``NODE_ADSB_V1``).
+    """
 
 
 def register(spec: ArchitectureSpec) -> None:

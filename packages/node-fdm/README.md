@@ -13,6 +13,7 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `architectures.opensky` | OpenSky 2025 architecture (auto-registered) |
 | `architectures.qar` | QAR architecture (auto-registered) |
 | `architectures.adsb` | ADS-B v1 architecture (auto-registered) |
+| `architectures.adsb_hybrid` | ADS-B hybrid v1 architecture with Newton-force NN outputs (`fdm_t_minus_d_N`, `fdm_lift_N`), `fdm_mass_kg` state and `flight_feature_cols` for MassEncoder coupling (auto-registered) |
 | `models.fdm` | `FlightDynamicsModel` — layered state derivative computation |
 | `models.batch_neural_ode` | `BatchNeuralODE` — ODE wrapper with input interpolation and optional `dx_bounds` soft clamping |
 | `models.projected_integrator` | `ClampedEuler`, `ClampedRK4` — fixed-step solvers with state projection after each step; `_clamp_columns` (hard), `_soft_clamp_columns` (tanh-based) |

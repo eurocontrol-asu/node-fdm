@@ -81,6 +81,24 @@ class TestRegistry:
         assert spec.layers[3].name == "data_ode"
 
 
+class TestArchitectureSpecFlightFeatureCols:
+    """AC1: ArchitectureSpec exposes flight_feature_cols field."""
+
+    def test_architecture_spec_has_flight_feature_cols_field(self) -> None:
+        """AC1: ``flight_feature_cols`` is a declared field with empty default."""
+        assert "flight_feature_cols" in ArchitectureSpec.model_fields
+        spec = ArchitectureSpec(
+            name="ffc_default_test",
+            x_cols=["x"],
+            u_cols=[],
+            e0_cols=[],
+            e1_cols=[],
+            dx_cols=[],
+            layers=[],
+        )
+        assert spec.flight_feature_cols == []
+
+
 class TestArchitectureSpecBounds:
     """Tests for physical bounds on ArchitectureSpec."""
 
