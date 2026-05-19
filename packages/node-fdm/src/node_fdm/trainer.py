@@ -26,6 +26,7 @@ from torchdiffeq import odeint
 from node_fdm.architectures.registry import ArchitectureSpec, get
 from node_fdm.callbacks import ConsoleCallback, TrainingCallback
 from node_fdm.dataset import FlightDataset, FlightSample, compute_stats
+from node_fdm.layers.mass_encoder import MassEncoderLinear
 from node_fdm.losses import get_loss
 from node_fdm.models.batch_neural_ode import BatchNeuralODE
 from node_fdm.models.fdm import FlightDynamicsModel
@@ -35,6 +36,11 @@ from node_fdm.models.projected_integrator import (
     _clamp_columns,
 )
 from node_fdm.training.weighting import compute_segment_weights
+from node_fdm_data.schemas.adsb_hybrid import (
+    A320_MTOW_KG,
+    A320_OEW_KG,
+    FLIGHT_FEATURE_SIGNS,
+)
 
 __all__ = [
     "ODETrainer",
@@ -127,6 +133,9 @@ def _collate_flight_samples(
     if batch[0].w is not None:
         w_stack = torch.stack([s.w for s in batch if s.w is not None])
         base = (*base, w_stack)
+    if batch[0].flight_features is not None:
+        ff_stack = torch.stack([s.flight_features for s in batch if s.flight_features is not None])
+        base = (*base, ff_stack)
     return base
 
 
@@ -194,6 +203,7 @@ class ODETrainer:
         dx_col_names = [col for _, col in self.spec.dx_cols]
         e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
         derived_output_cols = list(getattr(self.spec, "derived_output_cols", []) or [])
+        flight_feature_cols = list(getattr(self.spec, "flight_feature_cols", []) or [])
         _samples = list(train_dataset)  # type: ignore[call-overload]
         _stats_args = {
             "x_cols": self.spec.x_cols,
@@ -206,6 +216,7 @@ class ODETrainer:
             _samples,
             **_stats_args,
             e1_cols=e1_cols,
+            flight_feature_cols=flight_feature_cols,
             derived_cols=derived_output_cols,
             derived_scale_floor_ratio=scale_floor,
         )
@@ -217,6 +228,7 @@ class ODETrainer:
             _samples,
             **_stats_args,
             e1_cols=e1_cols,
+            flight_feature_cols=flight_feature_cols,
             derived_cols=derived_output_cols,
             derived_scale_floor_ratio=scale_floor,
         )
@@ -230,11 +242,40 @@ class ODETrainer:
         if self.device.type == "cuda":
             self.model = cast(FlightDynamicsModel, torch.compile(self.model))
 
-        self.optimizer = torch.optim.AdamW(
-            self.model.parameters(),
-            lr=config.lr,
-            weight_decay=config.weight_decay,
-        )
+        self.mass_encoder: MassEncoderLinear | None = None
+        if flight_feature_cols:
+            self.mass_encoder = MassEncoderLinear(
+                feature_stats=self.stats_dict,
+                feature_cols=flight_feature_cols,
+                expected_signs=FLIGHT_FEATURE_SIGNS,
+                oew_kg=A320_OEW_KG,
+                mtow_kg=A320_MTOW_KG,
+            ).to(self.device)
+            if "fdm_mass_kg" in self.spec.x_cols and (
+                config.alpha_dict is None or "fdm_mass_kg" not in config.alpha_dict
+            ):
+                log.warning(
+                    "mass_dim_unweighted",
+                    message=(
+                        "fdm_mass_kg is in spec.x_cols but missing from "
+                        "alpha_dict; set alpha_dict['fdm_mass_kg']=0.0 to "
+                        "silence the residual on the mass dim."
+                    ),
+                )
+
+        if self.mass_encoder is not None:
+            self.optimizer = torch.optim.AdamW(
+                list(self.model.parameters()) + list(self.mass_encoder.parameters()),
+                lr=config.lr,
+                weight_decay=config.weight_decay,
+            )
+        else:
+            self.optimizer = torch.optim.AdamW(
+                self.model.parameters(),
+                lr=config.lr,
+                weight_decay=config.weight_decay,
+            )
+        self._override_m0_factor: float | None = None
         # Scheduler is built in ``train()`` once we know the number of
         # batches per epoch (step-wise scheduling).
         self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
@@ -286,6 +327,7 @@ class ODETrainer:
     def save_meta(self) -> None:
         """Persist training metadata compatible with :class:`ModelMeta`."""
         optimizer_path = self.model_dir / "optimizer.pt"
+        has_mass_encoder = getattr(self, "mass_encoder", None) is not None
         meta: dict[str, Any] = {
             "architecture_name": self.config.architecture_name,
             "model_params": list(self.config.model_params),
@@ -302,6 +344,7 @@ class ODETrainer:
             "epochs": self.config.epochs,
             "use_mode_weights": self.config.use_mode_weights,
             "mode_weight_alpha": self.config.mode_weight_alpha,
+            "mass_encoder": has_mass_encoder,
         }
         meta_path = self.model_dir / "meta.json"
         with meta_path.open("w") as f:
@@ -333,6 +376,11 @@ class ODETrainer:
         for name in self.model.layers_name:
             self.save_layer_checkpoint(name, epoch)
         torch.save(self.optimizer.state_dict(), self.model_dir / "optimizer.pt")
+        if self.mass_encoder is not None:
+            torch.save(
+                self.mass_encoder.state_dict(),
+                self.model_dir / "mass_encoder.pt",
+            )
         self.save_meta()
         log.debug("model_saved", epoch=epoch)
 
@@ -361,6 +409,11 @@ class ODETrainer:
             self.model.layers_dict[name].load_state_dict(ckpt["layer_state"])
             if not reset_loss:
                 self.best_val_loss = ckpt.get("best_val_loss", self.best_val_loss)
+        if self.mass_encoder is not None:
+            mass_ckpt = self.model_dir / "mass_encoder.pt"
+            if mass_ckpt.exists():
+                state = torch.load(mass_ckpt, weights_only=True)
+                self.mass_encoder.load_state_dict(state)
         log.debug(
             "model_weights_loaded",
             layers=list(self.model.layers_name),
@@ -511,18 +564,26 @@ class ODETrainer:
         else:
             tensors = tuple(t.to(self.device, non_blocking=True) for t in batch)
         x_seq, u_seq, e_seq = tensors[0], tensors[1], tensors[2]
-        # The collate output may carry e1 and/or w in trailing slots. The
-        # last tensor whose last dim equals seq_len is treated as ``w``
-        # (per-sample weights, shape (batch, seq_len)). e1 has shape
-        # (batch, seq_len, n_e1) so its ndim is 3.
+        # The collate output may carry e1, w and/or flight_features in trailing
+        # slots. ``w`` has shape (batch, seq_len) → ndim==2. ``e1`` and
+        # ``flight_features`` both have ndim==3; we identify ``flight_features``
+        # by its trailing-dim against ``spec.flight_feature_cols``.
         w_tensor: torch.Tensor | None = None
+        flight_features: torch.Tensor | None = None
+        n_features = len(getattr(self.spec, "flight_feature_cols", []) or [])
         for t in tensors[4:]:
             if t.ndim == 2:
                 w_tensor = t
-                break
+            elif n_features > 0 and t.shape[-1] == n_features:
+                flight_features = t
 
         seq_len = x_seq.shape[1]
         x0 = x_seq[:, 0, :]
+        if self.mass_encoder is not None and flight_features is not None:
+            m_0 = self.mass_encoder(flight_features[:, 0, :])
+            if self._override_m0_factor is not None:
+                m_0 = m_0 * self._override_m0_factor
+            x0 = torch.cat([x0[:, :4], m_0.to(x0.dtype).unsqueeze(-1)], dim=-1)
 
         t_grid = torch.arange(
             0,
@@ -901,6 +962,13 @@ class ODETrainer:
                     lr=current_lr,
                 )
 
+            if self.mass_encoder is not None:
+                log.info(
+                    "mass_encoder_coefs",
+                    epoch=epoch,
+                    **self.mass_encoder.effective_coefficients(),
+                )
+
         # Write loss CSV (no pandas)
         with loss_csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "val_loss"])
@@ -912,3 +980,53 @@ class ODETrainer:
             cb.on_train_end(self.best_val_loss)
 
         return records
+
+    def identifiability_test(self, factor: float = 1.3) -> dict[str, float]:
+        """Run the §11.1 identifiability gate.
+
+        Computes baseline val MSE, then re-runs the validation rollout with
+        ``m_0`` scaled by *factor* (no gradient) and reports the ratio. When
+        ``self.mass_encoder is None``, both MSEs equal 1.0 (the perturbation
+        has no effect because mass is taken from the data).
+
+        Args:
+            factor: Multiplicative perturbation applied to the predicted
+                initial mass on the validation pass.
+
+        Returns:
+            ``{"baseline_mse": ..., "perturbed_mse": ..., "ratio": ...}``.
+        """
+        if self.mass_encoder is None:
+            return {"baseline_mse": 1.0, "perturbed_mse": 1.0, "ratio": 1.0}
+
+        val_loader = DataLoader(
+            self.val_dataset,
+            batch_size=self.config.val_batch_size,
+            shuffle=False,
+            num_workers=self.config.num_workers,
+            collate_fn=_collate_flight_samples,
+        )
+
+        def _mean_loss(override: float | None) -> float:
+            self._override_m0_factor = override
+            total = 0.0
+            n = 0
+            try:
+                with torch.no_grad():
+                    for batch in val_loader:
+                        loss = self._compute_batch_loss(batch)
+                        total += float(loss.item())
+                        n += 1
+            finally:
+                self._override_m0_factor = None
+            return total / max(n, 1)
+
+        self.model.eval()
+        baseline_mse = _mean_loss(None)
+        perturbed_mse = _mean_loss(factor)
+        ratio = perturbed_mse / baseline_mse if baseline_mse > 0 else float("inf")
+        return {
+            "baseline_mse": baseline_mse,
+            "perturbed_mse": perturbed_mse,
+            "ratio": ratio,
+        }

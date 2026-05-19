@@ -71,6 +71,12 @@ def _soft_clamp_columns(
     for c in range(x.shape[1]):
         if c in bounds:
             lo, hi = bounds[c]
+            if hi == lo:
+                # Degenerate bound: the column is pinned to the constant ``lo``
+                # (e.g. ``fdm_d_mass_kgs`` in the hybrid arch). Skip the tanh
+                # transform, which would divide by ``half_range == 0``.
+                cols.append(torch.full_like(x[:, c], lo))
+                continue
             mid = (lo + hi) / 2.0
             half_range = (hi - lo) / 2.0
             # Scale output by (1 - eps) so tanh saturation never reaches bounds.
