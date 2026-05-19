@@ -43,6 +43,7 @@ class ArchitectureInfo:
 ARCH_BY_NAME: dict[str, str] = {
     "qar": "qar",
     "node_adsb_v1": "adsb",
+    "node_adsb_hybrid_v1": "adsb_hybrid",
 }
 
 
@@ -50,7 +51,7 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
     """Resolve an architecture name to its schema and preprocessing components.
 
     Args:
-        arch: Architecture identifier — ``"qar"`` or ``"adsb"``.
+        arch: Architecture identifier — ``"qar"``, ``"adsb"``, or ``"adsb_hybrid"``.
 
     Returns:
         Fully resolved ``ArchitectureInfo``.
@@ -87,6 +88,26 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.adsb",
             )
+        case "adsb_hybrid":
+            from node_fdm_data.schemas.adsb_hybrid import (
+                DX_COLS,
+                E0_COLS,
+                E1_COLS,
+                U_COLS,
+                X_COLS,
+            )
+
+            return ArchitectureInfo(
+                name="node_adsb_hybrid_v1",
+                x_cols=X_COLS,
+                u_cols=U_COLS,
+                e0_cols=E0_COLS,
+                e1_cols=E1_COLS,
+                dx_cols=DX_COLS,
+                preprocessing_fn=None,
+                segment_filter_fn=None,
+                architecture_import="node_fdm.architectures.adsb_hybrid",
+            )
         case _:
-            msg = f"Unknown architecture: {arch!r}. Supported: 'qar', 'adsb'."
+            msg = f"Unknown architecture: {arch!r}. Supported: 'qar', 'adsb', 'adsb_hybrid'."
             raise ValueError(msg)

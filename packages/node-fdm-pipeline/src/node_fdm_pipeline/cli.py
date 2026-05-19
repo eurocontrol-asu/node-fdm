@@ -156,6 +156,17 @@ def train(
             help="Hidden-layer width (neurons) for backbone and heads (default: 48)",
         ),
     ] = None,
+    require_routing: Annotated[
+        bool,
+        cyclopts.Parameter(
+            name="--require-routing",
+            help=(
+                "Drop flights without ADEP/ADES routing data (filters the dataset "
+                "to the ~55% subset with airport routing). Auto-enabled by the hybrid "
+                "architecture; pass explicitly on the baseline for fair comparison."
+            ),
+        ),
+    ] = False,
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
     from node_fdm_pipeline.commands.train import run_training
@@ -181,6 +192,7 @@ def train(
         backbone_depth=backbone_depth,
         head_depth=head_depth,
         hidden_width=hidden_width,
+        require_routing=require_routing,
     )
 
 

@@ -41,6 +41,7 @@ class _TrainOverrides:
     backbone_depth: int | None = None
     head_depth: int | None = None
     hidden_width: int | None = None
+    require_routing: bool = False
 
 
 @dataclass(frozen=True)
@@ -166,6 +167,14 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
     if training_config.use_mode_weights:
         data_df = boot_mode_weights(data_df, alpha=training_config.mode_weight_alpha)
 
+    # Pull flight_feature_cols from the registered ArchitectureSpec when the
+    # architecture declares them (hybrid). The resolver doesn't carry that
+    # field, so we read it from the registry directly.
+    from node_fdm.architectures.registry import get as get_arch_spec
+
+    arch_spec = get_arch_spec(ctx.info.name)
+    flight_feature_cols = list(getattr(arch_spec, "flight_feature_cols", []) or [])
+
     train_ds, val_ds = get_train_val_data(
         data_df=data_df,
         x_cols=ctx.info.x_cols,
@@ -177,6 +186,8 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
         shift=training_config.shift,
         train_limit=ctx.overrides.train_limit or 5000,
         val_limit=min(ctx.overrides.train_limit or 5000, 5000),
+        flight_feature_cols=flight_feature_cols or None,
+        require_routing=ctx.overrides.require_routing,
     )
 
     training_config = _maybe_adjust_epochs(training_config, train_ds, acft, ctx.overrides.epochs)
@@ -214,6 +225,7 @@ def run_training(
     backbone_depth: int | None = None,
     head_depth: int | None = None,
     hidden_width: int | None = None,
+    require_routing: bool = False,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
 
@@ -267,6 +279,7 @@ def run_training(
             backbone_depth=backbone_depth,
             head_depth=head_depth,
             hidden_width=hidden_width,
+            require_routing=require_routing,
         ),
         cfg_use_mode_weights=cfg.training.use_mode_weights,
         cfg_mode_weight_alpha=cfg.training.mode_weight_alpha,
