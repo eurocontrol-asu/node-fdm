@@ -44,14 +44,27 @@ ARCH_BY_NAME: dict[str, str] = {
     "qar": "qar",
     "node_adsb_v1": "adsb",
     "node_adsb_hybrid_v1": "adsb_hybrid",
+    "node_adsb_hybrid_v2": "adsb_hybrid_v2",
+    "node_adsb_hybrid_v3": "adsb_hybrid_v3",
 }
+
+_SUPPORTED_ARCHS: tuple[str, ...] = (
+    "qar",
+    "adsb",
+    "adsb_hybrid",
+    "adsb_hybrid_v2",
+    "adsb_hybrid_v3",
+)
 
 
 def resolve_architecture(arch: str) -> ArchitectureInfo:
     """Resolve an architecture name to its schema and preprocessing components.
 
     Args:
-        arch: Architecture identifier — ``"qar"``, ``"adsb"``, or ``"adsb_hybrid"``.
+        arch: Architecture identifier — one of ``"qar"``, ``"adsb"``,
+            ``"adsb_hybrid"`` (v1, Newton 5 features),
+            ``"adsb_hybrid_v2"`` (Newton 6 features, Phase 1 baseline),
+            ``"adsb_hybrid_v3"`` (CL-mode, Phase 1.5).
 
     Returns:
         Fully resolved ``ArchitectureInfo``.
@@ -88,7 +101,11 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.adsb",
             )
-        case "adsb_hybrid":
+        case "adsb_hybrid" | "adsb_hybrid_v2" | "adsb_hybrid_v3":
+            # All three hybrid variants share the same X/U/E/DX schema —
+            # they only differ in flight_feature_cols (5 vs 6) and in the
+            # longitudinal head output contract (Newton lift_residual_norm
+            # vs CL residual). Schema columns come from the shared module.
             from node_fdm_data.schemas.adsb_hybrid import (
                 DX_COLS,
                 E0_COLS,
@@ -97,8 +114,19 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 X_COLS,
             )
 
+            arch_name, arch_import = {
+                "adsb_hybrid": ("node_adsb_hybrid_v1", "node_fdm.architectures.adsb_hybrid"),
+                "adsb_hybrid_v2": (
+                    "node_adsb_hybrid_v2",
+                    "node_fdm.architectures.adsb_hybrid_v2",
+                ),
+                "adsb_hybrid_v3": (
+                    "node_adsb_hybrid_v3",
+                    "node_fdm.architectures.adsb_hybrid_v3",
+                ),
+            }[arch]
             return ArchitectureInfo(
-                name="node_adsb_hybrid_v1",
+                name=arch_name,
                 x_cols=X_COLS,
                 u_cols=U_COLS,
                 e0_cols=E0_COLS,
@@ -106,8 +134,9 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 dx_cols=DX_COLS,
                 preprocessing_fn=None,
                 segment_filter_fn=None,
-                architecture_import="node_fdm.architectures.adsb_hybrid",
+                architecture_import=arch_import,
             )
         case _:
-            msg = f"Unknown architecture: {arch!r}. Supported: 'qar', 'adsb', 'adsb_hybrid'."
+            supported = ", ".join(repr(a) for a in _SUPPORTED_ARCHS)
+            msg = f"Unknown architecture: {arch!r}. Supported: {supported}."
             raise ValueError(msg)
