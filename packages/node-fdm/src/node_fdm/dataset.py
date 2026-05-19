@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from node_fdm.layers.physics import S_REF_A320_M2, cl_ref_steady_np
+from node_fdm.layers.physics import S_REF_A320_M2, cl_baseline_np
 from node_fdm_data.physics.constants import G, R
 from node_fdm_data.physics.isa import isa_pressure, isa_temperature
 from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
@@ -207,19 +207,25 @@ def _compute_cl_residual(
 ) -> np.ndarray:
     """Inverse PhysicsLayer for the CL-mode lift residual.
 
-    PhysicsLayer reconstructs ``L = q · S · (CL_steady(q) + cl_residual)``
-    where ``CL_steady(q) = m_ref · g / (q · S)`` balances weight at the
-    current dynamic pressure. Applying ``d_gamma = (L/m - g·cos gamma) / V``
-    and solving for the NN target under the ``m = m_ref`` statistics
-    convention:
+    At runtime, PhysicsLayer reconstructs
+    ``L = q · S · (CL_baseline(q, m) + cl_residual)`` with the **runtime**
+    mass from the state vector. Here in the dataset stats pipeline,
+    ``fdm_mass_kg`` is a synthetic, zero-padded column (the MassEncoder
+    fills it at runtime, it is not observed). So both sides of the
+    inverse use the constant ``m_ref`` -- the statistics convention is
+    "as if every flight had m = m_ref":
 
         cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G)
-                      / (q · S_REF_A320_M2) - CL_steady(q)
+                      / (q · S_REF_A320_M2)
+                      - m_ref · G / (q · S_REF_A320_M2)
 
-    where ``q`` is the dynamic pressure already computed by ``_compute_q``
-    (ERA5 temperature when available, ISA fallback). The q-dependent
-    baseline (vs the former CL_REF=0.5 constant) keeps the target residual
-    centered near 0 in every phase — see AXM-1739 cl_distribution.md §6.
+    At runtime the PhysicsLayer uses the real ``m`` (state), so the
+    target residual the NN sees during training is centered on a slightly
+    different operating point than this stats baseline -- but the stats
+    only drive the normalizer (mean/std/p999), not the target itself.
+
+    ``q`` is the dynamic pressure already computed by ``_compute_q``
+    (ERA5 temperature when available, ISA fallback).
     """
     gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
     tas = x_arr[:, x_cols.index("era_tas_ms")].astype(np.float64)
@@ -227,8 +233,9 @@ def _compute_cl_residual(
     v_safe = np.maximum(tas, _V_MIN_CLAMP)
     q_pa = _compute_q(x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
     lhs = ((v_safe / G) * d_gamma + np.cos(gamma)) * _M_REF_KG * G
-    cl_ref_q = cl_ref_steady_np(q_pa)
-    return np.asarray(lhs / (q_pa * S_REF_A320_M2) - cl_ref_q, dtype=np.float64)
+    m_ref_arr = np.full_like(q_pa, _M_REF_KG, dtype=np.float64)
+    cl_base = cl_baseline_np(q_pa, m_ref_arr)
+    return np.asarray(lhs / (q_pa * S_REF_A320_M2) - cl_base, dtype=np.float64)
 
 
 def _compute_phi_bank(

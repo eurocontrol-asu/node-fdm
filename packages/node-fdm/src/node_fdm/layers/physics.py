@@ -32,8 +32,8 @@ __all__ = [
     "V_MIN_CLAMP",
     "G",
     "PhysicsLayer",
-    "cl_ref_steady",
-    "cl_ref_steady_np",
+    "cl_baseline",
+    "cl_baseline_np",
 ]
 
 # Standard gravity used by both longitudinal and lateral dynamics equations.
@@ -49,48 +49,60 @@ _M_REF_KG: float = 0.5 * (A320_OEW_KG + A320_MTOW_KG)
 # A320 wing reference area (m², public TCDS).
 S_REF_A320_M2: float = 122.6
 # Cruise-typical lift coefficient. Centers the CL-mode residual on the
-# [0.3, 0.7] band in cruise — used as the asymptotic reference value at
-# high dynamic pressure, and as a diagnostic anchor in reports.
+# [0.3, 0.7] band in cruise — used as a diagnostic anchor in reports.
 #
-# **Note (post-AXM-1739 refactor)**: at runtime, the CL-mode PhysicsLayer
-# does NOT use this constant directly. It calls ``cl_ref_steady(q)`` which
-# returns ``m_ref · g / (q · S_REF)`` — the CL value that exactly balances
-# weight at the current dynamic pressure. With CL_REF constant, the NN had
-# to learn a phase-dependent shift (≈ ±0.2 at low altitude, ≈ 0 at cruise)
-# on top of the physics fine structure, starving the gradient on the real
-# signal. With the q-dependent steady-state baseline, the NN learns a
-# small correction around 0 in every phase — and the CL formulation
-# becomes algebraically equivalent to Newton-mode (``L = m_ref·g + q·S·cl_residual``).
-# See ``data/models/full_hybrid_v3/cl_distribution.md`` §6 for the
-# empirical evidence.
+# **Note (post-AXM-1739)**: at runtime, the CL-mode PhysicsLayer does
+# NOT use this constant. It calls ``cl_baseline(q, mass)`` which returns
+# ``mass · g / (q · S_REF)`` — the CL that exactly balances weight at
+# the current dynamic pressure and mass. With ``CL_REF=0.5`` constant
+# the NN had to absorb a phase-dependent shift; with the q-only
+# ``m_ref·g/(q·S)`` baseline (intermediate AXM-1739 attempt), the NN
+# still had to absorb ``(m - m_ref)·g/(q·S)`` because ``m`` was not in
+# the baseline. The current mass-aware baseline makes CL-mode
+# algebraically equivalent to Newton (``L = m·g + q·S·cl_residual``),
+# with ``mass`` sourced from the state vector (not the NN), preserving
+# the AC4 identifiability invariant.
 CL_REF: float = 0.5
 # A320 stall coefficient at 1 g, clean configuration, sea level. Used by
 # downstream sanity gates and ``nn_output_caps``.
 CL_MAX: float = 1.5
 
 
-def cl_ref_steady(q_pa: torch.Tensor) -> torch.Tensor:
-    """Steady-state CL that balances aircraft weight at the given ``q``.
+def cl_baseline(q_pa: torch.Tensor, mass_kg: torch.Tensor) -> torch.Tensor:
+    """Mass-aware steady-state CL that balances weight at the current ``q``.
 
-    ``CL_steady = m_ref · g / (q · S_REF)`` — the lift coefficient the
-    NN-emitted residual is centered around in the CL-mode PhysicsLayer.
-    The clip protects against pathological near-zero ``q`` from corrupted
-    ODE substeps at very low TAS (matches the protection used in
-    ``_compute_cl_residual`` on the numpy side).
+    ``CL_baseline = mass · g / (q · S_REF)`` -- the lift coefficient that
+    exactly balances weight at the current dynamic pressure and current
+    aircraft mass (P&S Part 1 §5: ``C_L = 2·m·g/(gamma_air·p_inf·M^2·S_ref)``,
+    equivalent to ``m·g/(q·S)``).
+
+    The NN-emitted ``cl_residual`` is the small correction around this
+    analytical baseline. This makes CL-mode algebraically equivalent to
+    Newton-mode: ``L = q·S·(CL_baseline + cl_residual) = m·g + q·S·cl_residual``.
+    The ``mass`` input comes from the state vector (``x["fdm_mass_kg"]``)
+    -- never from the NN -- preserving the AC4 identifiability invariant
+    that the longitudinal NN backbone is mass-agnostic.
+
+    Args:
+        q_pa: Dynamic pressure (Pa). Clamped at 100 Pa to protect against
+            pathological near-zero ``q`` from corrupted ODE substeps at
+            very low TAS.
+        mass_kg: Aircraft mass at the current step (kg). Comes from the
+            propagated state, initialised by the MassEncoder.
     """
     q_safe = torch.clamp(q_pa, min=100.0)
-    return torch.full_like(q_safe, _M_REF_KG * G) / (q_safe * S_REF_A320_M2)
+    return mass_kg * G / (q_safe * S_REF_A320_M2)
 
 
-def cl_ref_steady_np(q_pa: np.ndarray) -> np.ndarray:
-    """NumPy twin of :func:`cl_ref_steady` for dataset preprocessing.
+def cl_baseline_np(q_pa: np.ndarray, mass_kg: np.ndarray) -> np.ndarray:
+    """NumPy twin of :func:`cl_baseline` for dataset preprocessing.
 
     Used by ``_compute_cl_residual`` (the analytical inverse of the
     PhysicsLayer CL-mode reconstruction) so target and prediction stay
     algebraically symmetric.
     """
     q_safe = np.maximum(q_pa, 100.0)
-    return np.asarray(_M_REF_KG * G / (q_safe * S_REF_A320_M2), dtype=np.float64)
+    return np.asarray(mass_kg * G / (q_safe * S_REF_A320_M2), dtype=np.float64)
 
 
 # Minimum true airspeed used to keep angular-rate divisions numerically stable.
@@ -190,20 +202,30 @@ class PhysicsLayer(nn.Module):
             d_tas = t_minus_d_norm * (_M_REF_KG / mass) - G * torch.sin(gamma)
 
             if "fdm_cl_residual" in x:
-                # CL-mode reconstruction: ``L = q · S · (CL_steady(q) + cl_residual)``
-                # where ``CL_steady(q) = m_ref · g / (q · S)`` is the lift
-                # coefficient that exactly balances weight at the current
-                # dynamic pressure. This makes the formulation algebraically
-                # equivalent to Newton (``L = m_ref·g + q·S·cl_residual``) so
-                # the NN learns a small correction around 0 in every phase
-                # instead of a phase-dependent shift on top of CL_REF=0.5.
-                # See AXM-1739 cl_distribution.md §6 for the empirical
-                # evidence behind this baseline choice. The lift no longer
-                # depends on ``m``; mass identifiability is preserved through
-                # the ``1/m`` factor in ``d_gamma``.
+                # CL-mode reconstruction with mass-aware baseline:
+                #
+                #   L = q · S · (CL_baseline(q, m) + cl_residual)
+                #     = q · S · (m·g / (q·S))  +  q·S·cl_residual
+                #     = m·g  +  q·S·cl_residual
+                #
+                # This is algebraically equivalent to Newton-mode at m=m_ref:
+                # the NN learns a small correction around the analytical
+                # ``m·g`` baseline, exactly like Newton's
+                # ``lift_residual_norm·m_ref·g``. The ``mass`` term comes
+                # from the state vector (propagated by the ODE, initialised
+                # by MassEncoder), not from the NN -- so the AC4
+                # identifiability invariant (NN backbone mass-agnostic)
+                # is preserved.
+                #
+                # AXM-1739 post-mortem: the previous baselines (``CL_REF=0.5``
+                # constant, and the m_ref-only ``CL_steady(q) = m_ref·g/(q·S)``)
+                # failed because they forced the NN to absorb the phase shift
+                # ``(m·g - baseline)``, which is huge at low altitude. See
+                # ``data/models/full_hybrid_v3/cl_distribution.md`` §6 for
+                # the empirical evidence.
                 cl_residual = x["fdm_cl_residual"]
                 q_pa = x["fdm_q_pa"]
-                lift = q_pa * S_REF_A320_M2 * (cl_ref_steady(q_pa) + cl_residual)
+                lift = q_pa * S_REF_A320_M2 * (cl_baseline(q_pa, mass) + cl_residual)
                 d_gamma = (lift / mass - G * torch.cos(gamma)) / tas_safe
             else:
                 lift_residual_norm = x["fdm_lift_residual_norm"]

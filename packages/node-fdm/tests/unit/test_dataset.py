@@ -17,7 +17,7 @@ from node_fdm.layers.physics import (
     S_REF_A320_M2,
     V_MIN_CLAMP,
     G,
-    cl_ref_steady_np,
+    cl_baseline_np,
 )
 
 
@@ -31,10 +31,12 @@ def test_compute_cl_residual_inverts_physics_formula() -> None:
 
     Builds an in-memory batch with known kinematics, evaluates the registered
     computer, and checks the analytic identity
-    ``cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G) / (q · S) - CL_steady(q)``
-    on a hand-computed sample. The baseline ``CL_steady(q) = m_ref·g/(q·S)``
-    replaces the former constant ``CL_REF=0.5`` so the residual stays
-    centered on 0 across phases (post-AXM-1739 fix).
+    ``cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G) / (q · S)
+                    - CL_baseline(q, m_ref)``
+    on a hand-computed sample. In the stats pipeline both sides use
+    ``m_ref`` (``fdm_mass_kg`` is a zero-padded synthetic column at this
+    stage). At runtime the PhysicsLayer uses the real ``m`` from the
+    state vector (post-AXM-1739).
     """
     gamma = 0.05
     tas = 220.0
@@ -59,8 +61,8 @@ def test_compute_cl_residual_inverts_physics_formula() -> None:
 
     q_pa = float(DERIVED_FEATURES["fdm_q_pa"](x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)[0])
     v_safe = max(tas, V_MIN_CLAMP)
-    cl_steady = float(cl_ref_steady_np(np.asarray([q_pa]))[0])
+    cl_base = float(cl_baseline_np(np.asarray([q_pa]), np.asarray([_M_REF_KG]))[0])
     expected = (((v_safe / G) * d_gamma + math.cos(gamma)) * _M_REF_KG * G) / (
         q_pa * S_REF_A320_M2
-    ) - cl_steady
+    ) - cl_base
     assert math.isclose(float(out[0]), expected, rel_tol=1e-9)

@@ -18,7 +18,7 @@ from node_fdm.layers.physics import (
     S_REF_A320_M2,
     G,
     PhysicsLayer,
-    cl_ref_steady,
+    cl_baseline,
 )
 
 pytestmark = pytest.mark.integration
@@ -45,10 +45,12 @@ def test_cl_mode_equivalent_to_newton_under_algebraic_identity() -> None:
 
     lift_residual_norm = _t([0.05, -0.03, 0.02, 0.0])
     l_target = lift_residual_norm * _M_REF_KG * G + mass * G
-    # Post-AXM-1739: PhysicsLayer baseline is q-dependent (CL_steady(q))
-    # instead of a constant CL_REF=0.5. Use the same helper here so the
-    # equivalence holds.
-    cl_residual = (l_target - q_pa * S_REF_A320_M2 * cl_ref_steady(q_pa)) / (q_pa * S_REF_A320_M2)
+    # Post-AXM-1739 (mass-aware baseline): PhysicsLayer reconstructs
+    # ``L = q*S*(m*g/(q*S) + cl_residual) = m*g + q*S*cl_residual``.
+    # Use the same helper here so the algebraic equivalence holds.
+    cl_residual = (l_target - q_pa * S_REF_A320_M2 * cl_baseline(q_pa, mass)) / (
+        q_pa * S_REF_A320_M2
+    )
 
     layer = PhysicsLayer()
 

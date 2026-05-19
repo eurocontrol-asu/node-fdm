@@ -399,7 +399,7 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
     outputs into the input dict, then call ``data_ode_long``.
     """
     from node_fdm.dataset import _M_REF_KG, _compute_cl_residual
-    from node_fdm.layers.physics import S_REF_A320_M2, cl_ref_steady_np
+    from node_fdm.layers.physics import S_REF_A320_M2, cl_baseline_np
     from node_fdm_data.physics.constants import G
 
     traj_layer = trainer.model.layers_dict["trajectory"]
@@ -473,7 +473,13 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
             # the same ISA pressure + ERA5 temperature pipeline as the
             # PhysicsLayer feeds at training time).
             q_pa = traj_out["fdm_q_pa"].detach().cpu().numpy().reshape(-1)
-            cl_steady = cl_ref_steady_np(q_pa)
+            # Use m_ref for the stats-side baseline (consistent with
+            # _compute_cl_residual). At runtime PhysicsLayer uses the
+            # true state mass, but the val forward we run here through
+            # data_ode_long directly does not propagate mass via
+            # MassEncoder -- fdm_mass_kg in sample.x is zero-padded.
+            m_ref_arr = np.full_like(q_pa, _M_REF_KG, dtype=np.float64)
+            cl_steady = cl_baseline_np(q_pa, m_ref_arr)
 
             # CL_physical = CL_steady(q) + residual — symmetric to the
             # PhysicsLayer forward + dataset inverse.

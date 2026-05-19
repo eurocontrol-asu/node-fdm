@@ -11,7 +11,7 @@ from node_fdm.layers.physics import (
     V_MIN_CLAMP,
     G,
     PhysicsLayer,
-    cl_ref_steady,
+    cl_baseline,
 )
 
 
@@ -264,18 +264,20 @@ def test_cl_mode_raises_if_both_residual_keys_present() -> None:
 
 
 def test_cl_mode_lift_formula() -> None:
-    """AC3, AC6: ``L = q * S * (CL_steady(q) + cl_residual)`` (full lift).
+    """AC3, AC6: ``L = q * S * (CL_baseline(q, m) + cl_residual)`` (full lift).
 
-    Post-AXM-1739: the constant ``CL_REF=0.5`` baseline was replaced by
-    the q-dependent steady-state ``CL_steady(q) = m_ref·g/(q·S_REF)`` so
-    the residual stays centered near zero in every flight phase.
+    Post-AXM-1739: the baseline is now mass-aware
+    ``CL_baseline(q, m) = m·g/(q·S_REF)`` (using the state mass, not the
+    NN), so the residual is the small correction around ``m·g``. With
+    ``cl_residual=0.1`` and the real mass of the sample, the lift
+    collapses to ``m·g + q·S·0.1``.
     """
     layer = PhysicsLayer()
     out = layer(_cl_inputs(cl_residual=0.1, q_pa=15_000.0, mass_kg=60_000.0))
-    cl_steady = float(cl_ref_steady(torch.tensor(15_000.0)).item())
-    expected = 15_000.0 * S_REF_A320_M2 * (cl_steady + 0.1)
-    # rel_tol=1e-5 to absorb the float32 ↔ float64 cast in the
-    # cl_ref_steady helper (PhysicsLayer keeps full float64 internally).
+    cl_base = float(cl_baseline(torch.tensor(15_000.0), torch.tensor(60_000.0)).item())
+    expected = 15_000.0 * S_REF_A320_M2 * (cl_base + 0.1)
+    # rel_tol=1e-5 to absorb the float32 ↔ float64 cast in the helper
+    # (PhysicsLayer keeps full float64 internally).
     assert math.isclose(float(out["fdm_lift_N"].item()), expected, rel_tol=1e-5)
 
 
@@ -290,8 +292,9 @@ def test_cl_mode_d_tas_matches_newton_formula() -> None:
 def test_cl_mode_d_gamma_matches_newton_formula() -> None:
     """AC4: ``d_gamma = (L/m - g*cos(gamma)) / V_safe``.
 
-    With ``cl_residual=0``, the lift collapses to ``q·S·CL_steady(q) =
-    m_ref·g`` — Newton-equivalent at ``m = m_ref`` (post-AXM-1739 fix).
+    With ``cl_residual=0`` and the mass-aware baseline, the lift
+    collapses to ``q·S·CL_baseline(q, m) = m·g`` -- Newton-equivalent
+    (post-AXM-1739 fix).
     """
     layer = PhysicsLayer()
     out = layer(
@@ -303,11 +306,17 @@ def test_cl_mode_d_gamma_matches_newton_formula() -> None:
             q_pa=15_000.0,
         )
     )
-    cl_steady = float(cl_ref_steady(torch.tensor(15_000.0)).item())
-    lift = 15_000.0 * S_REF_A320_M2 * cl_steady
+    cl_base = float(cl_baseline(torch.tensor(15_000.0), torch.tensor(60_000.0)).item())
+    lift = 15_000.0 * S_REF_A320_M2 * cl_base
     expected = (lift / 60_000.0 - G * math.cos(0.0)) / 200.0
-    # See comment in test_cl_mode_lift_formula on the relaxed tolerance.
-    assert math.isclose(float(out["fdm_d_gamma_rads"].item()), expected, rel_tol=1e-5)
+    # rel_tol=1e-5 + abs_tol=1e-8 because the mass-aware baseline at
+    # cl_residual=0 collapses d_gamma to exactly 0 in steady-level flight
+    # (gamma=0, cl_residual=0, m=m → lift=m·g → d_gamma=0). float32 rounding
+    # produces a tiny non-zero result on the "expected" side, against which
+    # rel_tol alone fails (no relative scale when the target is 0).
+    assert math.isclose(
+        float(out["fdm_d_gamma_rads"].item()), expected, rel_tol=1e-5, abs_tol=1e-8
+    )
 
 
 def test_cl_mode_d_mass_is_zero_tensor() -> None:
