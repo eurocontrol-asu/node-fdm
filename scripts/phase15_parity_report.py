@@ -235,7 +235,13 @@ def _build_trainer_for_model(
 
     dx_col_names = [c for _, c in spec.dx_cols]
     flight_feature_cols = list(spec.flight_feature_cols or [])
-    _, val_ds = get_train_val_data(
+    # We only need val_ds for identifiability_test / CL forward pass, but
+    # get_train_val_data refuses an empty train set, and small flight
+    # caps can produce 0 windows after the `require_routing` filter
+    # cascades (see flights_dropped_no_routing logs). Load the full
+    # train set (~5s on the matrix) to stay safe — train is never used
+    # downstream so this only costs memory.
+    train_ds, val_ds = get_train_val_data(
         data_df=df,
         x_cols=spec.x_cols,
         u_cols=spec.u_cols,
@@ -244,7 +250,7 @@ def _build_trainer_for_model(
         dx_cols=dx_col_names,
         seq_len=meta["seq_len"],
         shift=meta["shift"],
-        train_limit=1,
+        train_limit=None,
         val_limit=val_limit,
         flight_feature_cols=flight_feature_cols or None,
         require_routing=True,
@@ -268,7 +274,7 @@ def _build_trainer_for_model(
     )
     trainer = ODETrainer(
         config=config,
-        train_dataset=val_ds,  # placeholder; identifiability_test only uses val.
+        train_dataset=train_ds,  # tiny placeholder; identifiability_test only uses val.
         val_dataset=val_ds,
         model_dir=models_dir,
         device=device,
@@ -283,43 +289,62 @@ def _build_trainer_for_model(
 
 
 def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, int]:
-    """Forward-pass the val set through ``data_ode_long`` and slice on cruise.
+    """Forward-pass the val set through trajectory + data_ode_long and slice on cruise.
 
-    Returns ``(cl_values, n_total_steps, n_cruise_steps)``. ``cl_values`` is
-    the union of per-step CL values on cruise steps, ready for percentiles.
+    ``data_ode_long`` consumes inputs from x / u / e0 plus e1 columns
+    (mach, q_pa, d_alt_ms, ...) that are computed *on the fly* by
+    ``TrajectoryLayer`` during a full model forward — they are not stored
+    in ``FlightSample.e1`` (only the partial set published by the
+    upstream dataset preprocessor is). So we run ``trajectory`` first,
+    merge its outputs into the input dict, then call ``data_ode_long``.
+
+    Returns ``(cl_values, n_total_steps, n_cruise_steps)``. ``cl_values``
+    is the union of per-step CL values on cruise steps.
     """
     from node_fdm.layers.physics import CL_REF
 
+    traj_layer = trainer.model.layers_dict["trajectory"]
     long_layer = trainer.model.layers_dict["data_ode_long"]
+    traj_layer.eval()
     long_layer.eval()
-
-    long_input_cols = list(long_layer.input_cols) if hasattr(long_layer, "input_cols") else None
-    if long_input_cols is None:
-        spec_long = next(layer for layer in spec.layers if layer.name == "data_ode_long")
-        long_input_cols = list(spec_long.input_cols)
 
     alt_idx = spec.x_cols.index("raw_alt_m")
     x_col_index = {name: idx for idx, name in enumerate(spec.x_cols)}
     u_col_index = {name: idx for idx, name in enumerate(spec.u_cols)}
     e_col_index = {name: idx for idx, name in enumerate(spec.e0_cols)}
+    e1_col_index = {name: idx for idx, name in enumerate(spec.e1_cols)}
+    dx_col_index = {name: idx for idx, (_, name) in enumerate(spec.dx_cols)}
 
     cl_values: list[float] = []
     n_total = 0
     n_cruise = 0
     with torch.no_grad():
         for sample in val_dataset:
+            # Assemble the dataset-keyed input dict from every available
+            # sample channel. TrajectoryLayer + data_ode_long pick what
+            # they need; extra keys are ignored.
             inputs: dict[str, torch.Tensor] = {}
-            for col in long_input_cols:
-                if col in x_col_index:
-                    inputs[col] = sample.x[..., x_col_index[col]]
-                elif col in u_col_index:
-                    inputs[col] = sample.u[..., u_col_index[col]]
-                elif col in e_col_index:
-                    inputs[col] = sample.e[..., e_col_index[col]]
-                else:
-                    msg = f"data_ode_long input column not found in sample tensors: {col}"
-                    raise KeyError(msg)
-            output = long_layer(inputs)
+            for name, idx in x_col_index.items():
+                inputs[name] = sample.x[..., idx]
+            for name, idx in u_col_index.items():
+                inputs[name] = sample.u[..., idx]
+            for name, idx in e_col_index.items():
+                inputs[name] = sample.e[..., idx]
+            if sample.e1 is not None:
+                # Only fill e1 cols that actually exist in the partial
+                # tensor (the upstream dataset may publish < len(e1_cols)).
+                n_e1 = sample.e1.shape[-1]
+                for name, idx in e1_col_index.items():
+                    if idx < n_e1:
+                        inputs[name] = sample.e1[..., idx]
+            for name, idx in dx_col_index.items():
+                inputs[name] = sample.dx[..., idx]
+
+            # Trajectory enriches the dict with mach, q_pa, d_alt_ms, ...
+            traj_out = traj_layer(inputs)
+            enriched = {**inputs, **traj_out}
+
+            output = long_layer(enriched)
             if "fdm_cl_residual" not in output:
                 msg = (
                     "data_ode_long output missing 'fdm_cl_residual' — "
