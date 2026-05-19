@@ -288,19 +288,47 @@ def _build_trainer_for_model(
 # ---------------------------------------------------------------------------
 
 
-def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, int]:
-    """Forward-pass the val set through trajectory + data_ode_long and slice on cruise.
+@dataclass(frozen=True)
+class ClDiagnostics:
+    """Predicted vs target CL/residual distributions over the val set.
+
+    Captures four populations:
+
+    * ``pred_cruise`` / ``target_cruise`` — CL on the cruise slice
+      (``raw_alt_m > CRUISE_ALT_MIN_M``). ``pred`` comes from the NN
+      forward (``CL_REF + cl_residual_pred``); ``target`` comes from the
+      analytical inverse of PhysicsLayer (``_compute_cl_residual``).
+    * ``pred_all`` / ``target_all`` — same two quantities, on every val
+      step (no cruise filter). Used to compare the operational regime
+      vs the full training-data distribution that drives the normalizer.
+
+    The diagnostic question is: is the normalizer ``p999`` (set from the
+    full population at training time) ``≫`` than the cruise-only
+    operational ``p999``? If yes, the NN head's output cap is sized for
+    extreme maneuvers and is starved of gradient signal in cruise.
+    """
+
+    pred_all: np.ndarray
+    pred_cruise: np.ndarray
+    target_all: np.ndarray
+    target_cruise: np.ndarray
+    n_total: int
+    n_cruise: int
+
+
+def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
+    """Forward-pass the val set through trajectory + data_ode_long.
+
+    Also computes the analytical target ``cl_residual`` (inverse
+    PhysicsLayer) on the same samples so predicted and target
+    distributions can be compared directly.
 
     ``data_ode_long`` consumes inputs from x / u / e0 plus e1 columns
-    (mach, q_pa, d_alt_ms, ...) that are computed *on the fly* by
-    ``TrajectoryLayer`` during a full model forward — they are not stored
-    in ``FlightSample.e1`` (only the partial set published by the
-    upstream dataset preprocessor is). So we run ``trajectory`` first,
-    merge its outputs into the input dict, then call ``data_ode_long``.
-
-    Returns ``(cl_values, n_total_steps, n_cruise_steps)``. ``cl_values``
-    is the union of per-step CL values on cruise steps.
+    (mach, q_pa, d_alt_ms, ...) that are computed on the fly by
+    ``TrajectoryLayer``. So we run ``trajectory`` first, merge its
+    outputs into the input dict, then call ``data_ode_long``.
     """
+    from node_fdm.dataset import _compute_cl_residual
     from node_fdm.layers.physics import CL_REF
 
     traj_layer = trainer.model.layers_dict["trajectory"]
@@ -314,15 +342,17 @@ def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, 
     e_col_index = {name: idx for idx, name in enumerate(spec.e0_cols)}
     e1_col_index = {name: idx for idx, name in enumerate(spec.e1_cols)}
     dx_col_index = {name: idx for idx, (_, name) in enumerate(spec.dx_cols)}
+    e0_col_names = list(spec.e0_cols)
+    dx_col_names = [name for _, name in spec.dx_cols]
 
-    cl_values: list[float] = []
+    pred_all: list[float] = []
+    pred_cruise: list[float] = []
+    target_all: list[float] = []
+    target_cruise: list[float] = []
     n_total = 0
     n_cruise = 0
     with torch.no_grad():
         for sample in val_dataset:
-            # Assemble the dataset-keyed input dict from every available
-            # sample channel. TrajectoryLayer + data_ode_long pick what
-            # they need; extra keys are ignored.
             inputs: dict[str, torch.Tensor] = {}
             for name, idx in x_col_index.items():
                 inputs[name] = sample.x[..., idx]
@@ -331,8 +361,6 @@ def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, 
             for name, idx in e_col_index.items():
                 inputs[name] = sample.e[..., idx]
             if sample.e1 is not None:
-                # Only fill e1 cols that actually exist in the partial
-                # tensor (the upstream dataset may publish < len(e1_cols)).
                 n_e1 = sample.e1.shape[-1]
                 for name, idx in e1_col_index.items():
                     if idx < n_e1:
@@ -340,10 +368,9 @@ def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, 
             for name, idx in dx_col_index.items():
                 inputs[name] = sample.dx[..., idx]
 
-            # Trajectory enriches the dict with mach, q_pa, d_alt_ms, ...
+            # Predicted CL = CL_REF + NN(cl_residual)
             traj_out = traj_layer(inputs)
             enriched = {**inputs, **traj_out}
-
             output = long_layer(enriched)
             if "fdm_cl_residual" not in output:
                 msg = (
@@ -351,13 +378,38 @@ def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, 
                     "expected the CL-mode arch (node_adsb_hybrid_v3)"
                 )
                 raise RuntimeError(msg)
-            cl_residual = output["fdm_cl_residual"].detach().cpu().numpy().reshape(-1)
+            cl_residual_pred = output["fdm_cl_residual"].detach().cpu().numpy().reshape(-1)
+
+            # Target cl_residual from the analytical inverse PhysicsLayer.
+            # _compute_cl_residual takes 2-D arrays (n_steps, n_cols)
+            # so we flatten the seq_len dim before calling it.
+            x_arr = sample.x.detach().cpu().numpy().reshape(-1, len(spec.x_cols))
+            e_arr = sample.e.detach().cpu().numpy().reshape(-1, len(spec.e0_cols))
+            dx_arr = sample.dx.detach().cpu().numpy().reshape(-1, len(spec.dx_cols))
+            cl_residual_target = _compute_cl_residual(
+                x_arr, e_arr, dx_arr, list(spec.x_cols), e0_col_names, dx_col_names
+            )
+
             alt = sample.x[..., alt_idx].detach().cpu().numpy().reshape(-1)
             cruise_mask = alt > CRUISE_ALT_MIN_M
             n_total += int(alt.size)
             n_cruise += int(cruise_mask.sum())
-            cl_values.extend((cl_residual[cruise_mask] + CL_REF).tolist())
-    return np.asarray(cl_values, dtype=np.float64), n_total, n_cruise
+
+            pred_cl = cl_residual_pred + CL_REF
+            target_cl = cl_residual_target + CL_REF
+            pred_all.extend(pred_cl.tolist())
+            target_all.extend(target_cl.tolist())
+            pred_cruise.extend(pred_cl[cruise_mask].tolist())
+            target_cruise.extend(target_cl[cruise_mask].tolist())
+
+    return ClDiagnostics(
+        pred_all=np.asarray(pred_all, dtype=np.float64),
+        pred_cruise=np.asarray(pred_cruise, dtype=np.float64),
+        target_all=np.asarray(target_all, dtype=np.float64),
+        target_cruise=np.asarray(target_cruise, dtype=np.float64),
+        n_total=n_total,
+        n_cruise=n_cruise,
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -550,15 +602,36 @@ def _write_parity_report(
     }
 
 
+def _stats(values: np.ndarray) -> dict[str, float]:
+    """Return median, p10, p90, p999, std, mean on a flat distribution."""
+    if values.size == 0:
+        return {k: float("nan") for k in ("median", "p10", "p90", "p999", "std", "mean")}
+    finite = values[np.isfinite(values)]
+    return {
+        "median": float(np.median(finite)),
+        "p10": float(np.percentile(finite, 10)),
+        "p90": float(np.percentile(finite, 90)),
+        "p999": float(np.percentile(finite, 99.9)),
+        "std": float(np.std(finite)),
+        "mean": float(np.mean(finite)),
+    }
+
+
 def _write_cl_distribution(
     out_path: Path,
-    cl_values: np.ndarray,
-    n_total: int,
-    n_cruise: int,
+    diag: ClDiagnostics,
     model_name: str,
+    normalizer_stats: dict[str, float] | None,
 ) -> dict[str, object]:
-    """Emit ``cl_distribution.md`` covering AC4. Returns verdict dict."""
-    if cl_values.size == 0:
+    """Emit ``cl_distribution.md`` covering AC4 + normalizer drift diagnostic.
+
+    Compares predicted vs analytical-target CL on every val step and on
+    the cruise slice, and contrasts the cruise operational ``p999`` of
+    the target residual against the global normalizer ``p999`` saved in
+    ``meta.json`` (when available). A large gap is a smoking gun for the
+    "p999 trop large" hypothesis raised in the parity diagnostic.
+    """
+    if diag.pred_cruise.size == 0:
         out_path.write_text(
             "# CL distribution\n\n"
             f"No cruise steps found in val set for `{model_name}` "
@@ -570,18 +643,42 @@ def _write_cl_distribution(
             "p90": float("nan"),
             "median_in_band": False,
             "p10_p90_in_band": False,
+            "p999_ratio_global_over_cruise": float("nan"),
         }
-    p10, median, p90 = (
-        float(np.percentile(cl_values, 10)),
-        float(np.median(cl_values)),
-        float(np.percentile(cl_values, 90)),
-    )
-    median_in_band = CL_CRUISE_MEDIAN_RANGE[0] <= median <= CL_CRUISE_MEDIAN_RANGE[1]
+
+    pc = _stats(diag.pred_cruise)
+    pa = _stats(diag.pred_all)
+    tc = _stats(diag.target_cruise)
+    ta = _stats(diag.target_all)
+
+    median_in_band = CL_CRUISE_MEDIAN_RANGE[0] <= pc["median"] <= CL_CRUISE_MEDIAN_RANGE[1]
     p10_p90_in_band = (
-        CL_CRUISE_P10_P90_RANGE[0] <= p10 <= CL_CRUISE_P10_P90_RANGE[1]
-        and CL_CRUISE_P10_P90_RANGE[0] <= p90 <= CL_CRUISE_P10_P90_RANGE[1]
+        CL_CRUISE_P10_P90_RANGE[0] <= pc["p10"] <= CL_CRUISE_P10_P90_RANGE[1]
+        and CL_CRUISE_P10_P90_RANGE[0] <= pc["p90"] <= CL_CRUISE_P10_P90_RANGE[1]
     )
-    cruise_fraction = n_cruise / max(n_total, 1)
+
+    # Compare residual (not CL) distributions: target_cruise/target_all
+    # are CL = CL_REF + residual, so we subtract CL_REF back out for the
+    # diagnostic vs the normalizer p999 which is on the residual.
+    from node_fdm.layers.physics import CL_REF
+
+    tc_res_p999 = abs(tc["p999"] - CL_REF) if np.isfinite(tc["p999"]) else float("nan")
+    ta_res_p999 = abs(ta["p999"] - CL_REF) if np.isfinite(ta["p999"]) else float("nan")
+    normalizer_p999 = (normalizer_stats or {}).get("p999", float("nan"))
+
+    if tc_res_p999 and np.isfinite(tc_res_p999) and tc_res_p999 > 0:
+        ratio_norm = normalizer_p999 / tc_res_p999
+        ratio_all = ta_res_p999 / tc_res_p999
+    else:
+        ratio_norm = float("nan")
+        ratio_all = float("nan")
+
+    cruise_fraction = diag.n_cruise / max(diag.n_total, 1)
+
+    # Helper for §3 row format — keeps body lines short (E501)
+    def _delta(p: float, t: float) -> str:
+        return f"{p - t:+.4f}"
+
     lines = [
         f"# CL distribution — `{model_name}`",
         "",
@@ -591,31 +688,88 @@ def _write_cl_distribution(
         "",
         "## 1. Slice coverage",
         "",
-        f"- Total val steps: `{n_total}`",
-        f"- Cruise-slice steps: `{n_cruise}` ({100 * cruise_fraction:.1f}%)",
+        f"- Total val steps: `{diag.n_total}`",
+        f"- Cruise-slice steps: `{diag.n_cruise}` ({100 * cruise_fraction:.1f}%)",
         "",
-        "## 2. CL = CL_REF + cl_residual_pred — percentiles",
+        "## 2. CL = CL_REF + cl_residual_pred — predicted percentiles (AC4)",
         "",
         "| Metric | Value | Target | PASS |",
         "|---|---:|---|:---:|",
-        f"| `median_CL_cruise` | {median:.4f} | "
+        f"| `median_CL_cruise` | {pc['median']:.4f} | "
         f"[{CL_CRUISE_MEDIAN_RANGE[0]}, {CL_CRUISE_MEDIAN_RANGE[1]}] | "
         f"{'✅' if median_in_band else '❌'} |",
-        f"| `p10` | {p10:.4f} | \\geq {CL_CRUISE_P10_P90_RANGE[0]} | "
-        f"{'✅' if p10 >= CL_CRUISE_P10_P90_RANGE[0] else '❌'} |",
-        f"| `p90` | {p90:.4f} | \\leq {CL_CRUISE_P10_P90_RANGE[1]} | "
-        f"{'✅' if p90 <= CL_CRUISE_P10_P90_RANGE[1] else '❌'} |",
+        f"| `p10` | {pc['p10']:.4f} | \\geq {CL_CRUISE_P10_P90_RANGE[0]} | "
+        f"{'✅' if pc['p10'] >= CL_CRUISE_P10_P90_RANGE[0] else '❌'} |",
+        f"| `p90` | {pc['p90']:.4f} | \\leq {CL_CRUISE_P10_P90_RANGE[1]} | "
+        f"{'✅' if pc['p90'] <= CL_CRUISE_P10_P90_RANGE[1] else '❌'} |",
         "",
         f"AC4 (a + b) verdict: **{'PASS' if median_in_band and p10_p90_in_band else 'FAIL'}**.",
+        "",
+        "## 3. Predicted vs target CL — cruise slice",
+        "",
+        "`target` is the analytical inverse of `PhysicsLayer` "
+        "(`_compute_cl_residual` in `dataset.py`) -- the value the NN head "
+        "should learn to emit, given (gamma, V, q, d_gamma, m_ref). `pred` "
+        "is what the trained head actually outputs.",
+        "",
+        "| Statistic | predicted | target | pred - target |",
+        "|---|---:|---:|---:|",
+        f"| mean | {pc['mean']:+.4f} | {tc['mean']:+.4f} | {_delta(pc['mean'], tc['mean'])} |",
+        f"| std  | {pc['std']:.4f} | {tc['std']:.4f} | {_delta(pc['std'], tc['std'])} |",
+        f"| p10  | {pc['p10']:.4f} | {tc['p10']:.4f} | {_delta(pc['p10'], tc['p10'])} |",
+        f"| median | {pc['median']:.4f} | {tc['median']:.4f} | "
+        f"{_delta(pc['median'], tc['median'])} |",
+        f"| p90  | {pc['p90']:.4f} | {tc['p90']:.4f} | {_delta(pc['p90'], tc['p90'])} |",
+        "",
+        "## 4. Pred vs target CL — all val (cruise + non-cruise)",
+        "",
+        "| Statistic | predicted | target | pred - target |",
+        "|---|---:|---:|---:|",
+        f"| mean | {pa['mean']:+.4f} | {ta['mean']:+.4f} | {_delta(pa['mean'], ta['mean'])} |",
+        f"| std  | {pa['std']:.4f} | {ta['std']:.4f} | {_delta(pa['std'], ta['std'])} |",
+        f"| p10  | {pa['p10']:.4f} | {ta['p10']:.4f} | {_delta(pa['p10'], ta['p10'])} |",
+        f"| median | {pa['median']:.4f} | {ta['median']:.4f} | "
+        f"{_delta(pa['median'], ta['median'])} |",
+        f"| p90  | {pa['p90']:.4f} | {ta['p90']:.4f} | {_delta(pa['p90'], ta['p90'])} |",
+        "",
+        "## 5. Cruise vs global — target residual p999 (diagnostic for AC3 fail)",
+        "",
+        "The CL normalizer's `p999` is set from the training-data global "
+        "distribution (all phases, including high-bank manoeuvres and "
+        "low-altitude transients). The training **objective** lives in "
+        "cruise. If the global `p999` is much larger than the cruise "
+        "operational `p999`, the NN head output cap is sized for "
+        "extreme regimes and the cruise signal gets compressed close to "
+        "zero in normalized space, starving gradient.",
+        "",
+        "| Quantity | value |",
+        "|---|---:|",
+        f"| `|target - CL_REF|.p999` on cruise | {tc_res_p999:.4f} |",
+        f"| `|target - CL_REF|.p999` on all val | {ta_res_p999:.4f} |",
+        f"| normalizer `p999` (meta.json `stats_dict['fdm_cl_residual']`) | "
+        f"{normalizer_p999:.4f} |",
+        f"| ratio normalizer / cruise | {ratio_norm:.2f}x |",
+        f"| ratio all-val / cruise | {ratio_all:.2f}x |",
+        "",
+        "**Interpretation** -- a ratio `normalizer / cruise > 3x` suggests "
+        "the head is undersized relative to the cruise operating point. "
+        "Mitigation: recompute the `fdm_cl_residual` stats on a "
+        "cruise-only subset, or cap `nn_output_caps['fdm_cl_residual']` "
+        "to the cruise `p999` so the head's effective range matches the "
+        "operational regime.",
         "",
     ]
     out_path.write_text("\n".join(lines))
     return {
-        "median_cl_cruise": median,
-        "p10": p10,
-        "p90": p90,
+        "median_cl_cruise": pc["median"],
+        "p10": pc["p10"],
+        "p90": pc["p90"],
         "median_in_band": median_in_band,
         "p10_p90_in_band": p10_p90_in_band,
+        "target_cruise_res_p999": tc_res_p999,
+        "target_all_res_p999": ta_res_p999,
+        "normalizer_p999": normalizer_p999,
+        "ratio_normalizer_over_cruise": ratio_norm,
     }
 
 
@@ -698,11 +852,12 @@ def cl_dist(
     cl_dir = models_dir / cl_name
 
     log.info("running_cl_distribution", model=cl_name)
-    trainer, val_ds, spec, _ = _build_trainer_for_model(cl_name, config, device, val_limit)
-    cl_values, n_total, n_cruise = _collect_cl_on_cruise(trainer, val_ds, spec)
+    trainer, val_ds, spec, meta = _build_trainer_for_model(cl_name, config, device, val_limit)
+    diag = _collect_cl_diagnostics(trainer, val_ds, spec)
 
+    normalizer_stats = (meta.get("stats_dict") or {}).get("fdm_cl_residual")
     out_path = cl_dir / "cl_distribution.md"
-    verdict = _write_cl_distribution(out_path, cl_values, n_total, n_cruise, cl_name)
+    verdict = _write_cl_distribution(out_path, diag, cl_name, normalizer_stats)
     log.info("cl_distribution_written", path=str(out_path), verdict=verdict)
     return 0
 
