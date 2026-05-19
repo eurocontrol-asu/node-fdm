@@ -307,7 +307,20 @@ class PhaseStats:
     cl_steady_mean: float
     """Mean of ``m_ref·g / (q·S_REF)`` -- the CL that exactly balances
     weight at steady-state in this altitude band. The gap between this
-    and ``CL_REF=0.5`` is what the NN must learn as ``cl_residual``."""
+    and ``CL_REF=0.5`` is what the NN would have had to learn as
+    ``cl_residual`` under the old constant-CL_REF formulation."""
+
+    # ------------------------------------------------------------------
+    # A-view diagnostic (post-hoc, free): what the residual would look
+    # like under the old ``CL_REF=0.5`` formulation. Computed as
+    # ``cl_residual_A = cl_residual_B + (CL_steady(q, m_ref) - CL_REF)``.
+    # Lets us recover the phase-signature reading that the mass-aware
+    # baseline (formulation B) hides inside the analytical baseline.
+    # ------------------------------------------------------------------
+    a_view_mean: float
+    a_view_std: float
+    a_view_p10: float
+    a_view_p90: float
 
 
 @dataclass(frozen=True)
@@ -340,6 +353,13 @@ class ClDiagnostics:
     # ``|residual|`` is what the normalizer ``p999`` is meant to bound.
     target_residual_all: np.ndarray
     target_residual_cruise: np.ndarray
+    # NN signal magnitude in Newtons (CL-mode): |q*S*cl_residual_pred|.
+    # The Newton-side equivalent is |lift_residual_norm*m_ref*g|, collected
+    # separately on the Newton model. Used by the §8 magnitude check to
+    # tell whether AC5 fail is a real loss of identifiability or a faux
+    # negative due to the threshold being calibrated for Newton-scale
+    # residuals.
+    cl_lift_correction_n_all: np.ndarray
     n_total: int
     n_cruise: int
     phase_low: PhaseStats
@@ -356,16 +376,29 @@ def _phase_stats(
     s_ref_m2: float,
     g: float,
 ) -> PhaseStats:
-    """Compute per-band stats. Empty mask returns NaNs."""
+    """Compute per-band stats. Empty mask returns NaNs.
+
+    Returns both the **B-view** residual stats (post-baseline mass-aware
+    formulation, what the NN actually learns) and the **A-view** residual
+    stats reconstructed post-hoc (what the residual would be under the old
+    ``CL_REF=0.5`` formulation -- recovers the phase-signature reading).
+    """
+    from node_fdm.layers.physics import CL_REF
+
     n = int(mask.sum())
     if n == 0:
+        nan = float("nan")
         return PhaseStats(
             n_steps=0,
-            target_mean=float("nan"),
-            target_std=float("nan"),
-            target_p10=float("nan"),
-            target_p90=float("nan"),
-            cl_steady_mean=float("nan"),
+            target_mean=nan,
+            target_std=nan,
+            target_p10=nan,
+            target_p90=nan,
+            cl_steady_mean=nan,
+            a_view_mean=nan,
+            a_view_std=nan,
+            a_view_p10=nan,
+            a_view_p90=nan,
         )
     sel_res = target_residual[mask]
     sel_q = q_pa[mask]
@@ -374,6 +407,10 @@ def _phase_stats(
     # at very low TAS during initial climb) by clipping at 100 Pa.
     sel_q_safe = np.maximum(sel_q, 100.0)
     cl_steady = m_ref_kg * g / (sel_q_safe * s_ref_m2)
+    # A-view: what cl_residual would have looked like under CL_REF=0.5
+    # (post-hoc transformation, zero training cost). Adds back the phase
+    # shift the mass-aware baseline pulls into the analytical part.
+    a_view = sel_res + (cl_steady - CL_REF)
     return PhaseStats(
         n_steps=n,
         target_mean=float(np.mean(sel_res)),
@@ -381,6 +418,10 @@ def _phase_stats(
         target_p10=float(np.percentile(sel_res, 10)),
         target_p90=float(np.percentile(sel_res, 90)),
         cl_steady_mean=float(np.mean(cl_steady)),
+        a_view_mean=float(np.mean(a_view)),
+        a_view_std=float(np.std(a_view)),
+        a_view_p10=float(np.percentile(a_view, 10)),
+        a_view_p90=float(np.percentile(a_view, 90)),
     )
 
 
@@ -425,6 +466,10 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
     all_residual: list[float] = []
     all_q: list[float] = []
     all_alt: list[float] = []
+    # |q*S*cl_residual_pred| in Newtons -- the NN-side contribution to
+    # lift in CL-mode. Used by §8 to compare against the Newton-side
+    # equivalent |lift_residual_norm*m_ref*g|.
+    all_cl_lift_correction_n: list[float] = []
     n_total = 0
     n_cruise = 0
     with torch.no_grad():
@@ -493,6 +538,9 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
             all_residual.extend(cl_residual_target.tolist())
             all_q.extend(q_pa.tolist())
             all_alt.extend(alt.tolist())
+            # NN-side lift correction in Newtons: q*S*cl_residual_pred.
+            cl_lift_correction_n = np.abs(q_pa * S_REF_A320_M2 * cl_residual_pred)
+            all_cl_lift_correction_n.extend(cl_lift_correction_n.tolist())
 
     residual_arr = np.asarray(all_residual, dtype=np.float64)
     q_arr = np.asarray(all_q, dtype=np.float64)
@@ -514,12 +562,70 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
         target_cruise=np.asarray(target_cruise, dtype=np.float64),
         target_residual_all=residual_arr,
         target_residual_cruise=residual_arr[cruise_band_mask],
+        cl_lift_correction_n_all=np.asarray(all_cl_lift_correction_n, dtype=np.float64),
         n_total=n_total,
         n_cruise=n_cruise,
         phase_low=phase_low,
         phase_mid=phase_mid,
         phase_cruise=phase_cruise,
     )
+
+
+def _collect_newton_lift_correction(trainer, val_dataset, spec) -> np.ndarray:
+    """Forward Newton baseline and capture |lift_residual_norm * m_ref * g|.
+
+    The Newton-side equivalent of CL's ``|q·S·cl_residual|`` -- the NN-side
+    lift correction in Newtons. Used by §8 to compare signal magnitudes
+    between the two formulations: a large gap explains an "AC5 fail" in
+    CL-mode as a faux negative (threshold calibrated for Newton-scale
+    residuals, not for a stronger baseline like mass-aware CL).
+    """
+    from node_fdm.dataset import _M_REF_KG
+    from node_fdm_data.physics.constants import G
+
+    traj_layer = trainer.model.layers_dict["trajectory"]
+    long_layer = trainer.model.layers_dict["data_ode_long"]
+    traj_layer.eval()
+    long_layer.eval()
+
+    x_col_index = {name: idx for idx, name in enumerate(spec.x_cols)}
+    u_col_index = {name: idx for idx, name in enumerate(spec.u_cols)}
+    e_col_index = {name: idx for idx, name in enumerate(spec.e0_cols)}
+    e1_col_index = {name: idx for idx, name in enumerate(spec.e1_cols)}
+    dx_col_index = {name: idx for idx, (_, name) in enumerate(spec.dx_cols)}
+
+    all_lift_correction: list[float] = []
+    with torch.no_grad():
+        for sample in val_dataset:
+            inputs: dict[str, torch.Tensor] = {}
+            for name, idx in x_col_index.items():
+                inputs[name] = sample.x[..., idx]
+            for name, idx in u_col_index.items():
+                inputs[name] = sample.u[..., idx]
+            for name, idx in e_col_index.items():
+                inputs[name] = sample.e[..., idx]
+            if sample.e1 is not None:
+                n_e1 = sample.e1.shape[-1]
+                for name, idx in e1_col_index.items():
+                    if idx < n_e1:
+                        inputs[name] = sample.e1[..., idx]
+            for name, idx in dx_col_index.items():
+                inputs[name] = sample.dx[..., idx]
+
+            traj_out = traj_layer(inputs)
+            enriched = {**inputs, **traj_out}
+            output = long_layer(enriched)
+            if "fdm_lift_residual_norm" not in output:
+                msg = (
+                    "data_ode_long output missing 'fdm_lift_residual_norm' -- "
+                    "expected the Newton-mode arch (node_adsb_hybrid_v1 or _v2)"
+                )
+                raise RuntimeError(msg)
+            lrn = output["fdm_lift_residual_norm"].detach().cpu().numpy().reshape(-1)
+            # Newton NN-side lift correction in Newtons: |lift_residual_norm * m_ref * g|
+            all_lift_correction.extend(np.abs(lrn * _M_REF_KG * G).tolist())
+
+    return np.asarray(all_lift_correction, dtype=np.float64)
 
 
 # ---------------------------------------------------------------------------
@@ -732,6 +838,8 @@ def _write_cl_distribution(
     diag: ClDiagnostics,
     model_name: str,
     normalizer_stats: dict[str, float] | None,
+    newton_lift_correction_n: np.ndarray | None = None,
+    newton_model_name: str | None = None,
 ) -> dict[str, object]:
     """Emit ``cl_distribution.md`` covering AC4 + normalizer drift diagnostic.
 
@@ -918,17 +1026,132 @@ def _write_cl_distribution(
         "",
         "**Reading the table**:",
         "",
-        "* If `target_std` is roughly constant across bands -> shape OK, "
-        "the multi-phase signal is mostly noise around a phase-dependent "
-        "mean, and the NN can learn it without architectural change.",
-        "* If `target_std` grows strongly toward low altitudes, and "
-        "`|CL_steady - CL_REF|` follows the same trend, the constant "
-        "`CL_REF=0.5` is the bottleneck. Mitigation: make `CL_REF` "
-        "phase-aware (e.g. `CL_REF(q) = m_ref·g / (q·S_REF)`), so the "
-        "NN learns a small correction around the analytical steady-state "
-        "rather than the steady-state itself.",
+        "* With the mass-aware baseline (post-AXM-1739 patch), `target_std` "
+        "should be small and roughly constant across bands -- the NN only "
+        "has to learn the tiny deviation from steady-level equilibrium "
+        "(centripetal vertical, cos(gamma) correction, measurement noise).",
+        "* The previous q-only or constant-CL_REF baselines forced "
+        "`target_std` to grow toward low altitudes because `cl_residual` "
+        "had to absorb the phase shift ``m·g/(q·S) - CL_REF``. The §7 "
+        "A-view recovers that interpretation post-hoc.",
+        "",
+        "## 7. A-view diagnostic (post-hoc, free)",
+        "",
+        "Reconstructs the residual under the **old** ``CL_REF=0.5`` "
+        "formulation, by adding back the phase shift the mass-aware "
+        "baseline pulls into the analytical part:",
+        "",
+        "    cl_residual_A_view = cl_residual_B + (CL_steady(q, m_ref) - CL_REF)",
+        "",
+        "This is computed post-hoc on the target distribution -- zero "
+        "training cost, just a diagnostic. Lets us read the per-phase CL "
+        "signature (climb >0, descent <0, cruise ≈0) that the B "
+        "formulation hides inside the analytical baseline.",
+        "",
+        "| band | a_view_mean | a_view_std | a_view_p10 | a_view_p90 |",
+        "|---|---:|---:|---:|---:|",
+        f"| low | {diag.phase_low.a_view_mean:+.4f} | "
+        f"{diag.phase_low.a_view_std:.4f} | "
+        f"{diag.phase_low.a_view_p10:+.4f} | "
+        f"{diag.phase_low.a_view_p90:+.4f} |",
+        f"| mid | {diag.phase_mid.a_view_mean:+.4f} | "
+        f"{diag.phase_mid.a_view_std:.4f} | "
+        f"{diag.phase_mid.a_view_p10:+.4f} | "
+        f"{diag.phase_mid.a_view_p90:+.4f} |",
+        f"| cruise | {diag.phase_cruise.a_view_mean:+.4f} | "
+        f"{diag.phase_cruise.a_view_std:.4f} | "
+        f"{diag.phase_cruise.a_view_p10:+.4f} | "
+        f"{diag.phase_cruise.a_view_p90:+.4f} |",
+        "",
+        "Expected (per P&S §5 ``C_L = 2·m·g/(gamma_air·p_inf·M^2·S_ref)``): "
+        "low/climb-out > 0 (heavy aircraft, low q), descent < 0 "
+        "(lighter aircraft, lower CL needed), cruise ≈ 0 (operating "
+        "point at CL_REF). A signature that matches confirms the "
+        "model's physical consistency.",
         "",
     ]
+
+    # ----- S8: NN signal magnitude check (cl_residual vs Newton ----------
+    cl_corr = diag.cl_lift_correction_n_all
+    cl_corr_finite = cl_corr[np.isfinite(cl_corr)]
+    cl_median = float(np.median(cl_corr_finite)) if cl_corr_finite.size else float("nan")
+    cl_p99 = (
+        float(np.percentile(cl_corr_finite, 99)) if cl_corr_finite.size else float("nan")
+    )
+    cl_mean = float(np.mean(cl_corr_finite)) if cl_corr_finite.size else float("nan")
+
+    s8_lines = [
+        "## 8. NN signal magnitude check (AC5 faux-negative diagnostic)",
+        "",
+        "AC5's identifiability threshold (`ratio > 1.20`) was calibrated on "
+        "Newton-mode where the NN-side lift correction is large enough to "
+        "make ``m`` perturbations visible in the val loss. With a stronger "
+        "baseline (mass-aware CL), the residual the NN learns shrinks, so "
+        "perturbing ``m`` produces a proportionally smaller change in the "
+        "loss -- mechanically pushing the ratio toward 1.0.",
+        "",
+        "**The right question** is whether the NN-side lift correction is "
+        "still large enough to make ``m`` observable from the trajectory. "
+        "If CL's correction is much smaller than Newton's, AC5's ratio is "
+        "a faux negative, not a real loss of identifiability.",
+        "",
+        "Compare ``|NN-side lift correction|`` (Newtons) on the val set:",
+        "",
+        "* CL-mode: ``|q·S·cl_residual_pred|``",
+        "* Newton-mode: ``|lift_residual_norm·m_ref·g|``",
+        "",
+        "| Statistic | CL-mode (`" + (model_name or "?") + "`) | "
+        "Newton (`" + (newton_model_name or "?") + "`) | ratio CL/Newton |",
+        "|---|---:|---:|---:|",
+    ]
+
+    if newton_lift_correction_n is None or newton_lift_correction_n.size == 0:
+        s8_lines.append(
+            "| (Newton magnitudes not collected -- pass `--newton-name`) | "
+            f"{cl_mean:.1f} N | n/a | n/a |"
+        )
+        s8_lines.append("")
+        nw_mean = float("nan")
+        nw_median = float("nan")
+        nw_p99 = float("nan")
+        ratio_mean = float("nan")
+        ratio_median = float("nan")
+        ratio_p99 = float("nan")
+    else:
+        nw = newton_lift_correction_n[np.isfinite(newton_lift_correction_n)]
+        nw_mean = float(np.mean(nw)) if nw.size else float("nan")
+        nw_median = float(np.median(nw)) if nw.size else float("nan")
+        nw_p99 = float(np.percentile(nw, 99)) if nw.size else float("nan")
+        ratio_mean = cl_mean / nw_mean if nw_mean > 0 else float("nan")
+        ratio_median = cl_median / nw_median if nw_median > 0 else float("nan")
+        ratio_p99 = cl_p99 / nw_p99 if nw_p99 > 0 else float("nan")
+
+        s8_lines.extend(
+            [
+                f"| mean    | {cl_mean:,.0f} N | {nw_mean:,.0f} N | "
+                f"{ratio_mean:.3f}x |",
+                f"| median  | {cl_median:,.0f} N | {nw_median:,.0f} N | "
+                f"{ratio_median:.3f}x |",
+                f"| p99     | {cl_p99:,.0f} N | {nw_p99:,.0f} N | "
+                f"{ratio_p99:.3f}x |",
+                "",
+                "**Reading the ratio**:",
+                "",
+                "* ratio CL/Newton ≈ 1.0 → both NNs learn equivalent signal, "
+                "AC5 difference is a real bug (investigate test wiring)",
+                "* ratio CL/Newton ≪ 1.0 (e.g. 0.1x) → CL's residual is "
+                "much smaller (because the baseline is more accurate). The "
+                "AC5 fail is then a **faux negative**: the threshold 1.20 "
+                "was calibrated on Newton-scale residuals; with a stronger "
+                "baseline, identifiability is preserved but invisible "
+                "through this relative test. The right test is absolute: "
+                "is the trajectory-level effect of perturbing ``m`` larger "
+                "than the observation noise?",
+                "",
+            ]
+        )
+
+    lines.extend(s8_lines)
     out_path.write_text("\n".join(lines))
     return {
         "median_cl_cruise": pc["median"],
@@ -940,6 +1163,9 @@ def _write_cl_distribution(
         "target_all_res_p999": ta_res_p999,
         "normalizer_p999": normalizer_p999,
         "ratio_normalizer_over_cruise": ratio_norm,
+        "cl_lift_correction_mean_N": cl_mean,
+        "newton_lift_correction_mean_N": nw_mean,
+        "ratio_cl_over_newton_mean": ratio_mean,
     }
 
 
@@ -1006,6 +1232,12 @@ def cl_dist(
     cl_name: Annotated[
         str, cyclopts.Parameter(help="Sub-directory name for the CL-mode model.")
     ] = "full_hybrid_v3",
+    newton_name: Annotated[
+        str,
+        cyclopts.Parameter(
+            help="Sub-directory name for the Newton-mode baseline (used by S8 magnitude check)."
+        ),
+    ] = "full_hybrid_v2",
     config: Annotated[Path, cyclopts.Parameter(help="Pipeline config YAML.")] = Path(
         "config.yaml"
     ),
@@ -1014,7 +1246,7 @@ def cl_dist(
         int, cyclopts.Parameter(help="Cap val samples for the forward pass.")
     ] = 2000,
 ) -> int:
-    """AC4 — write `cl_distribution.md` under the CL model directory."""
+    """AC4 + S8 magnitude check -- write `cl_distribution.md` under the CL model directory."""
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
@@ -1025,9 +1257,34 @@ def cl_dist(
     trainer, val_ds, spec, meta = _build_trainer_for_model(cl_name, config, device, val_limit)
     diag = _collect_cl_diagnostics(trainer, val_ds, spec)
 
+    # Newton-side magnitude collection (for S8 faux-negative AC5 check).
+    # Best-effort: if the Newton model is missing, skip without failing.
+    newton_lift_correction_n: np.ndarray | None = None
+    newton_dir = models_dir / newton_name
+    if newton_dir.exists():
+        log.info("running_newton_magnitude_collection", model=newton_name)
+        n_trainer, n_val_ds, n_spec, _ = _build_trainer_for_model(
+            newton_name, config, device, val_limit
+        )
+        try:
+            newton_lift_correction_n = _collect_newton_lift_correction(
+                n_trainer, n_val_ds, n_spec
+            )
+        except RuntimeError as exc:
+            log.warning("newton_magnitude_collection_skipped", reason=str(exc))
+    else:
+        log.warning("newton_dir_missing", path=str(newton_dir))
+
     normalizer_stats = (meta.get("stats_dict") or {}).get("fdm_cl_residual")
     out_path = cl_dir / "cl_distribution.md"
-    verdict = _write_cl_distribution(out_path, diag, cl_name, normalizer_stats)
+    verdict = _write_cl_distribution(
+        out_path,
+        diag,
+        cl_name,
+        normalizer_stats,
+        newton_lift_correction_n=newton_lift_correction_n,
+        newton_model_name=newton_name if newton_dir.exists() else None,
+    )
     log.info("cl_distribution_written", path=str(out_path), verdict=verdict)
     return 0
 
@@ -1060,7 +1317,13 @@ def run(
     )
     if rc != 0:
         return rc
-    return cl_dist(cl_name=cl_name, config=config, device=device, val_limit=val_limit)
+    return cl_dist(
+        cl_name=cl_name,
+        newton_name=newton_name,
+        config=config,
+        device=device,
+        val_limit=val_limit,
+    )
 
 
 def main() -> int:
