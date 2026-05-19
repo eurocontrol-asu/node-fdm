@@ -288,6 +288,28 @@ def _build_trainer_for_model(
 # ---------------------------------------------------------------------------
 
 
+#: Altitude bands (m) for the phase-stratified diagnostic. Cruise band
+#: uses CRUISE_ALT_MIN_M. Low + mid cover the climb/descent regimes
+#: where CL deviates most strongly from CL_REF=0.5.
+ALT_BAND_LOW_MAX_M: float = 3048.0  # 10 000 ft
+ALT_BAND_MID_MAX_M: float = 9144.0  # 30 000 ft (matches CRUISE_ALT_MIN_M)
+
+
+@dataclass(frozen=True)
+class PhaseStats:
+    """Target cl_residual statistics in a single altitude band."""
+
+    n_steps: int
+    target_mean: float
+    target_std: float
+    target_p10: float
+    target_p90: float
+    cl_steady_mean: float
+    """Mean of ``m_ref·g / (q·S_REF)`` -- the CL that exactly balances
+    weight at steady-state in this altitude band. The gap between this
+    and ``CL_REF=0.5`` is what the NN must learn as ``cl_residual``."""
+
+
 @dataclass(frozen=True)
 class ClDiagnostics:
     """Predicted vs target CL/residual distributions over the val set.
@@ -302,10 +324,11 @@ class ClDiagnostics:
       step (no cruise filter). Used to compare the operational regime
       vs the full training-data distribution that drives the normalizer.
 
-    The diagnostic question is: is the normalizer ``p999`` (set from the
-    full population at training time) ``≫`` than the cruise-only
-    operational ``p999``? If yes, the NN head's output cap is sized for
-    extreme maneuvers and is starved of gradient signal in cruise.
+    Plus a phase-stratified breakdown (low / mid / cruise altitude
+    bands) of the **target** ``cl_residual`` and the ``CL_steady`` that
+    would balance weight at each altitude. Diagnostic question: does
+    the target residual amplitude scale strongly with phase (because
+    CL_REF is a constant while the operational CL is phase-dependent)?
     """
 
     pred_all: np.ndarray
@@ -314,6 +337,46 @@ class ClDiagnostics:
     target_cruise: np.ndarray
     n_total: int
     n_cruise: int
+    phase_low: PhaseStats
+    phase_mid: PhaseStats
+    phase_cruise: PhaseStats
+
+
+def _phase_stats(
+    target_residual: np.ndarray,
+    q_pa: np.ndarray,
+    mask: np.ndarray,
+    *,
+    m_ref_kg: float,
+    s_ref_m2: float,
+    g: float,
+) -> PhaseStats:
+    """Compute per-band stats. Empty mask returns NaNs."""
+    n = int(mask.sum())
+    if n == 0:
+        return PhaseStats(
+            n_steps=0,
+            target_mean=float("nan"),
+            target_std=float("nan"),
+            target_p10=float("nan"),
+            target_p90=float("nan"),
+            cl_steady_mean=float("nan"),
+        )
+    sel_res = target_residual[mask]
+    sel_q = q_pa[mask]
+    # CL_steady = m_ref·g / (q·S) -- the CL that exactly balances weight
+    # at this altitude/speed combination. Filter pathological q (near-zero
+    # at very low TAS during initial climb) by clipping at 100 Pa.
+    sel_q_safe = np.maximum(sel_q, 100.0)
+    cl_steady = m_ref_kg * g / (sel_q_safe * s_ref_m2)
+    return PhaseStats(
+        n_steps=n,
+        target_mean=float(np.mean(sel_res)),
+        target_std=float(np.std(sel_res)),
+        target_p10=float(np.percentile(sel_res, 10)),
+        target_p90=float(np.percentile(sel_res, 90)),
+        cl_steady_mean=float(np.mean(cl_steady)),
+    )
 
 
 def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
@@ -321,15 +384,18 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
 
     Also computes the analytical target ``cl_residual`` (inverse
     PhysicsLayer) on the same samples so predicted and target
-    distributions can be compared directly.
+    distributions can be compared directly, and stratifies the target
+    by altitude band to test the shape hypothesis (CL_REF=0.5 too far
+    from the operating CL outside cruise).
 
     ``data_ode_long`` consumes inputs from x / u / e0 plus e1 columns
     (mach, q_pa, d_alt_ms, ...) that are computed on the fly by
     ``TrajectoryLayer``. So we run ``trajectory`` first, merge its
     outputs into the input dict, then call ``data_ode_long``.
     """
-    from node_fdm.dataset import _compute_cl_residual
-    from node_fdm.layers.physics import CL_REF
+    from node_fdm.dataset import _M_REF_KG, _compute_cl_residual
+    from node_fdm.layers.physics import CL_REF, S_REF_A320_M2
+    from node_fdm_data.physics.constants import G
 
     traj_layer = trainer.model.layers_dict["trajectory"]
     long_layer = trainer.model.layers_dict["data_ode_long"]
@@ -349,6 +415,11 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
     pred_cruise: list[float] = []
     target_all: list[float] = []
     target_cruise: list[float] = []
+    # Accumulate per-step residual + q + alt across the val set for the
+    # phase breakdown done at the end (avoids three passes).
+    all_residual: list[float] = []
+    all_q: list[float] = []
+    all_alt: list[float] = []
     n_total = 0
     n_cruise = 0
     with torch.no_grad():
@@ -381,8 +452,6 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
             cl_residual_pred = output["fdm_cl_residual"].detach().cpu().numpy().reshape(-1)
 
             # Target cl_residual from the analytical inverse PhysicsLayer.
-            # _compute_cl_residual takes 2-D arrays (n_steps, n_cols)
-            # so we flatten the seq_len dim before calling it.
             x_arr = sample.x.detach().cpu().numpy().reshape(-1, len(spec.x_cols))
             e_arr = sample.e.detach().cpu().numpy().reshape(-1, len(spec.e0_cols))
             dx_arr = sample.dx.detach().cpu().numpy().reshape(-1, len(spec.dx_cols))
@@ -402,6 +471,27 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
             pred_cruise.extend(pred_cl[cruise_mask].tolist())
             target_cruise.extend(target_cl[cruise_mask].tolist())
 
+            # q from TrajectoryLayer output (recomputed from alt/V using
+            # the same ISA pressure + ERA5 temperature pipeline as the
+            # PhysicsLayer feeds at training time).
+            q_pa = traj_out["fdm_q_pa"].detach().cpu().numpy().reshape(-1)
+            all_residual.extend(cl_residual_target.tolist())
+            all_q.extend(q_pa.tolist())
+            all_alt.extend(alt.tolist())
+
+    residual_arr = np.asarray(all_residual, dtype=np.float64)
+    q_arr = np.asarray(all_q, dtype=np.float64)
+    alt_arr = np.asarray(all_alt, dtype=np.float64)
+
+    low_mask = alt_arr <= ALT_BAND_LOW_MAX_M
+    mid_mask = (alt_arr > ALT_BAND_LOW_MAX_M) & (alt_arr <= ALT_BAND_MID_MAX_M)
+    cruise_mask = alt_arr > ALT_BAND_MID_MAX_M
+
+    stats_kwargs = {"m_ref_kg": _M_REF_KG, "s_ref_m2": S_REF_A320_M2, "g": G}
+    phase_low = _phase_stats(residual_arr, q_arr, low_mask, **stats_kwargs)
+    phase_mid = _phase_stats(residual_arr, q_arr, mid_mask, **stats_kwargs)
+    phase_cruise = _phase_stats(residual_arr, q_arr, cruise_mask, **stats_kwargs)
+
     return ClDiagnostics(
         pred_all=np.asarray(pred_all, dtype=np.float64),
         pred_cruise=np.asarray(pred_cruise, dtype=np.float64),
@@ -409,6 +499,9 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
         target_cruise=np.asarray(target_cruise, dtype=np.float64),
         n_total=n_total,
         n_cruise=n_cruise,
+        phase_low=phase_low,
+        phase_mid=phase_mid,
+        phase_cruise=phase_cruise,
     )
 
 
@@ -751,12 +844,62 @@ def _write_cl_distribution(
         f"| ratio normalizer / cruise | {ratio_norm:.2f}x |",
         f"| ratio all-val / cruise | {ratio_all:.2f}x |",
         "",
-        "**Interpretation** -- a ratio `normalizer / cruise > 3x` suggests "
-        "the head is undersized relative to the cruise operating point. "
-        "Mitigation: recompute the `fdm_cl_residual` stats on a "
-        "cruise-only subset, or cap `nn_output_caps['fdm_cl_residual']` "
-        "to the cruise `p999` so the head's effective range matches the "
-        "operational regime.",
+        "**Interpretation** -- a large `normalizer / cruise` ratio means "
+        "the residual amplitude varies a lot **across phases**. Two "
+        "competing readings: (a) the normalizer is sized for noise that "
+        "the NN should learn to ignore; (b) the NN must legitimately "
+        "represent very different CL values per phase because `CL_REF=0.5` "
+        "is far from steady-state CL outside cruise. See S6 (phase "
+        "breakdown) to disambiguate.",
+        "",
+        "## 6. Target residual amplitude by altitude band (shape diagnostic)",
+        "",
+        "If the model is genuinely multi-phase, `cl_residual` must shift "
+        "to compensate for the gap between `CL_REF=0.5` and `CL_steady = "
+        "m_ref·g / (q·S_REF)` -- the CL that exactly balances weight "
+        "given the current dynamic pressure. The wider that gap, the "
+        "harder the NN has to work; the more phase-dependent the "
+        "amplitude, the worse a constant `CL_REF` performs.",
+        "",
+        "Bands: `low = alt <= 3048 m (10 kft)`, "
+        "`mid = 3048 < alt <= 9144 m`, `cruise = alt > 9144 m`.",
+        "",
+        "| band | n_steps | target_mean | target_std | target_p10 | "
+        "target_p90 | CL_steady_mean | |CL_steady - CL_REF| |",
+        "|---|---:|---:|---:|---:|---:|---:|---:|",
+        f"| low | {diag.phase_low.n_steps} | "
+        f"{diag.phase_low.target_mean:+.4f} | "
+        f"{diag.phase_low.target_std:.4f} | "
+        f"{diag.phase_low.target_p10:+.4f} | "
+        f"{diag.phase_low.target_p90:+.4f} | "
+        f"{diag.phase_low.cl_steady_mean:.4f} | "
+        f"{abs(diag.phase_low.cl_steady_mean - CL_REF):.4f} |",
+        f"| mid | {diag.phase_mid.n_steps} | "
+        f"{diag.phase_mid.target_mean:+.4f} | "
+        f"{diag.phase_mid.target_std:.4f} | "
+        f"{diag.phase_mid.target_p10:+.4f} | "
+        f"{diag.phase_mid.target_p90:+.4f} | "
+        f"{diag.phase_mid.cl_steady_mean:.4f} | "
+        f"{abs(diag.phase_mid.cl_steady_mean - CL_REF):.4f} |",
+        f"| cruise | {diag.phase_cruise.n_steps} | "
+        f"{diag.phase_cruise.target_mean:+.4f} | "
+        f"{diag.phase_cruise.target_std:.4f} | "
+        f"{diag.phase_cruise.target_p10:+.4f} | "
+        f"{diag.phase_cruise.target_p90:+.4f} | "
+        f"{diag.phase_cruise.cl_steady_mean:.4f} | "
+        f"{abs(diag.phase_cruise.cl_steady_mean - CL_REF):.4f} |",
+        "",
+        "**Reading the table**:",
+        "",
+        "* If `target_std` is roughly constant across bands -> shape OK, "
+        "the multi-phase signal is mostly noise around a phase-dependent "
+        "mean, and the NN can learn it without architectural change.",
+        "* If `target_std` grows strongly toward low altitudes, and "
+        "`|CL_steady - CL_REF|` follows the same trend, the constant "
+        "`CL_REF=0.5` is the bottleneck. Mitigation: make `CL_REF` "
+        "phase-aware (e.g. `CL_REF(q) = m_ref·g / (q·S_REF)`), so the "
+        "NN learns a small correction around the analytical steady-state "
+        "rather than the steady-state itself.",
         "",
     ]
     out_path.write_text("\n".join(lines))
