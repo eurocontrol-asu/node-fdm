@@ -13,15 +13,17 @@ import torch
 
 from node_fdm.dataset import FlightDataset, FlightSample
 from node_fdm_data.physics.isa import isa_temperature
+from node_fdm_data.schemas.adsb_hybrid import FLIGHT_FEATURE_COLS_6 as FLIGHT_FEATURE_COLS
 
-# Flight-level MassEncoder features emitted in this order when requested.
-FLIGHT_FEATURE_COLS: list[str] = [
-    "dist_total_flight",
-    "dist_adep_at_t0",
-    "cruise_alt_max_flight",
-    "wind_long_mean_flight",
-    "temp_isa_dev_mean_flight",
-]
+# Physical clamp range for ``fdm_mach_sel`` when building the flight-level
+# aggregate ``mach_cruise_planned``. A320 cruise Mach is typically 0.78-0.80;
+# values outside [0.4, 0.85] are spurious plateau detections (climb residue,
+# noise on bds_mach decoded outliers).
+_MACH_CRUISE_MIN: float = 0.4
+_MACH_CRUISE_MAX: float = 0.85
+# Fallback used when no usable Mach selection exists in the flight. Set to
+# the empirical A320 mean from the dataset audit (~0.78).
+_MACH_CRUISE_FALLBACK: float = 0.78
 
 __all__ = [
     "FLIGHT_FEATURE_COLS",
@@ -88,7 +90,17 @@ def _load_and_window(
     routing_cols = ["fdm_adep_dist_m", "fdm_ades_dist_m"]
     aggregate_source_cols = ["raw_alt_m", "fdm_long_wind_ms", "era_temp_K"]
     feature_source_cols = routing_cols + aggregate_source_cols if has_flight_features else []
-    all_cols = x_cols + u_cols + e_cols + dx_cols + feature_source_cols
+
+    # Synthetic state/derivative columns are emitted at runtime (by the
+    # MassEncoder, not observed in the delta). Skip them from the existence
+    # check and zero-pad their slot when assembling the per-window tensors.
+    synthetic_cols: set[str] = {"fdm_mass_kg", "fdm_d_mass_kgs"}
+    real_x_cols = [c for c in x_cols if c not in synthetic_cols]
+    real_dx_cols = [c for c in dx_cols if c not in synthetic_cols]
+    synthetic_x_idx = [i for i, c in enumerate(x_cols) if c in synthetic_cols]
+    synthetic_dx_idx = [i for i, c in enumerate(dx_cols) if c in synthetic_cols]
+
+    all_cols = real_x_cols + u_cols + e_cols + real_dx_cols + feature_source_cols
 
     # Verify all columns exist
     missing = [c for c in all_cols if c not in flights_df.columns]
@@ -136,21 +148,59 @@ def _load_and_window(
             temp_arr = df.get_column("era_temp_K").to_numpy().astype(np.float32)
             wind_arr = df.get_column("fdm_long_wind_ms").to_numpy().astype(np.float32)
             temp_isa_dev = temp_arr - isa_temperature(alt_arr)
+            # Mach cruise planned: highest FMS-selected Mach observed during
+            # the flight, clamped to physically plausible cruise range to
+            # discard spurious plateau detections. Falls back to the typical
+            # A320 cruise Mach when no usable selection exists.
+            mach_cruise_planned = _MACH_CRUISE_FALLBACK
+            if "fdm_mach_sel" in df.columns:
+                mach_arr = df.get_column("fdm_mach_sel").to_numpy()
+                in_range = np.isfinite(mach_arr) & (
+                    (mach_arr >= _MACH_CRUISE_MIN) & (mach_arr <= _MACH_CRUISE_MAX)
+                )
+                if in_range.any():
+                    mach_cruise_planned = float(np.max(mach_arr[in_range]))
             flight_aggregates[fid] = {
                 "cruise_alt_max_flight": float(np.nanmax(alt_arr)),
                 "wind_long_mean_flight": float(np.nanmean(wind_arr)),
                 "temp_isa_dev_mean_flight": float(np.nanmean(temp_isa_dev)),
+                "mach_cruise_planned": mach_cruise_planned,
             }
 
-        # Extract arrays (empty col lists → zero-width arrays)
-        x_arr = df.select(x_cols).to_numpy().astype(np.float32)
+        # Extract arrays (empty col lists → zero-width arrays).
+        # Synthetic columns (e.g. fdm_mass_kg) are filled by the runtime
+        # encoder, not observed; we zero-pad the slot so the tensor shape
+        # matches len(x_cols).
+        x_arr_real = (
+            df.select(real_x_cols).to_numpy().astype(np.float32)
+            if real_x_cols
+            else np.empty((n_rows, 0), dtype=np.float32)
+        )
+        if synthetic_x_idx:
+            x_arr = np.zeros((n_rows, len(x_cols)), dtype=np.float32)
+            real_idx = [i for i in range(len(x_cols)) if i not in synthetic_x_idx]
+            x_arr[:, real_idx] = x_arr_real
+        else:
+            x_arr = x_arr_real
+
         u_arr = (
             df.select(u_cols).to_numpy().astype(np.float32)
             if u_cols
             else np.empty((n_rows, 0), dtype=np.float32)
         )
         e_arr = df.select(e_cols).to_numpy().astype(np.float32)
-        dx_arr = df.select(dx_cols).to_numpy().astype(np.float32)
+
+        dx_arr_real = (
+            df.select(real_dx_cols).to_numpy().astype(np.float32)
+            if real_dx_cols
+            else np.empty((n_rows, 0), dtype=np.float32)
+        )
+        if synthetic_dx_idx:
+            dx_arr = np.zeros((n_rows, len(dx_cols)), dtype=np.float32)
+            real_idx = [i for i in range(len(dx_cols)) if i not in synthetic_dx_idx]
+            dx_arr[:, real_idx] = dx_arr_real
+        else:
+            dx_arr = dx_arr_real
 
         e1_arr: np.ndarray | None = None
         if valid_e1_cols:
@@ -167,7 +217,17 @@ def _load_and_window(
 
         adep_arr: np.ndarray | None = None
         ades_arr: np.ndarray | None = None
-        if has_flight_features:
+        # Read routing arrays as soon as either:
+        #   - flight features are requested (segment-level features need them), or
+        #   - require_routing is set (we filter windows on t_0 presence so the
+        #     baseline and hybrid runs end up on the *same* sample set — fair
+        #     comparison requires apples-to-apples window selection, not just
+        #     apples-to-apples flight selection).
+        if (
+            _require_routing
+            and "fdm_adep_dist_m" in df.columns
+            and "fdm_ades_dist_m" in df.columns
+        ):
             adep_arr = df.get_column("fdm_adep_dist_m").to_numpy().astype(np.float32)
             ades_arr = df.get_column("fdm_ades_dist_m").to_numpy().astype(np.float32)
 
@@ -199,6 +259,20 @@ def _load_and_window(
             if dist_ok is not None and not dist_ok[start:end].all():
                 continue
 
+            # Window-level routing guard: drop windows whose t_0 row lacks
+            # ADEP / ADES distance. Applied whenever require_routing is on
+            # (regardless of flight_feature_cols) so baseline and hybrid
+            # share the same sample set for fair comparison (§9.1).
+            adep_at_t0: float | None = None
+            ades_at_t0: float | None = None
+            if _require_routing:
+                if adep_arr is None or ades_arr is None:
+                    continue
+                adep_at_t0 = float(adep_arr[start])
+                ades_at_t0 = float(ades_arr[start])
+                if not np.isfinite(adep_at_t0) or not np.isfinite(ades_at_t0):
+                    continue
+
             e1_tensor: torch.Tensor | None = None
             if e1_arr is not None:
                 e1_tensor = torch.from_numpy(e1_arr[start:end].copy())
@@ -209,12 +283,10 @@ def _load_and_window(
 
             flight_features_tensor: torch.Tensor | None = None
             if has_flight_features:
-                if adep_arr is None or ades_arr is None:
-                    continue
-                adep_at_t0 = float(adep_arr[start])
-                ades_at_t0 = float(ades_arr[start])
-                if not np.isfinite(adep_at_t0) or not np.isfinite(ades_at_t0):
-                    continue
+                # adep_at_t0 / ades_at_t0 are already validated by the
+                # require_routing guard above (has_flight_features auto-
+                # promotes _require_routing).
+                assert adep_at_t0 is not None and ades_at_t0 is not None
                 feature_values = {
                     "dist_total_flight": adep_at_t0 + ades_at_t0,
                     "dist_adep_at_t0": adep_at_t0,

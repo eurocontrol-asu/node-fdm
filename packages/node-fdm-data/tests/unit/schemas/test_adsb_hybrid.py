@@ -36,9 +36,9 @@ def test_hybrid_reexports_unchanged_lists() -> None:
     assert adsb_hybrid.E1_COLS == adsb.E1_COLS
 
 
-def test_flight_feature_cols_order() -> None:
-    """AC6, AC8: MassEncoder feature columns keep the documented order."""
-    assert adsb_hybrid.FLIGHT_FEATURE_COLS == [
+def test_flight_feature_cols_5_order() -> None:
+    """AC6, AC8: 5-feature MassEncoder set keeps the documented order."""
+    assert adsb_hybrid.FLIGHT_FEATURE_COLS_5 == [
         "dist_total_flight",
         "dist_adep_at_t0",
         "cruise_alt_max_flight",
@@ -47,10 +47,20 @@ def test_flight_feature_cols_order() -> None:
     ]
 
 
+def test_flight_feature_cols_6_extends_5_with_mach() -> None:
+    """6-feature set is the 5-feature set + mach_cruise_planned at the tail."""
+    assert adsb_hybrid.FLIGHT_FEATURE_COLS_6 == [
+        *adsb_hybrid.FLIGHT_FEATURE_COLS_5,
+        "mach_cruise_planned",
+    ]
+
+
 def test_flight_feature_signs_match_cols() -> None:
-    """AC6, AC8: MassEncoder feature signs match the feature column order."""
-    assert adsb_hybrid.FLIGHT_FEATURE_SIGNS == [1.0, -1.0, -1.0, -1.0, 1.0]
-    assert len(adsb_hybrid.FLIGHT_FEATURE_SIGNS) == len(adsb_hybrid.FLIGHT_FEATURE_COLS)
+    """MassEncoder feature signs match the feature column order for both sets."""
+    assert adsb_hybrid.FLIGHT_FEATURE_SIGNS_5 == [1.0, -1.0, -1.0, -1.0, 1.0]
+    assert adsb_hybrid.FLIGHT_FEATURE_SIGNS_6 == [1.0, -1.0, -1.0, -1.0, 1.0, -1.0]
+    assert len(adsb_hybrid.FLIGHT_FEATURE_SIGNS_5) == len(adsb_hybrid.FLIGHT_FEATURE_COLS_5)
+    assert len(adsb_hybrid.FLIGHT_FEATURE_SIGNS_6) == len(adsb_hybrid.FLIGHT_FEATURE_COLS_6)
 
 
 def test_a320_tcds_bounds_constants() -> None:
@@ -69,8 +79,10 @@ def test_all_exports_complete() -> None:
         "E0_COLS",
         "E1_COLS",
         "DX_COLS",
-        "FLIGHT_FEATURE_COLS",
-        "FLIGHT_FEATURE_SIGNS",
+        "FLIGHT_FEATURE_COLS_5",
+        "FLIGHT_FEATURE_COLS_6",
+        "FLIGHT_FEATURE_SIGNS_5",
+        "FLIGHT_FEATURE_SIGNS_6",
         "A320_OEW_KG",
         "A320_MTOW_KG",
     }

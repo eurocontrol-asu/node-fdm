@@ -16,14 +16,7 @@ import node_fdm.architectures.adsb_hybrid  # noqa: F401  -- self-registers hybri
 from node_fdm.dataset import FlightDataset, FlightSample
 from node_fdm.layers.mass_encoder import MassEncoderLinear
 from node_fdm.trainer import ODETrainer, TrainingConfig, _collate_flight_samples
-
-FLIGHT_FEATURE_COLS = [
-    "dist_total_flight",
-    "dist_adep_at_t0",
-    "cruise_alt_max_flight",
-    "wind_long_mean_flight",
-    "temp_isa_dev_mean_flight",
-]
+from node_fdm_data.schemas.adsb_hybrid import FLIGHT_FEATURE_COLS_5 as FLIGHT_FEATURE_COLS
 
 N_FEATURES = len(FLIGHT_FEATURE_COLS)
 
@@ -49,7 +42,8 @@ def _make_hybrid_dataset(
         t = torch.arange(seq_len, dtype=torch.float32).unsqueeze(1)
         x = x0.unsqueeze(0) + t * x_step.unsqueeze(0)
         dx = x_step.unsqueeze(0).expand(seq_len, n_x)
-        ff_row = torch.tensor([3_000_000.0, 100_000.0, 11_000.0, 5.0, 2.0])
+        ff_template = [3_000_000.0, 100_000.0, 11_000.0, 5.0, 2.0, 0.78]
+        ff_row = torch.tensor(ff_template[:N_FEATURES])
         flight_features = ff_row.unsqueeze(0).expand(seq_len, N_FEATURES).clone()
         samples.append(
             FlightSample(
@@ -176,7 +170,8 @@ def test_optimizer_includes_mass_encoder_params(tmp_path: Path) -> None:
     mass_param_ids = {id(p) for p in trainer.mass_encoder.parameters()}
 
     assert mass_param_ids.issubset(optim_param_ids)
-    assert sum(p.numel() for p in trainer.mass_encoder.parameters()) == 6
+    # One scalar per feature (b_raw) + the bias b0.
+    assert sum(p.numel() for p in trainer.mass_encoder.parameters()) == N_FEATURES + 1
 
 
 def test_alpha_dict_warns_when_mass_unweighted(tmp_path: Path) -> None:

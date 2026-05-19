@@ -109,6 +109,14 @@ class ArchitectureSpec(BaseModel, frozen=True):
     in the dataset via the loader's ``flight_feature_cols`` kwarg. Empty for
     architectures without a mass-encoder branch (e.g. ``NODE_ADSB_V1``).
     """
+    flight_feature_signs: list[float] = Field(default_factory=list)
+    """Expected monotonic sign per ``flight_feature_cols`` entry (+1 / -1).
+
+    Drives the sign constraint baked into ``MassEncoderLinear`` so each
+    feature contributes monotonically to the predicted mass. Must have the
+    same length as ``flight_feature_cols``. Empty for architectures without
+    a mass-encoder branch.
+    """
 
 
 def register(spec: ArchitectureSpec) -> None:

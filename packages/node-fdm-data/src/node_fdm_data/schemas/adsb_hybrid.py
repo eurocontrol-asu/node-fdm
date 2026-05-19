@@ -16,8 +16,10 @@ __all__ = [
     "DX_COLS",
     "E0_COLS",
     "E1_COLS",
-    "FLIGHT_FEATURE_COLS",
-    "FLIGHT_FEATURE_SIGNS",
+    "FLIGHT_FEATURE_COLS_5",
+    "FLIGHT_FEATURE_COLS_6",
+    "FLIGHT_FEATURE_SIGNS_5",
+    "FLIGHT_FEATURE_SIGNS_6",
     "U_COLS",
     "U_ODE_COLS",
     "X_COLS",
@@ -31,14 +33,23 @@ U_ODE_COLS: list[str] = adsb.U_ODE_COLS
 E0_COLS: list[str] = adsb.E0_COLS
 E1_COLS: list[str] = adsb.E1_COLS
 
-FLIGHT_FEATURE_COLS: list[str] = [
+FLIGHT_FEATURE_COLS_5: list[str] = [
     "dist_total_flight",
     "dist_adep_at_t0",
     "cruise_alt_max_flight",
     "wind_long_mean_flight",
     "temp_isa_dev_mean_flight",
 ]
-FLIGHT_FEATURE_SIGNS: list[float] = [1.0, -1.0, -1.0, -1.0, 1.0]
+FLIGHT_FEATURE_SIGNS_5: list[float] = [1.0, -1.0, -1.0, -1.0, 1.0]
+
+FLIGHT_FEATURE_COLS_6: list[str] = [
+    *FLIGHT_FEATURE_COLS_5,
+    # Pre-flight Mach planned proxy: highest Mach the FMS selected during the
+    # flight (clamped to physically plausible cruise range). A heavy aircraft
+    # cruises at a lower planned Mach for fuel efficiency → expected sign -1.
+    "mach_cruise_planned",
+]
+FLIGHT_FEATURE_SIGNS_6: list[float] = [*FLIGHT_FEATURE_SIGNS_5, -1.0]
 
 A320_OEW_KG: float = 42_600.0
 A320_MTOW_KG: float = 77_000.0

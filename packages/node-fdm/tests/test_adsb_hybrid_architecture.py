@@ -11,7 +11,7 @@ import node_fdm.architectures.adsb
 import node_fdm.architectures.adsb_hybrid  # noqa: F401 — triggers hybrid auto-register
 from node_fdm.architectures.registry import get
 from node_fdm_data.schemas import adsb_hybrid as h_schema
-from node_fdm_data.schemas.adsb_hybrid import FLIGHT_FEATURE_COLS
+from node_fdm_data.schemas.adsb_hybrid import FLIGHT_FEATURE_COLS_5, FLIGHT_FEATURE_SIGNS_5
 
 
 class TestHybridV1Registration:
@@ -51,9 +51,9 @@ class TestHybridV1DataOdeLong:
         raise AssertionError(f"data_ode_long layer missing in {spec_name}")
 
     def test_hybrid_v1_data_ode_long_outputs_newton_forces(self) -> None:
-        """AC4: outputs are exactly ``['fdm_t_minus_d_N', 'fdm_lift_N']``."""
+        """AC4: outputs are exactly the adim Newton residuals."""
         layer = self._data_ode_long("node_adsb_hybrid_v1")
-        assert layer.output_cols == ["fdm_t_minus_d_N", "fdm_lift_N"]
+        assert layer.output_cols == ["fdm_t_minus_d_norm", "fdm_lift_residual_norm"]
 
     def test_hybrid_v1_data_ode_long_inputs_match_baseline(self) -> None:
         """AC4: NN-backbone input set is identical to NODE_ADSB_V1 (identifiability)."""
@@ -73,11 +73,11 @@ class TestHybridV1Physics:
         raise AssertionError(f"physics layer missing in {spec_name}")
 
     def test_hybrid_v1_physics_inputs_newton_set(self) -> None:
-        """AC5: physics inputs include Newton forces, mass, and kinematic state."""
+        """AC5: physics inputs include the adim NN outputs, mass, and kinematic state."""
         physics = self._physics("node_adsb_hybrid_v1")
         required = {
-            "fdm_t_minus_d_N",
-            "fdm_lift_N",
+            "fdm_t_minus_d_norm",
+            "fdm_lift_residual_norm",
             "fdm_mass_kg",
             "era_tas_ms",
             "fdm_gamma_rad",
@@ -90,10 +90,10 @@ class TestHybridV1DerivedOutputs:
     """AC6: derived_output_cols lists Newton forces and excludes a_spec."""
 
     def test_hybrid_v1_derived_outputs_include_newton_forces(self) -> None:
-        """AC6: Newton-force columns are derived; ``fdm_a_spec_ms2`` is not."""
+        """AC6: adim NN-output columns are derived; ``fdm_a_spec_ms2`` is not."""
         spec = get("node_adsb_hybrid_v1")
-        assert "fdm_t_minus_d_N" in spec.derived_output_cols
-        assert "fdm_lift_N" in spec.derived_output_cols
+        assert "fdm_t_minus_d_norm" in spec.derived_output_cols
+        assert "fdm_lift_residual_norm" in spec.derived_output_cols
         assert "fdm_a_spec_ms2" not in spec.derived_output_cols
 
 
@@ -101,19 +101,24 @@ class TestHybridV1OutputCaps:
     """AC7: nn_output_caps enforce hard physical bounds on NN outputs."""
 
     def test_hybrid_v1_caps_match_doc(self) -> None:
-        """AC7: caps match PHASE_1_MASS_ENCODER §7.1 values."""
+        """AC7: caps mirror the legacy baseline ``(a_spec, n_z_residual)`` range."""
         spec = get("node_adsb_hybrid_v1")
-        assert spec.nn_output_caps["fdm_t_minus_d_N"] == 5.0e5
-        assert spec.nn_output_caps["fdm_lift_N"] == 1.5e6
+        assert spec.nn_output_caps["fdm_t_minus_d_norm"] == 8.0
+        assert spec.nn_output_caps["fdm_lift_residual_norm"] == 2.0
 
 
 class TestHybridV1FlightFeatureCols:
-    """AC8: flight_feature_cols comes from the hybrid schema."""
+    """AC8: flight_feature_cols comes from the hybrid schema (5-feature set)."""
 
     def test_hybrid_v1_flight_feature_cols_set(self) -> None:
-        """AC8: spec.flight_feature_cols == schema.FLIGHT_FEATURE_COLS."""
+        """AC8: spec.flight_feature_cols == schema.FLIGHT_FEATURE_COLS_5."""
         spec = get("node_adsb_hybrid_v1")
-        assert spec.flight_feature_cols == FLIGHT_FEATURE_COLS
+        assert spec.flight_feature_cols == FLIGHT_FEATURE_COLS_5
+
+    def test_hybrid_v1_flight_feature_signs_set(self) -> None:
+        """spec.flight_feature_signs == schema.FLIGHT_FEATURE_SIGNS_5."""
+        spec = get("node_adsb_hybrid_v1")
+        assert spec.flight_feature_signs == FLIGHT_FEATURE_SIGNS_5
 
 
 class TestHybridV1Bounds:

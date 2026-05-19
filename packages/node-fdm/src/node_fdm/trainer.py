@@ -39,7 +39,6 @@ from node_fdm.training.weighting import compute_segment_weights
 from node_fdm_data.schemas.adsb_hybrid import (
     A320_MTOW_KG,
     A320_OEW_KG,
-    FLIGHT_FEATURE_SIGNS,
 )
 
 __all__ = [
@@ -204,6 +203,7 @@ class ODETrainer:
         e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
         derived_output_cols = list(getattr(self.spec, "derived_output_cols", []) or [])
         flight_feature_cols = list(getattr(self.spec, "flight_feature_cols", []) or [])
+        flight_feature_signs = list(getattr(self.spec, "flight_feature_signs", []) or [])
         _samples = list(train_dataset)  # type: ignore[call-overload]
         _stats_args = {
             "x_cols": self.spec.x_cols,
@@ -247,7 +247,7 @@ class ODETrainer:
             self.mass_encoder = MassEncoderLinear(
                 feature_stats=self.stats_dict,
                 feature_cols=flight_feature_cols,
-                expected_signs=FLIGHT_FEATURE_SIGNS,
+                expected_signs=flight_feature_signs,
                 oew_kg=A320_OEW_KG,
                 mtow_kg=A320_MTOW_KG,
             ).to(self.device)
@@ -444,6 +444,16 @@ class ODETrainer:
         means: list[float] = []
         stds: list[float] = []
         for col in self.spec.x_cols:
+            # Synthetic state dims (e.g. fdm_mass_kg) are not observed in the
+            # dataset — their data-driven stats collapse to ~0 and divide-by-
+            # zero would blow up the rollout loss. Derive (mean, std) from the
+            # spec's x_bounds when available: midpoint and half-range as a
+            # reasonable scale.
+            if col == "fdm_mass_kg" and col in self.spec.x_bounds:
+                lo, hi = self.spec.x_bounds[col]
+                means.append(0.5 * (lo + hi))
+                stds.append(max((hi - lo) / 2.0, 1e-6))
+                continue
             stats = self.stats_dict.get(col, {"mean": 0.0, "std": 1.0, "iqr": 1.0})
             means.append(stats["mean"])
             # Use IQR 0.5-99.5 for loss normalization when available.
@@ -468,6 +478,14 @@ class ODETrainer:
             for i, col in enumerate(self.spec.x_cols):
                 if col in self.config.alpha_dict:
                     weights[i] = self.config.alpha_dict[col]
+        # The mass state dim is constant per segment by construction
+        # (dm/dt = 0). Auto-zero its loss weight unless the user explicitly
+        # overrides it via alpha_dict.
+        if "fdm_mass_kg" in self.spec.x_cols and (
+            self.config.alpha_dict is None or "fdm_mass_kg" not in self.config.alpha_dict
+        ):
+            mass_idx = self.spec.x_cols.index("fdm_mass_kg")
+            weights[mass_idx] = 0.0
         return weights
 
     def _build_huber_betas(self) -> torch.Tensor | None:

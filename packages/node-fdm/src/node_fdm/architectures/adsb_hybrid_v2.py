@@ -1,17 +1,11 @@
-"""NODE_ADSB_HYBRID_V1 architecture — Newton-force outputs + MassEncoder.
+"""NODE_ADSB_HYBRID_V2 architecture — 6-feature MassEncoder variant.
 
-Hybrid variant of :mod:`node_fdm.architectures.adsb`. The longitudinal NN
-backbone now emits Newton-force targets ``fdm_t_minus_d_N`` (thrust minus
-drag) and ``fdm_lift_N`` instead of the kinematic acceleration
-``fdm_a_spec_ms2`` / load factor ``fdm_n_z_residual``. The state vector
-gains a fifth dimension ``fdm_mass_kg`` whose derivative is pinned to zero
-(mass is held constant inside the horizon; a MassEncoder estimates it from
-per-flight features and feeds the projected integrator).
-
-The NN-backbone inputs are kept **identical to** ``NODE_ADSB_V1`` to
-preserve the identifiability invariant: any loss improvement at this stage
-must come from the MassEncoder, not from new features leaking into the
-backbone (cf. PHASE_1_MASS_ENCODER.md §4.4, §5, §7.1).
+Sibling of :mod:`node_fdm.architectures.adsb_hybrid` (which carries the
+5-feature MassEncoder). v2 extends the MassEncoder input set with
+``mach_cruise_planned`` (pre-flight Mach proxy) for a total of 6 features.
+The longitudinal NN backbone, lateral channel, trajectory layer, and
+PhysicsLayer wiring are byte-identical to v1; only ``flight_feature_cols``
+and ``flight_feature_signs`` change.
 
 Auto-registers at import time.
 """
@@ -28,14 +22,14 @@ from node_fdm_data.schemas.adsb_hybrid import (
     DX_COLS,
     E0_COLS,
     E1_COLS,
-    FLIGHT_FEATURE_COLS_5,
-    FLIGHT_FEATURE_SIGNS_5,
+    FLIGHT_FEATURE_COLS_6,
+    FLIGHT_FEATURE_SIGNS_6,
     U_COLS,
     X_COLS,
 )
 
 __all__ = [
-    "NODE_ADSB_HYBRID_V1",
+    "NODE_ADSB_HYBRID_V2",
 ]
 
 # Identifiability invariant (AC4): the longitudinal NN backbone must see the
@@ -50,8 +44,8 @@ _BASELINE_DATA_ODE_LAT = next(
     layer for layer in NODE_ADSB_V1.layers if layer.name == "data_ode_lat"
 )
 
-NODE_ADSB_HYBRID_V1 = ArchitectureSpec(
-    name="node_adsb_hybrid_v1",
+NODE_ADSB_HYBRID_V2 = ArchitectureSpec(
+    name="node_adsb_hybrid_v2",
     x_cols=X_COLS,
     u_cols=U_COLS,
     e0_cols=E0_COLS,
@@ -161,8 +155,8 @@ NODE_ADSB_HYBRID_V1 = ArchitectureSpec(
     # Same active-signal filter as the baseline: Newton-force scales are
     # diluted by long cruise stretches just like a_spec was.
     nn_output_scale_floor_ratio=0.01,
-    flight_feature_cols=FLIGHT_FEATURE_COLS_5,
-    flight_feature_signs=FLIGHT_FEATURE_SIGNS_5,
+    flight_feature_cols=FLIGHT_FEATURE_COLS_6,
+    flight_feature_signs=FLIGHT_FEATURE_SIGNS_6,
 )
 
-register(NODE_ADSB_HYBRID_V1)
+register(NODE_ADSB_HYBRID_V2)
