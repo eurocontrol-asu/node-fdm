@@ -1,28 +1,42 @@
-"""Phase 1.5 parity report — CL-mode (``full_hybrid_v4``) vs Newton-mode (``full_hybrid_v3``).
+"""Phase 1.5 parity report — CL-mode model vs Newton-mode (L/m_ref) baseline.
 
 Generates the empirical artifacts that gate Phase 1.5 (AXM-1739):
 
-* ``data/models/{v4}/parity_report.md`` — loss parity table, b_raw drift
-  table, identifiability ratio, verdict (AC2 / AC3 / AC5 / AC6).
-* ``data/models/{v4}/cl_distribution.md`` — CL percentiles on the val-set
-  cruise slice (AC4).
+* ``data/models/{cl_model}/parity_report.md`` — loss parity table, b_raw
+  drift table, identifiability ratio, verdict (AC2 / AC3 / AC5 / AC6).
+* ``data/models/{cl_model}/cl_distribution.md`` — CL percentiles on the
+  val-set cruise slice (AC4).
+
+Default model names follow the post-alignment convention (arch ↔ model
+numbering matches):
+
+* ``full_hybrid_v3`` — CL-mode model, arch ``node_adsb_hybrid_v3``
+  (Phase 1.5, ``L = q · S · (CL_REF + cl_residual)``).
+* ``full_hybrid_v2`` — Newton-mode baseline, arch ``node_adsb_hybrid_v2``
+  (Phase 1, ``L = (1 + lift_residual_norm) · m·g``, 6 features incl.
+  ``mach_cruise_planned``).
+
+Earlier runs ``full_hybrid_v0.legacy`` (pre-MassEncoder, arch
+``node_adsb_hybrid_v1``) and ``full_hybrid_v1.legacy`` (5-feature
+L/m_ref attempt that did not validate) are archived under
+``data/models/`` for historical reference.
 
 Usage (run from repo root once both models are trained)::
 
     cd /Users/gabriel/Documents/Code/python/node-fdm-v2
     uv run python scripts/phase15_parity_report.py run \\
-        --v4-name full_hybrid_v4 \\
-        --v3-name full_hybrid_v3
+        --cl-name full_hybrid_v3 \\
+        --newton-name full_hybrid_v2
 
 Subcommands ``parity`` and ``cl-dist`` emit a single artifact each;
-``run`` emits both. All artifacts land under the v4 model directory.
+``run`` emits both. All artifacts land under the CL-model directory.
 
 **Cruise-slice caveat (AC4)** — the ticket specifies
-``fdm_mode_label == \"ALT_MACH\"`` for the cruise slice. ``fdm_mode_label``
+``fdm_mode_label == "ALT_MACH"`` for the cruise slice. ``fdm_mode_label``
 is a delta-table column produced by
 ``node_fdm_data.preprocessing.label_modes`` but is **not threaded into
 ``FlightSample`` tensors** by the existing val-set loader. To keep the
-\"no new fixtures\" constraint from technical_notes, this script uses an
+"no new fixtures" constraint from technical_notes, this script uses an
 altitude proxy ``raw_alt_m > 9144 m`` (~30 000 ft) as the cruise mask.
 This slightly over-includes high-altitude non-ALT_MACH segments
 (e.g. shallow GAMMA_MACH climbs near cruise alt) but matches the
@@ -60,13 +74,13 @@ app = cyclopts.App(
 # ---------------------------------------------------------------------------
 
 PARITY_RATIO_TOL: float = 0.02
-"""AC3: |val_loss_v4 - val_loss_v3| / val_loss_v3 <= 0.02 to PASS parity."""
+"""AC3: |val_loss_cl - val_loss_newton| / val_loss_newton <= 0.02 to PASS."""
 
 IDENTIFIABILITY_THRESHOLD: float = 1.20
 """AC5: identifiability ratio strictly > 1.20 to PASS."""
 
 B_RAW_DRIFT_TOL: float = 0.10
-"""AC6: |coef_v4 - coef_v3| / |coef_v3| <= 0.10 per feature to PASS."""
+"""AC6: |coef_cl - coef_newton| / |coef_newton| <= 0.10 per feature to PASS."""
 
 CL_CRUISE_MEDIAN_RANGE: tuple[float, float] = (0.4, 0.6)
 """AC4(a): median(CL[cruise]) must fall inside this band."""
@@ -154,7 +168,7 @@ def _load_mass_coefficients(model_dir: Path) -> dict[str, float]:
     Mirrors ``MassEncoderLinear.effective_coefficients`` (post-softplus,
     signed). Feature columns are recovered from the checkpoint's
     normalizer buffers rather than the architecture spec — this keeps the
-    drift report robust against transitional states where a trained v3
+    drift report robust against transitional states where a trained
     baseline was built with a different ``flight_feature_cols`` than the
     currently-registered arch spec exposes.
     """
@@ -193,6 +207,8 @@ def _build_trainer_for_model(
     Heavy imports are local so the script's ``--help`` output stays fast and
     test-suite collection doesn't require torch.
     """
+    # Architecture modules self-register on import — kept as bare imports
+    # to make the registry contract explicit at the script entry point.
     import node_fdm.architectures.adsb_hybrid
     import node_fdm.architectures.adsb_hybrid_v2
     import node_fdm.architectures.adsb_hybrid_v3  # noqa: F401
@@ -305,7 +321,10 @@ def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, 
                     raise KeyError(msg)
             output = long_layer(inputs)
             if "fdm_cl_residual" not in output:
-                msg = "data_ode_long output missing 'fdm_cl_residual' — expected the v3 arch"
+                msg = (
+                    "data_ode_long output missing 'fdm_cl_residual' — "
+                    "expected the CL-mode arch (node_adsb_hybrid_v3)"
+                )
                 raise RuntimeError(msg)
             cl_residual = output["fdm_cl_residual"].detach().cpu().numpy().reshape(-1)
             alt = sample.x[..., alt_idx].detach().cpu().numpy().reshape(-1)
@@ -321,45 +340,49 @@ def _collect_cl_on_cruise(trainer, val_dataset, spec) -> tuple[np.ndarray, int, 
 # ---------------------------------------------------------------------------
 
 
-def _format_loss_overlay(v4: LossSummary, v3: LossSummary) -> str:
+def _format_loss_overlay(cl: LossSummary, newton: LossSummary) -> str:
     """Build a Markdown table aligning per-epoch losses for both models."""
-    n = max(len(v4.epochs), len(v3.epochs))
+    n = max(len(cl.epochs), len(newton.epochs))
     rows = [
-        "| epoch | train_v4 | val_v4 | train_v3 | val_v3 |",
-        "|------:|---------:|-------:|---------:|-------:|",
+        "| epoch | train_cl | val_cl | train_newton | val_newton |",
+        "|------:|---------:|-------:|-------------:|-----------:|",
     ]
     for i in range(n):
-        epoch = v4.epochs[i] if i < len(v4.epochs) else v3.epochs[i]
-        train_v4 = f"{v4.train_losses[i]:.6f}" if i < len(v4.train_losses) else "—"
-        val_v4 = f"{v4.val_losses[i]:.6f}" if i < len(v4.val_losses) else "—"
-        train_v3 = f"{v3.train_losses[i]:.6f}" if i < len(v3.train_losses) else "—"
-        val_v3 = f"{v3.val_losses[i]:.6f}" if i < len(v3.val_losses) else "—"
-        rows.append(f"| {epoch:g} | {train_v4} | {val_v4} | {train_v3} | {val_v3} |")
+        epoch = cl.epochs[i] if i < len(cl.epochs) else newton.epochs[i]
+        train_cl = f"{cl.train_losses[i]:.6f}" if i < len(cl.train_losses) else "—"
+        val_cl = f"{cl.val_losses[i]:.6f}" if i < len(cl.val_losses) else "—"
+        train_newton = (
+            f"{newton.train_losses[i]:.6f}" if i < len(newton.train_losses) else "—"
+        )
+        val_newton = f"{newton.val_losses[i]:.6f}" if i < len(newton.val_losses) else "—"
+        rows.append(
+            f"| {epoch:g} | {train_cl} | {val_cl} | {train_newton} | {val_newton} |"
+        )
     return "\n".join(rows)
 
 
 def _format_b_raw_drift(
-    v4_coefs: dict[str, float], v3_coefs: dict[str, float]
+    cl_coefs: dict[str, float], newton_coefs: dict[str, float]
 ) -> tuple[str, bool]:
     """Compare per-feature post-softplus coefficients. Returns (markdown, passed)."""
-    common_keys = [k for k in v3_coefs if k in v4_coefs]
+    common_keys = [k for k in newton_coefs if k in cl_coefs]
     rows = [
-        "| feature | v3 | v4 | |Δ|/|v3| | sign-consistent | within 10% |",
+        "| feature | newton | cl | |Δ|/|newton| | sign-consistent | within 10% |",
         "|---|---:|---:|---:|:---:|:---:|",
     ]
     all_pass = True
     for key in common_keys:
-        v3v = v3_coefs[key]
-        v4v = v4_coefs[key]
-        denom = abs(v3v) if abs(v3v) > 1e-9 else float("inf")
-        drift = abs(v4v - v3v) / denom
-        sign_ok = (v3v >= 0) == (v4v >= 0)
+        nv = newton_coefs[key]
+        cv = cl_coefs[key]
+        denom = abs(nv) if abs(nv) > 1e-9 else float("inf")
+        drift = abs(cv - nv) / denom
+        sign_ok = (nv >= 0) == (cv >= 0)
         within = drift <= B_RAW_DRIFT_TOL
         passed = within or sign_ok
         if not passed:
             all_pass = False
         rows.append(
-            f"| `{key}` | {v3v:+.4f} | {v4v:+.4f} | {drift:.3f} | "
+            f"| `{key}` | {nv:+.4f} | {cv:+.4f} | {drift:.3f} | "
             f"{'✅' if sign_ok else '❌'} | {'✅' if within else '❌'} |"
         )
     return "\n".join(rows), all_pass
@@ -367,23 +390,23 @@ def _format_b_raw_drift(
 
 def _write_parity_report(
     out_path: Path,
-    v4: LossSummary,
-    v3: LossSummary,
-    v4_coefs: dict[str, float],
-    v3_coefs: dict[str, float],
+    cl: LossSummary,
+    newton: LossSummary,
+    cl_coefs: dict[str, float],
+    newton_coefs: dict[str, float],
     identifiability: dict[str, float],
-    v4_meta: dict,
-    v3_meta: dict,
+    cl_meta: dict,
+    newton_meta: dict,
 ) -> dict[str, object]:
     """Emit ``parity_report.md`` covering AC2, AC3, AC5, AC6. Returns verdict dict."""
-    val_loss_v4 = v4.final_val
-    val_loss_v3 = v3.final_val
-    if val_loss_v3 > 0:
-        ratio = (val_loss_v4 - val_loss_v3) / val_loss_v3
+    val_loss_cl = cl.final_val
+    val_loss_newton = newton.final_val
+    if val_loss_newton > 0:
+        ratio = (val_loss_cl - val_loss_newton) / val_loss_newton
     else:
         ratio = float("inf")
     parity_pass = abs(ratio) <= PARITY_RATIO_TOL
-    drift_md, drift_pass = _format_b_raw_drift(v4_coefs, v3_coefs)
+    drift_md, drift_pass = _format_b_raw_drift(cl_coefs, newton_coefs)
     ident_pass = identifiability["ratio"] > IDENTIFIABILITY_THRESHOLD
 
     if not parity_pass:
@@ -393,10 +416,10 @@ def _write_parity_report(
     else:
         status = "parity"
 
-    overlay_md = _format_loss_overlay(v4, v3)
+    overlay_md = _format_loss_overlay(cl, newton)
 
     lines = [
-        f"# Phase 1.5 parity report — {v4.name} vs {v3.name}",
+        f"# Phase 1.5 parity report — {cl.name} (CL-mode) vs {newton.name} (Newton-mode)",
         "",
         f"> **Status**: `{status}`",
         "",
@@ -405,27 +428,29 @@ def _write_parity_report(
         "",
         "## 1. Setup",
         "",
-        "| Field | v4 (CL-mode) | v3 (Newton-mode reference) |",
+        "| Field | CL-mode (Phase 1.5) | Newton-mode (Phase 1 baseline) |",
         "|---|---|---|",
-        f"| Architecture | `{v4_meta['architecture_name']}` | `{v3_meta['architecture_name']}` |",
-        f"| Epochs (configured) | {v4_meta['epochs']} | {v3_meta['epochs']} |",
-        f"| Seed | {v4_meta.get('seed')} | {v3_meta.get('seed')} |",
-        f"| Batch | {v4_meta['batch_size']} | {v3_meta['batch_size']} |",
-        f"| Seq len | {v4_meta['seq_len']} | {v3_meta['seq_len']} |",
-        f"| lr | {v4_meta['lr']} | {v3_meta['lr']} |",
+        f"| Model name | `{cl.name}` | `{newton.name}` |",
+        f"| Architecture | `{cl_meta['architecture_name']}` "
+        f"| `{newton_meta['architecture_name']}` |",
+        f"| Epochs (configured) | {cl_meta['epochs']} | {newton_meta['epochs']} |",
+        f"| Seed | {cl_meta.get('seed')} | {newton_meta.get('seed')} |",
+        f"| Batch | {cl_meta['batch_size']} | {newton_meta['batch_size']} |",
+        f"| Seq len | {cl_meta['seq_len']} | {newton_meta['seq_len']} |",
+        f"| lr | {cl_meta['lr']} | {newton_meta['lr']} |",
         "",
         "## 2. Loss summary (AC2)",
         "",
-        "| Metric | v4 | v3 | (v4 - v3) / v3 |",
+        "| Metric | CL | Newton | (CL - Newton) / Newton |",
         "|---|---:|---:|---:|",
-        f"| final train_loss | {v4.final_train:.6f} | {v3.final_train:.6f} | — |",
-        f"| final val_loss   | {v4.final_val:.6f} | {v3.final_val:.6f} | {ratio:+.4f} |",
-        f"| best  val_loss   | {v4.best_val:.6f} | {v3.best_val:.6f} | — |",
-        f"| best  epoch      | {v4.best_epoch:g} | {v3.best_epoch:g} | — |",
+        f"| final train_loss | {cl.final_train:.6f} | {newton.final_train:.6f} | — |",
+        f"| final val_loss   | {cl.final_val:.6f} | {newton.final_val:.6f} | {ratio:+.4f} |",
+        f"| best  val_loss   | {cl.best_val:.6f} | {newton.best_val:.6f} | — |",
+        f"| best  epoch      | {cl.best_epoch:g} | {newton.best_epoch:g} | — |",
         "",
         "## 3. Parity criterion (AC3)",
         "",
-        f"AC3 requires `|val_loss_v4 - val_loss_v3| / val_loss_v3 <= {PARITY_RATIO_TOL}`.",
+        f"AC3 requires `|val_loss_cl - val_loss_newton| / val_loss_newton <= {PARITY_RATIO_TOL}`.",
         f"Observed: `{abs(ratio):.4f}` → **{'PASS' if parity_pass else 'FAIL'}**.",
         "",
     ]
@@ -456,7 +481,7 @@ def _write_parity_report(
             "",
             "## 5. Identifiability test (AC5)",
             "",
-            f"`trainer.identifiability_test(factor=1.3)` on `{v4.name}`:",
+            f"`trainer.identifiability_test(factor=1.3)` on `{cl.name}` (CL-mode):",
             "",
             "| Metric | Value |",
             "|---|---:|",
@@ -470,7 +495,7 @@ def _write_parity_report(
             "## 6. MassEncoder b_raw drift (AC6)",
             "",
             "Effective (post-softplus, signed) coefficients. AC6 passes per-feature if",
-            f"either `|Δ|/|v3| ≤ {B_RAW_DRIFT_TOL}` or the sign is preserved.",
+            f"either `|Δ|/|newton| ≤ {B_RAW_DRIFT_TOL}` or the sign is preserved.",
             "",
             drift_md,
             "",
@@ -481,7 +506,7 @@ def _write_parity_report(
             f"`status: {status}`",
             "",
             "- AC2 (overlay generated): ✅",
-            f"- AC3 (parity ≤ {PARITY_RATIO_TOL}): {'✅' if parity_pass else '❌'}",
+            f"- AC3 (parity <= {PARITY_RATIO_TOL}): {'✅' if parity_pass else '❌'}",
             f"- AC5 (identifiability > {IDENTIFIABILITY_THRESHOLD}): "
             f"{'✅' if ident_pass else '❌'}",
             f"- AC6 (b_raw drift <= {B_RAW_DRIFT_TOL} or sign-consistent): "
@@ -576,12 +601,12 @@ def _write_cl_distribution(
 
 @app.command
 def parity(
-    v4_name: Annotated[
+    cl_name: Annotated[
         str, cyclopts.Parameter(help="Sub-directory name for the CL-mode model.")
-    ] = "full_hybrid_v4",
-    v3_name: Annotated[
-        str, cyclopts.Parameter(help="Sub-directory name for the Newton-mode reference.")
     ] = "full_hybrid_v3",
+    newton_name: Annotated[
+        str, cyclopts.Parameter(help="Sub-directory name for the Newton-mode baseline.")
+    ] = "full_hybrid_v2",
     config: Annotated[Path, cyclopts.Parameter(help="Pipeline config YAML.")] = Path(
         "config.yaml"
     ),
@@ -593,35 +618,35 @@ def parity(
         float, cyclopts.Parameter(help="Identifiability perturbation factor.")
     ] = 1.3,
 ) -> int:
-    """AC2/AC3/AC5/AC6 — write `parity_report.md` under the v4 model directory."""
+    """AC2/AC3/AC5/AC6 — write `parity_report.md` under the CL model directory."""
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
     models_dir = cfg.paths.resolve("models_dir")
-    v4_dir = models_dir / v4_name
-    v3_dir = models_dir / v3_name
+    cl_dir = models_dir / cl_name
+    newton_dir = models_dir / newton_name
 
-    v4_loss = _load_loss_summary(v4_dir, v4_name)
-    v3_loss = _load_loss_summary(v3_dir, v3_name)
-    v4_coefs = _load_mass_coefficients(v4_dir)
-    v3_coefs = _load_mass_coefficients(v3_dir)
-    v4_meta = json.loads((v4_dir / "meta.json").read_text())
-    v3_meta = json.loads((v3_dir / "meta.json").read_text())
+    cl_loss = _load_loss_summary(cl_dir, cl_name)
+    newton_loss = _load_loss_summary(newton_dir, newton_name)
+    cl_coefs = _load_mass_coefficients(cl_dir)
+    newton_coefs = _load_mass_coefficients(newton_dir)
+    cl_meta = json.loads((cl_dir / "meta.json").read_text())
+    newton_meta = json.loads((newton_dir / "meta.json").read_text())
 
-    log.info("running_identifiability_test", model=v4_name, factor=factor)
-    trainer, _, _, _ = _build_trainer_for_model(v4_name, config, device, val_limit)
+    log.info("running_identifiability_test", model=cl_name, factor=factor)
+    trainer, _, _, _ = _build_trainer_for_model(cl_name, config, device, val_limit)
     identifiability = trainer.identifiability_test(factor=factor)
 
-    out_path = v4_dir / "parity_report.md"
+    out_path = cl_dir / "parity_report.md"
     verdict = _write_parity_report(
         out_path=out_path,
-        v4=v4_loss,
-        v3=v3_loss,
-        v4_coefs=v4_coefs,
-        v3_coefs=v3_coefs,
+        cl=cl_loss,
+        newton=newton_loss,
+        cl_coefs=cl_coefs,
+        newton_coefs=newton_coefs,
         identifiability=identifiability,
-        v4_meta=v4_meta,
-        v3_meta=v3_meta,
+        cl_meta=cl_meta,
+        newton_meta=newton_meta,
     )
     log.info("parity_report_written", path=str(out_path), verdict=verdict)
     return 0
@@ -629,9 +654,9 @@ def parity(
 
 @app.command(name="cl-dist")
 def cl_dist(
-    v4_name: Annotated[
+    cl_name: Annotated[
         str, cyclopts.Parameter(help="Sub-directory name for the CL-mode model.")
-    ] = "full_hybrid_v4",
+    ] = "full_hybrid_v3",
     config: Annotated[Path, cyclopts.Parameter(help="Pipeline config YAML.")] = Path(
         "config.yaml"
     ),
@@ -640,31 +665,31 @@ def cl_dist(
         int, cyclopts.Parameter(help="Cap val samples for the forward pass.")
     ] = 2000,
 ) -> int:
-    """AC4 — write `cl_distribution.md` under the v4 model directory."""
+    """AC4 — write `cl_distribution.md` under the CL model directory."""
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
     models_dir = cfg.paths.resolve("models_dir")
-    v4_dir = models_dir / v4_name
+    cl_dir = models_dir / cl_name
 
-    log.info("running_cl_distribution", model=v4_name)
-    trainer, val_ds, spec, _ = _build_trainer_for_model(v4_name, config, device, val_limit)
+    log.info("running_cl_distribution", model=cl_name)
+    trainer, val_ds, spec, _ = _build_trainer_for_model(cl_name, config, device, val_limit)
     cl_values, n_total, n_cruise = _collect_cl_on_cruise(trainer, val_ds, spec)
 
-    out_path = v4_dir / "cl_distribution.md"
-    verdict = _write_cl_distribution(out_path, cl_values, n_total, n_cruise, v4_name)
+    out_path = cl_dir / "cl_distribution.md"
+    verdict = _write_cl_distribution(out_path, cl_values, n_total, n_cruise, cl_name)
     log.info("cl_distribution_written", path=str(out_path), verdict=verdict)
     return 0
 
 
 @app.command
 def run(
-    v4_name: Annotated[
+    cl_name: Annotated[
         str, cyclopts.Parameter(help="Sub-directory name for the CL-mode model.")
-    ] = "full_hybrid_v4",
-    v3_name: Annotated[
-        str, cyclopts.Parameter(help="Sub-directory name for the Newton-mode reference.")
     ] = "full_hybrid_v3",
+    newton_name: Annotated[
+        str, cyclopts.Parameter(help="Sub-directory name for the Newton-mode baseline.")
+    ] = "full_hybrid_v2",
     config: Annotated[Path, cyclopts.Parameter(help="Pipeline config YAML.")] = Path(
         "config.yaml"
     ),
@@ -676,8 +701,8 @@ def run(
 ) -> int:
     """Run both `parity` and `cl-dist` and emit the §16 inputs for PHASE_1_RESULTS.md."""
     rc = parity(
-        v4_name=v4_name,
-        v3_name=v3_name,
+        cl_name=cl_name,
+        newton_name=newton_name,
         config=config,
         device=device,
         val_limit=val_limit,
@@ -685,7 +710,7 @@ def run(
     )
     if rc != 0:
         return rc
-    return cl_dist(v4_name=v4_name, config=config, device=device, val_limit=val_limit)
+    return cl_dist(cl_name=cl_name, config=config, device=device, val_limit=val_limit)
 
 
 def main() -> int:
