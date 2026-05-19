@@ -12,7 +12,13 @@ import math
 import numpy as np
 
 from node_fdm.dataset import DERIVED_FEATURES
-from node_fdm.layers.physics import _M_REF_KG, CL_REF, S_REF_A320_M2, V_MIN_CLAMP, G
+from node_fdm.layers.physics import (
+    _M_REF_KG,
+    S_REF_A320_M2,
+    V_MIN_CLAMP,
+    G,
+    cl_ref_steady_np,
+)
 
 
 def test_derived_features_includes_cl_residual() -> None:
@@ -25,8 +31,10 @@ def test_compute_cl_residual_inverts_physics_formula() -> None:
 
     Builds an in-memory batch with known kinematics, evaluates the registered
     computer, and checks the analytic identity
-    ``cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G) / (q · S) - CL_REF``
-    on a hand-computed sample.
+    ``cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G) / (q · S) - CL_steady(q)``
+    on a hand-computed sample. The baseline ``CL_steady(q) = m_ref·g/(q·S)``
+    replaces the former constant ``CL_REF=0.5`` so the residual stays
+    centered on 0 across phases (post-AXM-1739 fix).
     """
     gamma = 0.05
     tas = 220.0
@@ -51,7 +59,8 @@ def test_compute_cl_residual_inverts_physics_formula() -> None:
 
     q_pa = float(DERIVED_FEATURES["fdm_q_pa"](x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)[0])
     v_safe = max(tas, V_MIN_CLAMP)
+    cl_steady = float(cl_ref_steady_np(np.asarray([q_pa]))[0])
     expected = (((v_safe / G) * d_gamma + math.cos(gamma)) * _M_REF_KG * G) / (
         q_pa * S_REF_A320_M2
-    ) - CL_REF
+    ) - cl_steady
     assert math.isclose(float(out[0]), expected, rel_tol=1e-9)

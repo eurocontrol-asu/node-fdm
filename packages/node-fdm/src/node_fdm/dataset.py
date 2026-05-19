@@ -14,7 +14,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from node_fdm.layers.physics import CL_REF, S_REF_A320_M2
+from node_fdm.layers.physics import S_REF_A320_M2, cl_ref_steady_np
 from node_fdm_data.physics.constants import G, R
 from node_fdm_data.physics.isa import isa_pressure, isa_temperature
 from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
@@ -207,15 +207,19 @@ def _compute_cl_residual(
 ) -> np.ndarray:
     """Inverse PhysicsLayer for the CL-mode lift residual.
 
-    PhysicsLayer reconstructs ``L = q · S · (CL_REF + cl_residual)`` then
-    applies ``d_gamma = (L/m - g·cos gamma) / V``. Solving for the NN target
-    under the ``m = m_ref`` statistics convention:
+    PhysicsLayer reconstructs ``L = q · S · (CL_steady(q) + cl_residual)``
+    where ``CL_steady(q) = m_ref · g / (q · S)`` balances weight at the
+    current dynamic pressure. Applying ``d_gamma = (L/m - g·cos gamma) / V``
+    and solving for the NN target under the ``m = m_ref`` statistics
+    convention:
 
         cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G)
-                      / (q · S_REF_A320_M2) - CL_REF
+                      / (q · S_REF_A320_M2) - CL_steady(q)
 
     where ``q`` is the dynamic pressure already computed by ``_compute_q``
-    (ERA5 temperature when available, ISA fallback).
+    (ERA5 temperature when available, ISA fallback). The q-dependent
+    baseline (vs the former CL_REF=0.5 constant) keeps the target residual
+    centered near 0 in every phase — see AXM-1739 cl_distribution.md §6.
     """
     gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
     tas = x_arr[:, x_cols.index("era_tas_ms")].astype(np.float64)
@@ -223,7 +227,8 @@ def _compute_cl_residual(
     v_safe = np.maximum(tas, _V_MIN_CLAMP)
     q_pa = _compute_q(x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
     lhs = ((v_safe / G) * d_gamma + np.cos(gamma)) * _M_REF_KG * G
-    return np.asarray(lhs / (q_pa * S_REF_A320_M2) - CL_REF, dtype=np.float64)
+    cl_ref_q = cl_ref_steady_np(q_pa)
+    return np.asarray(lhs / (q_pa * S_REF_A320_M2) - cl_ref_q, dtype=np.float64)
 
 
 def _compute_phi_bank(

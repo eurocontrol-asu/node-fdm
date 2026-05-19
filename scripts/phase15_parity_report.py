@@ -335,6 +335,11 @@ class ClDiagnostics:
     pred_cruise: np.ndarray
     target_all: np.ndarray
     target_cruise: np.ndarray
+    # Raw residuals (CL - CL_steady_q) on all val + on the cruise slice.
+    # Used for the §5 normalizer drift diagnostic: the magnitude of
+    # ``|residual|`` is what the normalizer ``p999`` is meant to bound.
+    target_residual_all: np.ndarray
+    target_residual_cruise: np.ndarray
     n_total: int
     n_cruise: int
     phase_low: PhaseStats
@@ -394,7 +399,7 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
     outputs into the input dict, then call ``data_ode_long``.
     """
     from node_fdm.dataset import _M_REF_KG, _compute_cl_residual
-    from node_fdm.layers.physics import CL_REF, S_REF_A320_M2
+    from node_fdm.layers.physics import S_REF_A320_M2, cl_ref_steady_np
     from node_fdm_data.physics.constants import G
 
     traj_layer = trainer.model.layers_dict["trajectory"]
@@ -464,17 +469,21 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
             n_total += int(alt.size)
             n_cruise += int(cruise_mask.sum())
 
-            pred_cl = cl_residual_pred + CL_REF
-            target_cl = cl_residual_target + CL_REF
+            # q from TrajectoryLayer output (recomputed from alt/V using
+            # the same ISA pressure + ERA5 temperature pipeline as the
+            # PhysicsLayer feeds at training time).
+            q_pa = traj_out["fdm_q_pa"].detach().cpu().numpy().reshape(-1)
+            cl_steady = cl_ref_steady_np(q_pa)
+
+            # CL_physical = CL_steady(q) + residual — symmetric to the
+            # PhysicsLayer forward + dataset inverse.
+            pred_cl = cl_residual_pred + cl_steady
+            target_cl = cl_residual_target + cl_steady
             pred_all.extend(pred_cl.tolist())
             target_all.extend(target_cl.tolist())
             pred_cruise.extend(pred_cl[cruise_mask].tolist())
             target_cruise.extend(target_cl[cruise_mask].tolist())
 
-            # q from TrajectoryLayer output (recomputed from alt/V using
-            # the same ISA pressure + ERA5 temperature pipeline as the
-            # PhysicsLayer feeds at training time).
-            q_pa = traj_out["fdm_q_pa"].detach().cpu().numpy().reshape(-1)
             all_residual.extend(cl_residual_target.tolist())
             all_q.extend(q_pa.tolist())
             all_alt.extend(alt.tolist())
@@ -485,18 +494,20 @@ def _collect_cl_diagnostics(trainer, val_dataset, spec) -> ClDiagnostics:
 
     low_mask = alt_arr <= ALT_BAND_LOW_MAX_M
     mid_mask = (alt_arr > ALT_BAND_LOW_MAX_M) & (alt_arr <= ALT_BAND_MID_MAX_M)
-    cruise_mask = alt_arr > ALT_BAND_MID_MAX_M
+    cruise_band_mask = alt_arr > ALT_BAND_MID_MAX_M
 
     stats_kwargs = {"m_ref_kg": _M_REF_KG, "s_ref_m2": S_REF_A320_M2, "g": G}
     phase_low = _phase_stats(residual_arr, q_arr, low_mask, **stats_kwargs)
     phase_mid = _phase_stats(residual_arr, q_arr, mid_mask, **stats_kwargs)
-    phase_cruise = _phase_stats(residual_arr, q_arr, cruise_mask, **stats_kwargs)
+    phase_cruise = _phase_stats(residual_arr, q_arr, cruise_band_mask, **stats_kwargs)
 
     return ClDiagnostics(
         pred_all=np.asarray(pred_all, dtype=np.float64),
         pred_cruise=np.asarray(pred_cruise, dtype=np.float64),
         target_all=np.asarray(target_all, dtype=np.float64),
         target_cruise=np.asarray(target_cruise, dtype=np.float64),
+        target_residual_all=residual_arr,
+        target_residual_cruise=residual_arr[cruise_band_mask],
         n_total=n_total,
         n_cruise=n_cruise,
         phase_low=phase_low,
@@ -750,13 +761,23 @@ def _write_cl_distribution(
         and CL_CRUISE_P10_P90_RANGE[0] <= pc["p90"] <= CL_CRUISE_P10_P90_RANGE[1]
     )
 
-    # Compare residual (not CL) distributions: target_cruise/target_all
-    # are CL = CL_REF + residual, so we subtract CL_REF back out for the
-    # diagnostic vs the normalizer p999 which is on the residual.
+    # The residual distribution is what the normalizer p999 is sized to
+    # bound. Compute p999 of |residual| directly on the raw residual
+    # arrays (target_residual_cruise / target_residual_all) — these are
+    # the analytical inverse output, already centered on 0 by the
+    # q-dependent baseline CL_steady(q).
     from node_fdm.layers.physics import CL_REF
 
-    tc_res_p999 = abs(tc["p999"] - CL_REF) if np.isfinite(tc["p999"]) else float("nan")
-    ta_res_p999 = abs(ta["p999"] - CL_REF) if np.isfinite(ta["p999"]) else float("nan")
+    tc_res_p999 = (
+        float(np.percentile(np.abs(diag.target_residual_cruise), 99.9))
+        if diag.target_residual_cruise.size
+        else float("nan")
+    )
+    ta_res_p999 = (
+        float(np.percentile(np.abs(diag.target_residual_all), 99.9))
+        if diag.target_residual_all.size
+        else float("nan")
+    )
     normalizer_p999 = (normalizer_stats or {}).get("p999", float("nan"))
 
     if tc_res_p999 and np.isfinite(tc_res_p999) and tc_res_p999 > 0:
@@ -837,8 +858,8 @@ def _write_cl_distribution(
         "",
         "| Quantity | value |",
         "|---|---:|",
-        f"| `|target - CL_REF|.p999` on cruise | {tc_res_p999:.4f} |",
-        f"| `|target - CL_REF|.p999` on all val | {ta_res_p999:.4f} |",
+        f"| `|cl_residual_target|.p999` on cruise | {tc_res_p999:.4f} |",
+        f"| `|cl_residual_target|.p999` on all val | {ta_res_p999:.4f} |",
         f"| normalizer `p999` (meta.json `stats_dict['fdm_cl_residual']`) | "
         f"{normalizer_p999:.4f} |",
         f"| ratio normalizer / cruise | {ratio_norm:.2f}x |",

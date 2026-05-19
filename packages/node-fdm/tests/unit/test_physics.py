@@ -7,11 +7,11 @@ import torch
 
 from node_fdm.layers.physics import (
     _M_REF_KG,
-    CL_REF,
     S_REF_A320_M2,
     V_MIN_CLAMP,
     G,
     PhysicsLayer,
+    cl_ref_steady,
 )
 
 
@@ -264,11 +264,19 @@ def test_cl_mode_raises_if_both_residual_keys_present() -> None:
 
 
 def test_cl_mode_lift_formula() -> None:
-    """AC3, AC6: ``L = q * S * (CL_REF + cl_residual)`` (full lift, not residual)."""
+    """AC3, AC6: ``L = q * S * (CL_steady(q) + cl_residual)`` (full lift).
+
+    Post-AXM-1739: the constant ``CL_REF=0.5`` baseline was replaced by
+    the q-dependent steady-state ``CL_steady(q) = m_ref·g/(q·S_REF)`` so
+    the residual stays centered near zero in every flight phase.
+    """
     layer = PhysicsLayer()
     out = layer(_cl_inputs(cl_residual=0.1, q_pa=15_000.0, mass_kg=60_000.0))
-    expected = 15_000.0 * S_REF_A320_M2 * (CL_REF + 0.1)
-    assert math.isclose(float(out["fdm_lift_N"].item()), expected, rel_tol=1e-9)
+    cl_steady = float(cl_ref_steady(torch.tensor(15_000.0)).item())
+    expected = 15_000.0 * S_REF_A320_M2 * (cl_steady + 0.1)
+    # rel_tol=1e-5 to absorb the float32 ↔ float64 cast in the
+    # cl_ref_steady helper (PhysicsLayer keeps full float64 internally).
+    assert math.isclose(float(out["fdm_lift_N"].item()), expected, rel_tol=1e-5)
 
 
 def test_cl_mode_d_tas_matches_newton_formula() -> None:
@@ -280,7 +288,11 @@ def test_cl_mode_d_tas_matches_newton_formula() -> None:
 
 
 def test_cl_mode_d_gamma_matches_newton_formula() -> None:
-    """AC4: ``d_gamma = (L/m - g*cos(gamma)) / V_safe``."""
+    """AC4: ``d_gamma = (L/m - g*cos(gamma)) / V_safe``.
+
+    With ``cl_residual=0``, the lift collapses to ``q·S·CL_steady(q) =
+    m_ref·g`` — Newton-equivalent at ``m = m_ref`` (post-AXM-1739 fix).
+    """
     layer = PhysicsLayer()
     out = layer(
         _cl_inputs(
@@ -291,9 +303,11 @@ def test_cl_mode_d_gamma_matches_newton_formula() -> None:
             q_pa=15_000.0,
         )
     )
-    lift = 15_000.0 * S_REF_A320_M2 * CL_REF
+    cl_steady = float(cl_ref_steady(torch.tensor(15_000.0)).item())
+    lift = 15_000.0 * S_REF_A320_M2 * cl_steady
     expected = (lift / 60_000.0 - G * math.cos(0.0)) / 200.0
-    assert math.isclose(float(out["fdm_d_gamma_rads"].item()), expected, rel_tol=1e-9)
+    # See comment in test_cl_mode_lift_formula on the relaxed tolerance.
+    assert math.isclose(float(out["fdm_d_gamma_rads"].item()), expected, rel_tol=1e-5)
 
 
 def test_cl_mode_d_mass_is_zero_tensor() -> None:
