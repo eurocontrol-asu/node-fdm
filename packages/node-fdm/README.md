@@ -14,6 +14,8 @@ Physics-guided Neural ODE models for aircraft flight dynamics.
 | `architectures.qar` | QAR architecture (auto-registered) |
 | `architectures.adsb` | ADS-B v1 architecture (auto-registered) |
 | `architectures.adsb_hybrid` | ADS-B hybrid v1 architecture with Newton-force NN outputs (`fdm_t_minus_d_N`, `fdm_lift_N`), `fdm_mass_kg` state and `flight_feature_cols` for MassEncoder coupling (auto-registered) |
+| `architectures.adsb_hybrid_v2` | ADS-B hybrid v2 — same backbone as v1 with the 6-feature MassEncoder set (`FLIGHT_FEATURE_COLS_6`, adds `mach_cruise_planned`); longitudinal head emits `fdm_lift_residual_norm` (auto-registered) |
+| `architectures.adsb_hybrid_v3` | ADS-B hybrid v3 (Phase 1.5) — same MassEncoder set as v2, longitudinal head re-parameterised to a `fdm_cl_residual` output (`CL = CL_REF + cl_residual`, `L = q·S·CL`); PhysicsLayer consumes `fdm_q_pa` (auto-registered) |
 | `models.fdm` | `FlightDynamicsModel` — layered state derivative computation |
 | `models.batch_neural_ode` | `BatchNeuralODE` — ODE wrapper with input interpolation and optional `dx_bounds` soft clamping |
 | `models.projected_integrator` | `ClampedEuler`, `ClampedRK4` — fixed-step solvers with state projection after each step; `_clamp_columns` (hard), `_soft_clamp_columns` (tanh-based) |
