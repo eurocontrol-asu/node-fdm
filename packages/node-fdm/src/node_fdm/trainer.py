@@ -1048,3 +1048,105 @@ class ODETrainer:
             "perturbed_mse": perturbed_mse,
             "ratio": ratio,
         }
+
+    def identifiability_test_absolute(
+        self,
+        factor: float = 1.3,
+        sigma_obs: float | None = None,
+        k_min: float | None = None,
+    ) -> dict[str, float | bool]:
+        """Run the AXM-1740 absolute-score identifiability gate.
+
+        Sibling of :meth:`identifiability_test` that reports an absolute
+        score ``(perturbed_mse - baseline_mse) / sigma_obs_sq`` instead of
+        the relative ratio. Robust to strong-baseline formulations
+        (e.g. CL mass-aware) where the baseline MSE is small enough that
+        a numerically faithful perturbation degrades the ratio without
+        signalling a real loss of identifiability.
+
+        Args:
+            factor: Multiplicative perturbation applied to the predicted
+                initial mass on the validation pass.
+            sigma_obs: Optional explicit observation variance (``sigma**2``
+                already squared). When ``None`` (default), the variance is
+                computed empirically as the alpha-weighted sum of
+                ``var(dx_i)`` over the val set ``dx`` tensors, aligning
+                with the loss-MSE normalisation.
+            k_min: Optional absolute-score floor. When provided,
+                ``passed_absolute`` is ``True`` iff ``absolute_score >=
+                k_min``. When ``None``, ``passed_absolute`` stays ``False``
+                (calibration mode).
+
+        Returns:
+            ``{"baseline_mse": ..., "perturbed_mse": ..., "delta_abs": ...,
+            "sigma_obs_sq": ..., "absolute_score": ...,
+            "passed_absolute": ...}``. When ``self.mass_encoder is None``,
+            ``delta_abs``, ``absolute_score`` are ``0.0`` and
+            ``passed_absolute`` is ``False``.
+        """
+        sigma_obs_sq = self._resolve_sigma_obs_sq(sigma_obs)
+
+        if self.mass_encoder is None:
+            return {
+                "baseline_mse": 1.0,
+                "perturbed_mse": 1.0,
+                "delta_abs": 0.0,
+                "sigma_obs_sq": sigma_obs_sq,
+                "absolute_score": 0.0,
+                "passed_absolute": False,
+            }
+
+        val_loader = DataLoader(
+            self.val_dataset,
+            batch_size=self.config.val_batch_size,
+            shuffle=False,
+            num_workers=self.config.num_workers,
+            collate_fn=_collate_flight_samples,
+        )
+
+        def _mean_loss(override: float | None) -> float:
+            self._override_m0_factor = override
+            total = 0.0
+            n = 0
+            try:
+                with torch.no_grad():
+                    for batch in val_loader:
+                        loss = self._compute_batch_loss(batch)
+                        total += float(loss.item())
+                        n += 1
+            finally:
+                self._override_m0_factor = None
+            return total / max(n, 1)
+
+        self.model.eval()
+        baseline_mse = _mean_loss(None)
+        perturbed_mse = _mean_loss(factor)
+        delta_abs = perturbed_mse - baseline_mse
+        absolute_score = delta_abs / sigma_obs_sq if sigma_obs_sq > 0 else float("inf")
+        passed_absolute = bool(k_min is not None and absolute_score >= k_min)
+        return {
+            "baseline_mse": baseline_mse,
+            "perturbed_mse": perturbed_mse,
+            "delta_abs": delta_abs,
+            "sigma_obs_sq": sigma_obs_sq,
+            "absolute_score": absolute_score,
+            "passed_absolute": passed_absolute,
+        }
+
+    def _resolve_sigma_obs_sq(self, sigma_obs: float | None) -> float:
+        """Return ``sigma_obs**2`` for the absolute-score denominator.
+
+        Uses the explicit value when provided (no squaring — the argument is
+        treated as already-squared, consistent with the loss-MSE units).
+        Otherwise computes ``Σ alpha_i · var(dx_i)`` empirically over the
+        val dataset's ``dx`` tensors, matching the alpha-weighted MSE the
+        trainer optimises.
+        """
+        if sigma_obs is not None:
+            return float(sigma_obs)
+        dx_stack = torch.stack([self.val_dataset[i].dx for i in range(len(self.val_dataset))]).to(
+            self.device
+        )
+        dx_flat = dx_stack.reshape(-1, dx_stack.shape[-1])
+        per_col_var = dx_flat.var(dim=0, unbiased=False)
+        return float((self._alpha_weights * per_col_var).sum().item())

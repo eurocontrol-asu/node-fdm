@@ -37,8 +37,7 @@ def _clean_speeds_worker(
 
     batch_date, flight_ids, delta_path, kwargs = args
     df = pl.read_delta(delta_path).filter(
-        (pl.col("meta_batch_date") == batch_date)
-        & (pl.col("meta_flight_id").is_in(flight_ids))
+        (pl.col("meta_batch_date") == batch_date) & (pl.col("meta_flight_id").is_in(flight_ids))
     )
     clean_existing = [c for c in df.columns if c.startswith("bds_") and c.endswith("_clean")]
     if clean_existing:

@@ -10,6 +10,7 @@ from importlib.resources import files
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
+import polars as pl
 import structlog
 
 if TYPE_CHECKING:
@@ -18,7 +19,6 @@ if TYPE_CHECKING:
 __all__ = ["run_predict", "run_predict_bada"]
 
 log = structlog.get_logger()
-
 
 
 def _resolve_model_path(
@@ -60,14 +60,13 @@ def _resolve_model_path(
     )
 
 
-def _load_test_df(delta_table: Path) -> object:
+def _load_test_df(delta_table: Path) -> pl.DataFrame:
     """Read the Delta table for test-split flights.
 
     Keeps the **full timeline** (including ``fdm_flag_valid=False`` rows)
     so the predictor sees a continuous signal.  NaN gaps are filled via
     ffill/bfill, matching ``check_inference.py``.
     """
-    import polars as pl
     from node_fdm_data.delta import read_delta_table
 
     df = read_delta_table(delta_table)
@@ -76,10 +75,7 @@ def _load_test_df(delta_table: Path) -> object:
     # Keep only flights present in the test split, but retain ALL rows
     # (including fdm_flag_valid=False) so that ffill/bfill produces a
     # continuous timeline for the predictor.
-    test_ids = (
-        df.filter(pl.col("meta_split").eq("test"))["meta_flight_id"]
-        .unique()
-    )
+    test_ids = df.filter(pl.col("meta_split").eq("test"))["meta_flight_id"].unique()
     df = df.filter(pl.col("meta_flight_id").is_in(test_ids))
 
     # --- Fill _sel columns (match training) ---
@@ -93,9 +89,7 @@ def _load_test_df(delta_table: Path) -> object:
 
     # --- Fill target / U columns ---
     target_fills: list[pl.Expr] = [
-        pl.col("fdm_alt_target_m")
-        .fill_null(strategy="backward")
-        .fill_null(strategy="forward"),
+        pl.col("fdm_alt_target_m").fill_null(strategy="backward").fill_null(strategy="forward"),
         pl.col("fdm_gamma_target_rad").fill_nan(0.0).fill_null(0.0),
         pl.col("fdm_tas_target_ms").fill_nan(0.0).fill_null(0.0),
         pl.col("fdm_heading_target_rad")
@@ -111,8 +105,10 @@ def _load_test_df(delta_table: Path) -> object:
     # Guard: only apply fills for columns that actually exist in this table.
     existing = set(df.columns)
     target_fills = [
-        expr for expr in target_fills
-        if expr.meta.output_name() in existing or expr.meta.output_name() == "fdm_heading_target_known"
+        expr
+        for expr in target_fills
+        if expr.meta.output_name() in existing
+        or expr.meta.output_name() == "fdm_heading_target_known"
     ]
     if target_fills:
         df = df.with_columns(target_fills)
@@ -173,11 +169,13 @@ def _predict_flight(
     # After ffill/bfill in _load_test_df the cropped window should be
     # NaN-free.  Fall back to the old finite-filter path if not.
     nan_rows = int(
-        (~(
-            np.isfinite(x_arr).all(axis=1)
-            & np.isfinite(u_arr).all(axis=1)
-            & np.isfinite(e_arr).all(axis=1)
-        )).sum()
+        (
+            ~(
+                np.isfinite(x_arr).all(axis=1)
+                & np.isfinite(u_arr).all(axis=1)
+                & np.isfinite(e_arr).all(axis=1)
+            )
+        ).sum()
     )
     if nan_rows > 0:
         nan_frac = nan_rows / len(x_arr)
@@ -404,7 +402,7 @@ def run_predict(
         typecodes=typecodes,
         device=device,
         local_model=local_model,
-        rows=len(df),  # type: ignore[arg-type]
+        rows=len(df),
     )
 
     for acft in typecodes:

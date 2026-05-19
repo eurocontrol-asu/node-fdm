@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import pytest
 
@@ -22,8 +23,8 @@ def tmp_yaml(tmp_path: Path) -> Path:
 
 
 @pytest.fixture
-def capture_train_one_typecode(monkeypatch: pytest.MonkeyPatch) -> dict:
-    captured: dict = {}
+def capture_train_one_typecode(monkeypatch: pytest.MonkeyPatch) -> dict[str, Any]:
+    captured: dict[str, Any] = {}
 
     from node_fdm_pipeline.commands import train as train_mod
 
@@ -39,7 +40,7 @@ def capture_train_one_typecode(monkeypatch: pytest.MonkeyPatch) -> dict:
 
 
 def test_run_training_passes_cli_override_through_to_trainer(
-    tmp_yaml: Path, capture_train_one_typecode: dict
+    tmp_yaml: Path, capture_train_one_typecode: dict[str, Any]
 ) -> None:
     run_training(arch="qar", config=tmp_yaml, use_mode_weights=True)
     tc = capture_train_one_typecode["training_config"]
