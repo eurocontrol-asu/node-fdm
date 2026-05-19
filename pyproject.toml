@@ -41,6 +41,7 @@ node-fdm-pipeline = { workspace = true }
 dev = [
     "pre-commit>=4.0",
     "mypy>=1.13",
+    "scikit-learn>=1.8.0",
 ]
 
 [tool.ruff]
