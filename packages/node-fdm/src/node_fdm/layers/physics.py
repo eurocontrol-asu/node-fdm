@@ -22,7 +22,12 @@ from __future__ import annotations
 import torch
 import torch.nn as nn
 
+from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
+
 __all__ = [
+    "CL_MAX",
+    "CL_REF",
+    "S_REF_A320_M2",
     "V_MIN_CLAMP",
     "G",
     "PhysicsLayer",
@@ -31,6 +36,21 @@ __all__ = [
 # Standard gravity used by both longitudinal and lateral dynamics equations.
 G: float = 9.80665
 """Standard gravity (m/s²)."""
+
+# Reference mass used as the ``m_ref`` constant in the Newton-mode lift
+# reconstruction ``L = L_res_norm · m_ref·g + m·g``. Picked as the midpoint
+# of the A320 TCDS plausible range so the residual stays close to zero on
+# average — the MassEncoder absorbs the per-flight deviation.
+_M_REF_KG: float = 0.5 * (A320_OEW_KG + A320_MTOW_KG)
+
+# A320 wing reference area (m², public TCDS).
+S_REF_A320_M2: float = 122.6
+# Cruise-typical lift coefficient. Centers the CL-mode residual on the
+# [0.3, 0.7] band so the tanh head saturates symmetrically.
+CL_REF: float = 0.5
+# A320 stall coefficient at 1 g, clean configuration, sea level. Used by
+# downstream sanity gates and ``nn_output_caps``.
+CL_MAX: float = 1.5
 
 # Minimum true airspeed used to keep angular-rate divisions numerically stable.
 V_MIN_CLAMP: float = 50.0
@@ -95,14 +115,61 @@ class PhysicsLayer(nn.Module):
         gamma = x["fdm_gamma_rad"]
         tas_safe = torch.clamp(tas, min=V_MIN_CLAMP)
 
-        if "fdm_t_minus_d_N" in x:
-            t_minus_d = x["fdm_t_minus_d_N"]
-            lift = x["fdm_lift_N"]
+        if "fdm_cl_residual" in x and "fdm_lift_residual_norm" in x:
+            msg = (
+                "PhysicsLayer received both `fdm_cl_residual` and "
+                "`fdm_lift_residual_norm`; the two lift-reconstruction modes "
+                "are mutually exclusive."
+            )
+            raise ValueError(msg)
+
+        if "fdm_t_minus_d_norm" in x:
+            # The NN learns *normalised* (adimensional) quantities so the
+            # output scale matches the legacy ``(a_spec, n_z_residual)``
+            # baseline (p999 ~ 1 m/s² for a_spec, ~ 0.07 for n_z_residual).
+            # Forces in Newtons are reconstructed analytically here:
+            #
+            #   T - D = t_minus_d_norm · m_ref          (~ m_ref · a_spec_baseline)
+            #   L     = L_residual_norm · m_ref · g + m · g
+            #         = m·g + m_ref·g · L_residual_norm
+            #
+            # Then the equations of motion expose ``m`` in the denominator
+            # so the MassEncoder receives a non-zero gradient via both
+            # ``d_TAS`` and ``d_gamma``:
+            #
+            #   d_TAS   = (t_minus_d_norm * m_ref) / m  -  g*sin(gamma)
+            #   d_gamma = ((L_res_norm * m_ref*g) / m  +  g*(1 - cos gamma)) / V
+            #
+            # Per PHASE_1_MASS_ENCODER.md §4.3 the underlying forces don't
+            # depend on m (engine + aerodynamics), so the NN can learn the
+            # normalised quantities universally while m absorbs the per-
+            # flight variation.
+            t_minus_d_norm = x["fdm_t_minus_d_norm"]
             mass = x["fdm_mass_kg"]
+            d_tas = t_minus_d_norm * (_M_REF_KG / mass) - G * torch.sin(gamma)
+
+            if "fdm_cl_residual" in x:
+                # CL-mode reconstruction: ``L = q · S · (CL_REF + cl_residual)``.
+                # The lift no longer depends on ``m``; mass identifiability is
+                # preserved through the ``1/m`` factor in ``d_gamma``.
+                cl_residual = x["fdm_cl_residual"]
+                q_pa = x["fdm_q_pa"]
+                lift = q_pa * S_REF_A320_M2 * (CL_REF + cl_residual)
+                d_gamma = (lift / mass - G * torch.cos(gamma)) / tas_safe
+            else:
+                lift_residual_norm = x["fdm_lift_residual_norm"]
+                d_gamma = (
+                    lift_residual_norm * (_M_REF_KG / mass) * G + G * (1.0 - torch.cos(gamma))
+                ) / tas_safe
+                lift = lift_residual_norm * _M_REF_KG * G + mass * G
+
             out: dict[str, torch.Tensor] = {
-                "fdm_d_tas_ms2": t_minus_d / mass - G * torch.sin(gamma),
-                "fdm_d_gamma_rads": (lift / mass - G * torch.cos(gamma)) / tas_safe,
+                "fdm_d_tas_ms2": d_tas,
+                "fdm_d_gamma_rads": d_gamma,
                 "fdm_d_mass_kgs": torch.zeros_like(mass),
+                # Reconstructed full lift (Newtons), exposed for downstream
+                # diagnostics (CL_shadow once Phase 1.5 lands).
+                "fdm_lift_N": lift,
             }
         else:
             a_spec = x["fdm_a_spec_ms2"]

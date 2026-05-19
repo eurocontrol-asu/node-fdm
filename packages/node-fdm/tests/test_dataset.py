@@ -483,21 +483,23 @@ def test_compute_stats_flight_feature_cols_neutral_fallback() -> None:
     assert stats["mass_proxy_flight"] == neutral
 
 
-def test_derived_features_registers_t_minus_d_and_lift() -> None:
-    """AC3, AC4: new inverse physics outputs are registered as derived features."""
+def test_derived_features_registers_hybrid_outputs() -> None:
+    """Hybrid NN outputs are registered as derived features in DERIVED_FEATURES."""
     from node_fdm.dataset import DERIVED_FEATURES
 
-    assert callable(DERIVED_FEATURES["fdm_t_minus_d_N"])
-    assert callable(DERIVED_FEATURES["fdm_lift_N"])
+    assert callable(DERIVED_FEATURES["fdm_t_minus_d_norm"])
+    assert callable(DERIVED_FEATURES["fdm_lift_residual_norm"])
 
 
-def test_t_minus_d_computer_matches_newton() -> None:
-    """AC3: fdm_t_minus_d_N computes m_ref * (d_tas + G * sin(gamma))."""
+def test_t_minus_d_norm_computer_matches_a_spec() -> None:
+    """``fdm_t_minus_d_norm`` collapses to ``a_spec = d_TAS + g*sin(gamma)`` for stats.
+
+    Equivalent to the legacy ``a_spec`` target (m_ref / m factor uses m=m_ref).
+    """
     import numpy as np
 
     from node_fdm.dataset import DERIVED_FEATURES
     from node_fdm_data.physics.constants import G
-    from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
 
     x_cols = ["era_tas_ms", "fdm_gamma_rad"]
     e_cols = ["rho"]
@@ -506,20 +508,22 @@ def test_t_minus_d_computer_matches_newton() -> None:
     e_arr = np.zeros((1, len(e_cols)), dtype=np.float64)
     dx_arr = np.array([[0.2, 0.001]], dtype=np.float64)
 
-    result = DERIVED_FEATURES["fdm_t_minus_d_N"](x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
+    result = DERIVED_FEATURES["fdm_t_minus_d_norm"](x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
 
-    m_ref = (A320_OEW_KG + A320_MTOW_KG) / 2.0
-    expected = m_ref * (0.2 + G * np.sin(0.05))
-    np.testing.assert_allclose(result[0], expected, rtol=0.0, atol=1e-3)
+    expected = 0.2 + G * np.sin(0.05)
+    np.testing.assert_allclose(result[0], expected, rtol=0.0, atol=1e-5)
 
 
-def test_lift_computer_matches_newton() -> None:
-    """AC4: fdm_lift_N computes m_ref * G * ((V/G) * d_gamma + cos(gamma))."""
+def test_lift_residual_norm_computer_matches_n_z_residual() -> None:
+    """``fdm_lift_residual_norm`` collapses to ``n_z_residual`` for stats.
+
+    The reconstruction ``L = lift_residual_norm · m_ref·g + m·g`` with
+    ``m = m_ref`` makes the residual exactly ``n_z - 1``.
+    """
     import numpy as np
 
     from node_fdm.dataset import DERIVED_FEATURES
     from node_fdm_data.physics.constants import G
-    from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
 
     x_cols = ["era_tas_ms", "fdm_gamma_rad"]
     e_cols = ["rho"]
@@ -528,15 +532,16 @@ def test_lift_computer_matches_newton() -> None:
     e_arr = np.zeros((1, len(e_cols)), dtype=np.float64)
     dx_arr = np.array([[0.2, 0.001]], dtype=np.float64)
 
-    result = DERIVED_FEATURES["fdm_lift_N"](x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
+    result = DERIVED_FEATURES["fdm_lift_residual_norm"](
+        x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols
+    )
 
-    m_ref = (A320_OEW_KG + A320_MTOW_KG) / 2.0
-    expected = m_ref * G * ((240.0 / G) * 0.001 + np.cos(0.02))
-    np.testing.assert_allclose(result[0], expected, rtol=0.0, atol=1e-3)
+    expected = (240.0 / G) * 0.001 + np.cos(0.02) - 1.0
+    np.testing.assert_allclose(result[0], expected, rtol=0.0, atol=1e-5)
 
 
-def test_compute_stats_derived_cols_includes_new_outputs() -> None:
-    """AC3, AC4: compute_stats derives p999 caps for new output columns."""
+def test_compute_stats_derived_cols_includes_hybrid_outputs() -> None:
+    """compute_stats derives p999 caps for hybrid adim output columns."""
     samples = [
         FlightSample(
             x=torch.tensor([[240.0, 0.02], [245.0, 0.03]]),
@@ -552,8 +557,8 @@ def test_compute_stats_derived_cols_includes_new_outputs() -> None:
         [],
         ["rho"],
         ["fdm_d_tas_ms2", "fdm_d_gamma_rads"],
-        derived_cols=["fdm_t_minus_d_N", "fdm_lift_N"],
+        derived_cols=["fdm_t_minus_d_norm", "fdm_lift_residual_norm"],
     )
 
-    assert stats["fdm_t_minus_d_N"]["p999"] > 0.0
-    assert stats["fdm_lift_N"]["p999"] > 0.0
+    assert stats["fdm_t_minus_d_norm"]["p999"] > 0.0
+    assert stats["fdm_lift_residual_norm"]["p999"] > 0.0

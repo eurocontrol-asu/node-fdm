@@ -1,8 +1,18 @@
 from __future__ import annotations
 
+import math
+
+import pytest
 import torch
 
-from node_fdm.layers.physics import PhysicsLayer
+from node_fdm.layers.physics import (
+    _M_REF_KG,
+    CL_REF,
+    S_REF_A320_M2,
+    V_MIN_CLAMP,
+    G,
+    PhysicsLayer,
+)
 
 
 def test_legacy_mode_unchanged() -> None:
@@ -24,57 +34,60 @@ def test_legacy_mode_unchanged() -> None:
 
 
 def test_newton_mode_d_tas_matches_formula() -> None:
-    """AC1, AC2: Newton mode computes d_tas from T-D, mass and gamma."""
+    """Newton mode: d_tas = t_minus_d_norm * m_ref / m  -  g*sin(gamma)."""
     layer = PhysicsLayer()
-    t_minus_d = torch.tensor(10000.0)
+    t_minus_d_norm = torch.tensor(1.5)
     mass = torch.tensor(65000.0)
     gamma = torch.tensor(0.05)
 
     out = layer(
         {
-            "fdm_t_minus_d_N": t_minus_d,
-            "fdm_lift_N": torch.tensor(600000.0),
+            "fdm_t_minus_d_norm": t_minus_d_norm,
+            "fdm_lift_residual_norm": torch.tensor(0.0),
             "fdm_mass_kg": mass,
             "era_tas_ms": torch.tensor(240.0),
             "fdm_gamma_rad": gamma,
         }
     )
 
-    expected = t_minus_d / mass - 9.80665 * torch.sin(gamma)
+    expected = t_minus_d_norm * _M_REF_KG / mass - G * torch.sin(gamma)
     assert torch.allclose(out["fdm_d_tas_ms2"], expected, atol=1e-5)
 
 
 def test_newton_mode_d_gamma_matches_formula() -> None:
-    """AC1, AC2: Newton mode computes d_gamma from lift, mass, tas and gamma."""
+    """Newton mode: d_gamma = (L_res_norm * m_ref*g / m  +  g*(1 - cos gamma)) / V."""
     layer = PhysicsLayer()
-    lift = torch.tensor(600000.0)
+    lift_residual_norm = torch.tensor(0.05)
     mass = torch.tensor(65000.0)
     tas = torch.tensor(240.0)
     gamma = torch.tensor(0.05)
 
     out = layer(
         {
-            "fdm_t_minus_d_N": torch.tensor(10000.0),
-            "fdm_lift_N": lift,
+            "fdm_t_minus_d_norm": torch.tensor(0.0),
+            "fdm_lift_residual_norm": lift_residual_norm,
             "fdm_mass_kg": mass,
             "era_tas_ms": tas,
             "fdm_gamma_rad": gamma,
         }
     )
 
-    expected = (lift / mass - 9.80665 * torch.cos(gamma)) / torch.clamp(tas, min=50.0)
+    tas_safe = torch.clamp(tas, min=50.0)
+    expected = (
+        lift_residual_norm * _M_REF_KG * G / mass + G * (1.0 - torch.cos(gamma))
+    ) / tas_safe
     assert torch.allclose(out["fdm_d_gamma_rads"], expected, atol=1e-5)
 
 
 def test_newton_mode_d_mass_is_zero_tensor() -> None:
-    """AC3: Newton mode emits a fresh zero tensor matching mass shape and device."""
+    """Newton mode emits a fresh zero tensor matching mass shape and device."""
     layer = PhysicsLayer()
     mass = torch.tensor([65000.0, 66000.0])
 
     out = layer(
         {
-            "fdm_t_minus_d_N": torch.tensor([10000.0, 11000.0]),
-            "fdm_lift_N": torch.tensor([600000.0, 610000.0]),
+            "fdm_t_minus_d_norm": torch.tensor([0.5, 0.6]),
+            "fdm_lift_residual_norm": torch.tensor([0.01, 0.02]),
             "fdm_mass_kg": mass,
             "era_tas_ms": torch.tensor([240.0, 250.0]),
             "fdm_gamma_rad": torch.tensor([0.05, 0.04]),
@@ -89,16 +102,35 @@ def test_newton_mode_d_mass_is_zero_tensor() -> None:
     assert d_mass is not mass
 
 
+def test_newton_mode_exposes_full_lift() -> None:
+    """Newton mode exposes the reconstructed full lift ``L = L_res_norm · m_ref·g + m·g``."""
+    layer = PhysicsLayer()
+    mass = torch.tensor(65000.0)
+
+    out = layer(
+        {
+            "fdm_t_minus_d_norm": torch.tensor(0.0),
+            "fdm_lift_residual_norm": torch.tensor(0.0),
+            "fdm_mass_kg": mass,
+            "era_tas_ms": torch.tensor(240.0),
+            "fdm_gamma_rad": torch.tensor(0.0),
+        }
+    )
+
+    expected = mass * G
+    assert torch.allclose(out["fdm_lift_N"], expected, atol=1e-2)
+
+
 def test_newton_mode_with_phi_bank() -> None:
-    """AC4: Newton mode keeps the lateral coordinated-turn branch working."""
+    """Newton mode keeps the lateral coordinated-turn branch working."""
     layer = PhysicsLayer()
     tas = torch.tensor(240.0)
     phi_bank = torch.tensor(0.3)
 
     out = layer(
         {
-            "fdm_t_minus_d_N": torch.tensor(10000.0),
-            "fdm_lift_N": torch.tensor(600000.0),
+            "fdm_t_minus_d_norm": torch.tensor(0.5),
+            "fdm_lift_residual_norm": torch.tensor(0.0),
             "fdm_mass_kg": torch.tensor(65000.0),
             "era_tas_ms": tas,
             "fdm_gamma_rad": torch.tensor(0.05),
@@ -106,7 +138,7 @@ def test_newton_mode_with_phi_bank() -> None:
         }
     )
 
-    expected = 9.80665 / tas * torch.tan(phi_bank)
+    expected = G / tas * torch.tan(phi_bank)
     assert torch.allclose(out["fdm_d_heading_rads"], expected, atol=1e-5)
 
 
@@ -126,41 +158,44 @@ def test_legacy_mode_with_phi_bank_still_works() -> None:
         }
     )
 
-    expected = 9.80665 / tas * torch.tan(phi_bank)
+    expected = G / tas * torch.tan(phi_bank)
     assert torch.allclose(out["fdm_d_heading_rads"], expected, atol=1e-5)
 
 
 def test_newton_mode_low_tas_clamped() -> None:
-    """AC6: Newton mode reuses the 50 m/s TAS clamp for d_gamma."""
+    """Newton mode reuses the 50 m/s TAS clamp for d_gamma."""
     layer = PhysicsLayer()
-    lift = torch.tensor(600000.0)
     mass = torch.tensor(65000.0)
     gamma = torch.tensor(0.05)
+    lift_residual_norm = torch.tensor(0.05)
 
     out = layer(
         {
-            "fdm_t_minus_d_N": torch.tensor(10000.0),
-            "fdm_lift_N": lift,
+            "fdm_t_minus_d_norm": torch.tensor(0.0),
+            "fdm_lift_residual_norm": lift_residual_norm,
             "fdm_mass_kg": mass,
             "era_tas_ms": torch.tensor(10.0),
             "fdm_gamma_rad": gamma,
         }
     )
 
-    expected = (lift / mass - 9.80665 * torch.cos(gamma)) / torch.tensor(50.0)
+    tas_safe = torch.tensor(50.0)
+    expected = (
+        lift_residual_norm * _M_REF_KG * G / mass + G * (1.0 - torch.cos(gamma))
+    ) / tas_safe
     assert torch.isfinite(out["fdm_d_gamma_rads"])
     assert torch.allclose(out["fdm_d_gamma_rads"], expected, atol=1e-5)
 
 
 def test_newton_mode_batch_shape() -> None:
-    """AC2: Newton mode preserves batched tensor shapes for all emitted outputs."""
+    """Newton mode preserves batched tensor shapes for all emitted outputs."""
     layer = PhysicsLayer()
     batch_size = 8
 
     out = layer(
         {
-            "fdm_t_minus_d_N": torch.full((batch_size,), 10000.0),
-            "fdm_lift_N": torch.full((batch_size,), 600000.0),
+            "fdm_t_minus_d_norm": torch.full((batch_size,), 0.5),
+            "fdm_lift_residual_norm": torch.full((batch_size,), 0.05),
             "fdm_mass_kg": torch.full((batch_size,), 65000.0),
             "era_tas_ms": torch.full((batch_size,), 240.0),
             "fdm_gamma_rad": torch.full((batch_size,), 0.05),
@@ -170,3 +205,149 @@ def test_newton_mode_batch_shape() -> None:
     assert out["fdm_d_tas_ms2"].shape == (batch_size,)
     assert out["fdm_d_gamma_rads"].shape == (batch_size,)
     assert out["fdm_d_mass_kgs"].shape == (batch_size,)
+    assert out["fdm_lift_N"].shape == (batch_size,)
+
+
+# ---------------------------------------------------------------------------
+# CL-mode branch (AXM-1737) — third branch keyed on ``fdm_cl_residual``.
+# Purely additive: legacy and Newton tests above must keep passing unchanged.
+# ---------------------------------------------------------------------------
+
+
+def _cl_inputs(
+    *,
+    cl_residual: float = 0.0,
+    t_minus_d_norm: float = 0.5,
+    mass_kg: float = 60_000.0,
+    tas_ms: float = 200.0,
+    gamma_rad: float = 0.0,
+    q_pa: float = 15_000.0,
+    batch: int = 1,
+    phi_bank_rad: float | None = None,
+) -> dict[str, torch.Tensor]:
+    def _t(v: float) -> torch.Tensor:
+        return torch.full((batch,), v, dtype=torch.float64)
+
+    x: dict[str, torch.Tensor] = {
+        "fdm_t_minus_d_norm": _t(t_minus_d_norm),
+        "fdm_cl_residual": _t(cl_residual),
+        "fdm_mass_kg": _t(mass_kg),
+        "era_tas_ms": _t(tas_ms),
+        "fdm_gamma_rad": _t(gamma_rad),
+        "fdm_q_pa": _t(q_pa),
+    }
+    if phi_bank_rad is not None:
+        x["fdm_phi_bank_rad"] = _t(phi_bank_rad)
+    return x
+
+
+def test_cl_mode_branch_selected_on_cl_residual_key() -> None:
+    """AC1: branch selection on ``fdm_cl_residual`` emits the documented keys."""
+    layer = PhysicsLayer()
+    out = layer(_cl_inputs())
+    for key in (
+        "fdm_d_tas_ms2",
+        "fdm_d_gamma_rads",
+        "fdm_d_mass_kgs",
+        "fdm_lift_N",
+    ):
+        assert key in out
+
+
+def test_cl_mode_raises_if_both_residual_keys_present() -> None:
+    """AC2: strict-exclusive branch guard rejects ambiguous input."""
+    layer = PhysicsLayer()
+    x = _cl_inputs()
+    x["fdm_lift_residual_norm"] = torch.zeros(1, dtype=torch.float64)
+    with pytest.raises(ValueError, match=r"cl_residual.*lift_residual_norm"):
+        layer(x)
+
+
+def test_cl_mode_lift_formula() -> None:
+    """AC3, AC6: ``L = q * S * (CL_REF + cl_residual)`` (full lift, not residual)."""
+    layer = PhysicsLayer()
+    out = layer(_cl_inputs(cl_residual=0.1, q_pa=15_000.0, mass_kg=60_000.0))
+    expected = 15_000.0 * S_REF_A320_M2 * (CL_REF + 0.1)
+    assert math.isclose(float(out["fdm_lift_N"].item()), expected, rel_tol=1e-9)
+
+
+def test_cl_mode_d_tas_matches_newton_formula() -> None:
+    """AC4: ``d_TAS = (t_minus_d_norm * m_ref) / m - g*sin(gamma)``."""
+    layer = PhysicsLayer()
+    out = layer(_cl_inputs(t_minus_d_norm=0.5, mass_kg=60_000.0, gamma_rad=0.0, cl_residual=0.0))
+    expected = (0.5 * _M_REF_KG) / 60_000.0 - G * math.sin(0.0)
+    assert math.isclose(float(out["fdm_d_tas_ms2"].item()), expected, rel_tol=1e-9)
+
+
+def test_cl_mode_d_gamma_matches_newton_formula() -> None:
+    """AC4: ``d_gamma = (L/m - g*cos(gamma)) / V_safe``."""
+    layer = PhysicsLayer()
+    out = layer(
+        _cl_inputs(
+            tas_ms=200.0,
+            gamma_rad=0.0,
+            mass_kg=60_000.0,
+            cl_residual=0.0,
+            q_pa=15_000.0,
+        )
+    )
+    lift = 15_000.0 * S_REF_A320_M2 * CL_REF
+    expected = (lift / 60_000.0 - G * math.cos(0.0)) / 200.0
+    assert math.isclose(float(out["fdm_d_gamma_rads"].item()), expected, rel_tol=1e-9)
+
+
+def test_cl_mode_d_mass_is_zero_tensor() -> None:
+    """AC1: ``d_mass`` is the zero tensor for the CL branch."""
+    layer = PhysicsLayer()
+    x = _cl_inputs(batch=4)
+    out = layer(x)
+    assert torch.equal(out["fdm_d_mass_kgs"], torch.zeros_like(x["fdm_mass_kg"]))
+
+
+def test_cl_mode_low_tas_clamped_to_v_min() -> None:
+    """AC4: TAS below ``V_MIN_CLAMP`` is clamped before the d_gamma divide."""
+    layer = PhysicsLayer()
+    low = layer(
+        _cl_inputs(
+            tas_ms=10.0,
+            gamma_rad=0.0,
+            mass_kg=60_000.0,
+            cl_residual=0.0,
+            q_pa=15_000.0,
+        )
+    )
+    pinned = layer(
+        _cl_inputs(
+            tas_ms=V_MIN_CLAMP,
+            gamma_rad=0.0,
+            mass_kg=60_000.0,
+            cl_residual=0.0,
+            q_pa=15_000.0,
+        )
+    )
+    assert math.isclose(
+        float(low["fdm_d_gamma_rads"].item()),
+        float(pinned["fdm_d_gamma_rads"].item()),
+        rel_tol=1e-12,
+    )
+
+
+def test_cl_mode_with_phi_bank_emits_d_heading() -> None:
+    """AC7: lateral channel ``d_heading = (G/V_safe)*tan(phi_bank)`` preserved."""
+    layer = PhysicsLayer()
+    out = layer(_cl_inputs(tas_ms=200.0, phi_bank_rad=0.5))
+    expected = (G / 200.0) * math.tan(0.5)
+    assert math.isclose(float(out["fdm_d_heading_rads"].item()), expected, rel_tol=1e-9)
+
+
+def test_cl_mode_batch_shape_preserved() -> None:
+    """AC1: all outputs preserve the batch shape ``(B,)``."""
+    layer = PhysicsLayer()
+    out = layer(_cl_inputs(batch=4))
+    for key in (
+        "fdm_d_tas_ms2",
+        "fdm_d_gamma_rads",
+        "fdm_d_mass_kgs",
+        "fdm_lift_N",
+    ):
+        assert out[key].shape == (4,)

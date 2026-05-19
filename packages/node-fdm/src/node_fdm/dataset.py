@@ -14,6 +14,7 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
+from node_fdm.layers.physics import CL_REF, S_REF_A320_M2
 from node_fdm_data.physics.constants import G, R
 from node_fdm_data.physics.isa import isa_pressure, isa_temperature
 from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
@@ -147,7 +148,7 @@ def _compute_n_z_residual(
     return np.asarray((v_safe / G) * d_gamma + np.cos(gamma) - 1.0, dtype=np.float64)
 
 
-def _compute_t_minus_d_n(
+def _compute_t_minus_d_norm(
     x_arr: np.ndarray,
     e_arr: np.ndarray,
     dx_arr: np.ndarray,
@@ -155,13 +156,26 @@ def _compute_t_minus_d_n(
     e_cols: list[str],
     dx_cols: list[str],
 ) -> np.ndarray:
-    """Inverse PhysicsLayer for ``fdm_t_minus_d_N = m_ref * (d_tas + g*sin(gamma))``."""
+    """Inverse PhysicsLayer for the hybrid adim output.
+
+    PhysicsLayer reconstructs ``T-D = t_minus_d_norm * m_ref`` then applies
+    ``d_TAS = (T-D)/m - g*sin(gamma)``. Solving for the NN target under the
+    convention that the MassEncoder absorbs the per-flight residue via the
+    division by ``m`` at runtime:
+
+        t_minus_d_norm = (d_TAS + g*sin(gamma)) * m / m_ref
+
+    For statistics we use ``m = m_ref`` (the dataset has no observed mass)
+    so the computer collapses to ``d_TAS + g*sin(gamma)`` — i.e. the same
+    target as the legacy ``a_spec``. The scale comes out comparable to the
+    baseline p99.9 ≈ 1 m/s².
+    """
     gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
     d_tas = dx_arr[:, dx_cols.index("fdm_d_tas_ms2")].astype(np.float64)
-    return np.asarray(_M_REF_KG * (d_tas + G * np.sin(gamma)), dtype=np.float64)
+    return np.asarray(d_tas + G * np.sin(gamma), dtype=np.float64)
 
 
-def _compute_lift_n(
+def _compute_lift_residual_norm(
     x_arr: np.ndarray,
     e_arr: np.ndarray,
     dx_arr: np.ndarray,
@@ -169,12 +183,47 @@ def _compute_lift_n(
     e_cols: list[str],
     dx_cols: list[str],
 ) -> np.ndarray:
-    """Inverse PhysicsLayer for ``fdm_lift_N = m_ref * g * n_z``."""
+    """Inverse PhysicsLayer for the hybrid adim lift residual.
+
+    PhysicsLayer reconstructs ``L = lift_residual_norm * m_ref*g + m*g``
+    then applies ``d_gamma = (L/m - g*cos gamma) / V``. Solving and using
+    ``m = m_ref`` for statistics yields the same target as the legacy
+    ``n_z_residual = (V/g)*d_gamma + cos(gamma) - 1``.
+    """
     gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
     tas = x_arr[:, x_cols.index("era_tas_ms")].astype(np.float64)
     d_gamma = dx_arr[:, dx_cols.index("fdm_d_gamma_rads")].astype(np.float64)
     v_safe = np.maximum(tas, _V_MIN_CLAMP)
-    return np.asarray(_M_REF_KG * G * ((v_safe / G) * d_gamma + np.cos(gamma)), dtype=np.float64)
+    return np.asarray((v_safe / G) * d_gamma + np.cos(gamma) - 1.0, dtype=np.float64)
+
+
+def _compute_cl_residual(
+    x_arr: np.ndarray,
+    e_arr: np.ndarray,
+    dx_arr: np.ndarray,
+    x_cols: list[str],
+    e_cols: list[str],
+    dx_cols: list[str],
+) -> np.ndarray:
+    """Inverse PhysicsLayer for the CL-mode lift residual.
+
+    PhysicsLayer reconstructs ``L = q · S · (CL_REF + cl_residual)`` then
+    applies ``d_gamma = (L/m - g·cos gamma) / V``. Solving for the NN target
+    under the ``m = m_ref`` statistics convention:
+
+        cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G)
+                      / (q · S_REF_A320_M2) - CL_REF
+
+    where ``q`` is the dynamic pressure already computed by ``_compute_q``
+    (ERA5 temperature when available, ISA fallback).
+    """
+    gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
+    tas = x_arr[:, x_cols.index("era_tas_ms")].astype(np.float64)
+    d_gamma = dx_arr[:, dx_cols.index("fdm_d_gamma_rads")].astype(np.float64)
+    v_safe = np.maximum(tas, _V_MIN_CLAMP)
+    q_pa = _compute_q(x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
+    lhs = ((v_safe / G) * d_gamma + np.cos(gamma)) * _M_REF_KG * G
+    return np.asarray(lhs / (q_pa * S_REF_A320_M2) - CL_REF, dtype=np.float64)
 
 
 def _compute_phi_bank(
@@ -208,8 +257,10 @@ DERIVED_FEATURES: dict[str, _DerivedFn] = {
     # Inverse PhysicsLayer (NN-output targets — used to derive p999 caps).
     "fdm_a_spec_ms2": _compute_a_spec,
     "fdm_n_z_residual": _compute_n_z_residual,
-    "fdm_t_minus_d_N": _compute_t_minus_d_n,
-    "fdm_lift_N": _compute_lift_n,
+    # Hybrid arch: adim outputs reconstructed with mass in PhysicsLayer.
+    "fdm_t_minus_d_norm": _compute_t_minus_d_norm,
+    "fdm_lift_residual_norm": _compute_lift_residual_norm,
+    "fdm_cl_residual": _compute_cl_residual,
     "fdm_phi_bank_rad": _compute_phi_bank,
 }
 

@@ -135,7 +135,7 @@ def test_flight_features_attached_when_requested() -> None:
 
     features = train_ds[0].flight_features
     assert features is not None
-    assert tuple(features.shape) == (4, 5)
+    assert tuple(features.shape) == (4, 6)
     assert features[:, 0].tolist() == pytest.approx([100.0] * 4, abs=1e-4)
     assert features[:, 1].tolist() == pytest.approx([10.0] * 4, abs=1e-4)
 
@@ -249,7 +249,7 @@ def test_get_train_val_data_threads_kwargs() -> None:
     val_features = val_ds[0].flight_features
     assert train_features is not None
     assert val_features is not None
-    assert tuple(train_features.shape) == (4, 5)
-    assert tuple(val_features.shape) == (4, 5)
+    assert tuple(train_features.shape) == (4, 6)
+    assert tuple(val_features.shape) == (4, 6)
     assert routing_train_ds[0].flight_features is None
     assert routing_val_ds[0].flight_features is None
