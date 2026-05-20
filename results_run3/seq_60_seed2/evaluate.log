@@ -1,0 +1,28 @@
+2026-05-18 20:14:47 [info     ] evaluate_start                 arch=adsb typecodes=['A320']
+2026-05-18 20:14:47 [info     ] evaluate_typecode              flights=542 typecode=A320
+2026-05-18 20:15:00 [info     ] evaluate_done                  output=data/model_performance/seq_60_seed2/performance.parquet rows=16
+shape: (16, 11)
+┌──────────┬─────────────────────────┬──────────────┬───────┬─────────┬──────────┬──────────┬──────────┬─────────┬──────────┬────────┐
+│ Aircraft ┆ Variable                ┆ Phase        ┆ Model ┆ MAE     ┆ MAE_std  ┆ MAPE (%) ┆ MAPE_std ┆ ME      ┆ ME_std   ┆ Count  │
+│ ---      ┆ ---                     ┆ ---          ┆ ---   ┆ ---     ┆ ---      ┆ ---      ┆ ---      ┆ ---     ┆ ---      ┆ ---    │
+│ str      ┆ str                     ┆ str          ┆ str   ┆ f64     ┆ f64      ┆ f64      ┆ f64      ┆ f64     ┆ f64      ┆ i64    │
+╞══════════╪═════════════════════════╪══════════════╪═══════╪═════════╪══════════╪══════════╪══════════╪═════════╪══════════╪════════╡
+│ A320     ┆ Altitude [m]            ┆ All phases   ┆ PRED  ┆ 267.660 ┆ 633.762  ┆ 5.835    ┆ 20.024   ┆ 137.905 ┆ 674.002  ┆ 478843 │
+│ A320     ┆ Altitude [m]            ┆ Climb        ┆ PRED  ┆ 876.209 ┆ 1128.932 ┆ 19.681   ┆ 39.542   ┆ 776.228 ┆ 1199.875 ┆ 90018  │
+│ A320     ┆ Altitude [m]            ┆ Level flight ┆ PRED  ┆ 63.232  ┆ 175.943  ┆ 0.865    ┆ 5.534    ┆ -17.930 ┆ 186.098  ┆ 296839 │
+│ A320     ┆ Altitude [m]            ┆ Descent      ┆ PRED  ┆ 331.821 ┆ 492.294  ┆ 8.327    ┆ 13.596   ┆ 16.118  ┆ 593.464  ┆ 91986  │
+│ A320     ┆ Flight path angle [deg] ┆ All phases   ┆ PRED  ┆ 0.287   ┆ 0.617    ┆ NaN      ┆ NaN      ┆ -0.066  ┆ 0.677    ┆ 478843 │
+│ A320     ┆ Flight path angle [deg] ┆ Climb        ┆ PRED  ┆ 0.734   ┆ 0.972    ┆ NaN      ┆ NaN      ┆ -0.416  ┆ 1.144    ┆ 90018  │
+│ A320     ┆ Flight path angle [deg] ┆ Level flight ┆ PRED  ┆ 0.077   ┆ 0.245    ┆ NaN      ┆ NaN      ┆ -0.017  ┆ 0.256    ┆ 296839 │
+│ A320     ┆ Flight path angle [deg] ┆ Descent      ┆ PRED  ┆ 0.528   ┆ 0.684    ┆ NaN      ┆ NaN      ┆ 0.119   ┆ 0.856    ┆ 91986  │
+│ A320     ┆ Heading [deg]           ┆ All phases   ┆ PRED  ┆ 1.560   ┆ 6.771    ┆ NaN      ┆ NaN      ┆ -0.134  ┆ 6.947    ┆ 478843 │
+│ A320     ┆ Heading [deg]           ┆ Climb        ┆ PRED  ┆ 2.027   ┆ 7.209    ┆ NaN      ┆ NaN      ┆ 0.247   ┆ 7.484    ┆ 90018  │
+│ A320     ┆ Heading [deg]           ┆ Level flight ┆ PRED  ┆ 1.245   ┆ 6.216    ┆ NaN      ┆ NaN      ┆ -0.198  ┆ 6.336    ┆ 296839 │
+│ A320     ┆ Heading [deg]           ┆ Descent      ┆ PRED  ┆ 2.121   ┆ 7.890    ┆ NaN      ┆ NaN      ┆ -0.303  ┆ 8.164    ┆ 91986  │
+│ A320     ┆ True airspeed [m/s]     ┆ All phases   ┆ PRED  ┆ 3.003   ┆ 7.615    ┆ 1.734    ┆ 6.108    ┆ 0.582   ┆ 8.165    ┆ 478843 │
+│ A320     ┆ True airspeed [m/s]     ┆ Climb        ┆ PRED  ┆ 5.718   ┆ 13.481   ┆ 3.619    ┆ 10.602   ┆ 3.496   ┆ 14.220   ┆ 90018  │
+│ A320     ┆ True airspeed [m/s]     ┆ Level flight ┆ PRED  ┆ 1.849   ┆ 4.339    ┆ 0.943    ┆ 4.296    ┆ 0.116   ┆ 4.715    ┆ 296839 │
+│ A320     ┆ True airspeed [m/s]     ┆ Descent      ┆ PRED  ┆ 4.070   ┆ 7.113    ┆ 2.442    ┆ 4.318    ┆ -0.766  ┆ 8.159    ┆ 91986  │
+└──────────┴─────────────────────────┴──────────────┴───────┴─────────┴──────────┴──────────┴──────────┴─────────┴──────────┴────────┘
+
+$ uv run fdm evaluate --arch adsb --config results_run3/seq_60_seed2/config.yaml --model-name seq_60_seed2

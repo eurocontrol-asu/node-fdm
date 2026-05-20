@@ -1,0 +1,14 @@
+{
+  "run_id": "act_gelu_seed0",
+  "gpu_id": 1,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1779044975.7723145,
+  "status": "completed",
+  "finished_at": 1779087387.9335163,
+  "wall_clock_sec": 42412.16120171547
+}

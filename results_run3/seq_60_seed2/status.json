@@ -1,0 +1,14 @@
+{
+  "run_id": "seq_60_seed2",
+  "gpu_id": 1,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1779087388.413564,
+  "status": "completed",
+  "finished_at": 1779128100.8611968,
+  "wall_clock_sec": 40712.44763278961
+}

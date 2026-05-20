@@ -1,0 +1,19 @@
+{
+  "run_id": "seq_60_seed1",
+  "axis": "seq_60",
+  "seed": 1,
+  "batch_size": 32,
+  "epochs": 50,
+  "lr": 0.001,
+  "use_mode_weights": false,
+  "mode_weight_alpha": 0.5,
+  "activation": "relu",
+  "train_limit": 5000,
+  "seq_len": 60,
+  "method": "rk4",
+  "predict_limit": null,
+  "backbone_depth": 2,
+  "head_depth": 2,
+  "hidden_width": 48,
+  "arch": "adsb"
+}

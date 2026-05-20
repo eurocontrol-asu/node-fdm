@@ -1,0 +1,14 @@
+{
+  "run_id": "bs_16_seed0",
+  "gpu_id": 0,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1779126202.8337722,
+  "status": "completed",
+  "finished_at": 1779202000.6383452,
+  "wall_clock_sec": 75797.80457305908
+}
