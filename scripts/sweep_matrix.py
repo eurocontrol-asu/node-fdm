@@ -24,6 +24,7 @@ __all__ = [
     "default_matrix",
     "run2_matrix",
     "run3_matrix",
+    "run4_matrix",
     "smoke_matrix",
 ]
 
@@ -319,6 +320,83 @@ def run3_matrix(*, arch: str = "adsb") -> list[RunConfig]:
         ("backbone_3", {"backbone_depth": 3}),
         ("hidden_32", {"hidden_width": 32}),
         ("hidden_64", {"hidden_width": 64}),
+    ]
+
+    runs: list[RunConfig] = []
+    for axis_label, override in variants:
+        for seed in seeds:
+            kw = {
+                "batch_size": base.batch_size,
+                "epochs": base.epochs,
+                "lr": base.lr,
+                "use_mode_weights": base.use_mode_weights,
+                "mode_weight_alpha": base.mode_weight_alpha,
+                "activation": base.activation,
+                "backbone_depth": base.backbone_depth,
+                "head_depth": base.head_depth,
+                "hidden_width": base.hidden_width,
+                "seq_len": base.seq_len,
+                **override,
+            }
+            runs.append(
+                RunConfig(
+                    run_id=f"{axis_label}_seed{seed}",
+                    axis=axis_label,
+                    seed=seed,
+                    train_limit=base.train_limit,
+                    method=base.method,
+                    predict_limit=base.predict_limit,
+                    arch=arch,
+                    **kw,  # type: ignore[arg-type]
+                )
+            )
+    return runs
+
+
+def run4_matrix(*, arch: str = "adsb") -> list[RunConfig]:
+    """Run 4 sweep: switch baseline to bs=64+backbone=3, explore depth/seq/lr.
+
+    Baseline (cumule les acquis run 1 + 2 + 3, ajuste bs=64 pour le ROI compute) :
+        bs=64, lr=1e-3, weighting=off, activation=relu, epochs=50, seq_len=30,
+        backbone_depth=3, head_depth=2, hidden_width=48.
+
+    Axes :
+        * batch_size     : {32}             (contrôle stabilité vs run 3 acquis)
+        * backbone_depth : {4, 5}           (l'inversion run 2 → run 3 sur bb=3
+                                             suggère qu'on n'a pas atteint le plateau)
+        * seq_len        : {25, 45, 60}     (affiner la frontière TAS/alt entre
+                                             le crash seq=15 et le coût TAS seq=30)
+        * lr             : {7e-4, 1.5e-3}   (re-tester le sweet spot sur bb=3)
+
+    9 configs x 3 seeds = 27 runs.
+    """
+    base = Baseline(
+        batch_size=64,
+        epochs=50,
+        lr=1e-3,
+        use_mode_weights=False,
+        mode_weight_alpha=0.5,
+        activation="relu",
+        train_limit=5000,
+        seq_len=30,
+        method="rk4",
+        backbone_depth=3,
+        head_depth=2,
+        hidden_width=48,
+    )
+
+    seeds = (0, 1, 2)
+
+    variants: list[tuple[str, dict[str, object]]] = [
+        ("baseline", {}),
+        ("bs_32", {"batch_size": 32}),
+        ("backbone_4", {"backbone_depth": 4}),
+        ("backbone_5", {"backbone_depth": 5}),
+        ("seq_25", {"seq_len": 25}),
+        ("seq_45", {"seq_len": 45}),
+        ("seq_60", {"seq_len": 60}),
+        ("lr_7e-4", {"lr": 7e-4}),
+        ("lr_1.5e-3", {"lr": 1.5e-3}),
     ]
 
     runs: list[RunConfig] = []

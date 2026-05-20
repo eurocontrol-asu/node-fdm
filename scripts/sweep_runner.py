@@ -33,6 +33,7 @@ from scripts.sweep_matrix import (
     default_matrix,
     run2_matrix,
     run3_matrix,
+    run4_matrix,
     smoke_matrix,
 )
 
@@ -438,9 +439,11 @@ def _filter_runs(runs: list[RunConfig], state: QueueState) -> list[RunConfig]:
 # ---------------------------------------------------------------------------
 
 
-def _matrix(*, smoke: bool, run2: bool, run3: bool, arch: str) -> list[RunConfig]:
+def _matrix(*, smoke: bool, run2: bool, run3: bool, run4: bool, arch: str) -> list[RunConfig]:
     if smoke:
         return smoke_matrix(arch=arch)
+    if run4:
+        return run4_matrix(arch=arch)
     if run3:
         return run3_matrix(arch=arch)
     if run2:
@@ -463,10 +466,14 @@ def plan(
         bool,
         cyclopts.Parameter(help="Use the run3 matrix (seq=30 + backbone=2 as new baseline)"),
     ] = False,
+    run4: Annotated[
+        bool,
+        cyclopts.Parameter(help="Use the run4 matrix (bs=64 + backbone=3 as new baseline)"),
+    ] = False,
     arch: Annotated[str, cyclopts.Parameter(help="Architecture identifier")] = "adsb",
 ) -> None:
     """Print the matrix that would be executed; touches no files."""
-    runs = _matrix(smoke=smoke, run2=run2, run3=run3, arch=arch)
+    runs = _matrix(smoke=smoke, run2=run2, run3=run3, run4=run4, arch=arch)
     print(f"runs: {len(runs)}")
     print(
         f"{'run_id':<32} {'axis':<14} {'seed':<5} "
@@ -495,6 +502,10 @@ def run(
     run3: Annotated[
         bool,
         cyclopts.Parameter(help="Use the run3 matrix (seq=30 + backbone=2 as new baseline)"),
+    ] = False,
+    run4: Annotated[
+        bool,
+        cyclopts.Parameter(help="Use the run4 matrix (bs=64 + backbone=3 as new baseline)"),
     ] = False,
     arch: Annotated[str, cyclopts.Parameter(help="Architecture identifier")] = "adsb",
     config_template: Annotated[
@@ -536,6 +547,8 @@ def run(
     if results_dir is None:
         if smoke:
             results_dir = Path("results_smoke")
+        elif run4:
+            results_dir = Path("results_run4")
         elif run3:
             results_dir = Path("results_run3")
         elif run2:
@@ -547,7 +560,7 @@ def run(
     if timeout_s is None and smoke:
         timeout_s = 1800  # 30 min cap per smoke run
 
-    runs_all = _matrix(smoke=smoke, run2=run2, run3=run3, arch=arch)
+    runs_all = _matrix(smoke=smoke, run2=run2, run3=run3, run4=run4, arch=arch)
     state = _load_queue(results_dir)
     state.running = []  # discard stale running entries from a prior crash
     todo = _filter_runs(runs_all, state)
