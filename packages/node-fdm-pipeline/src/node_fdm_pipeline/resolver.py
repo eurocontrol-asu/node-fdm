@@ -46,6 +46,11 @@ ARCH_BY_NAME: dict[str, str] = {
     "node_adsb_hybrid_v1": "adsb_hybrid",
     "node_adsb_hybrid_v2": "adsb_hybrid_v2",
     "node_adsb_hybrid_v3": "adsb_hybrid_v3",
+    "node_adsb_hybrid_v4_mass_features": "adsb_hybrid_v4",
+    "node_adsb_hybrid_v5_tempered_t3": "adsb_hybrid_v5_tempered",
+    "node_adsb_hybrid_v6_mlp_monotone": "adsb_hybrid_v6_mlp",
+    "node_adsb_hybrid_v7_lean_2features": "adsb_hybrid_v7_lean",
+    "node_adsb_hybrid_v8_lean_t15": "adsb_hybrid_v8_lean_t15",
 }
 
 _SUPPORTED_ARCHS: tuple[str, ...] = (
@@ -54,6 +59,11 @@ _SUPPORTED_ARCHS: tuple[str, ...] = (
     "adsb_hybrid",
     "adsb_hybrid_v2",
     "adsb_hybrid_v3",
+    "adsb_hybrid_v4",
+    "adsb_hybrid_v5_tempered",
+    "adsb_hybrid_v6_mlp",
+    "adsb_hybrid_v7_lean",
+    "adsb_hybrid_v8_lean_t15",
 )
 
 
@@ -101,11 +111,22 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 segment_filter_fn=None,
                 architecture_import="node_fdm.architectures.adsb",
             )
-        case "adsb_hybrid" | "adsb_hybrid_v2" | "adsb_hybrid_v3":
-            # All three hybrid variants share the same X/U/E/DX schema —
-            # they only differ in flight_feature_cols (5 vs 6) and in the
-            # longitudinal head output contract (Newton lift_residual_norm
-            # vs CL residual). Schema columns come from the shared module.
+        case (
+            "adsb_hybrid"
+            | "adsb_hybrid_v2"
+            | "adsb_hybrid_v3"
+            | "adsb_hybrid_v4"
+            | "adsb_hybrid_v5_tempered"
+            | "adsb_hybrid_v6_mlp"
+            | "adsb_hybrid_v7_lean"
+            | "adsb_hybrid_v8_lean_t15"
+        ):
+            # All five hybrid variants share the same X/U/E/DX schema —
+            # they only differ in flight_feature_cols (5 / 6 / 6 / 9 / 9),
+            # MassEncoder sigmoid temperature (1.0 default vs 3.0 for v5),
+            # and the longitudinal head output contract (Newton
+            # lift_residual_norm vs CL residual). Schema columns come from
+            # the shared module.
             from node_fdm_data.schemas.adsb_hybrid import (
                 DX_COLS,
                 E0_COLS,
@@ -123,6 +144,26 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 "adsb_hybrid_v3": (
                     "node_adsb_hybrid_v3",
                     "node_fdm.architectures.adsb_hybrid_v3",
+                ),
+                "adsb_hybrid_v4": (
+                    "node_adsb_hybrid_v4_mass_features",
+                    "node_fdm.architectures.adsb_hybrid_v4",
+                ),
+                "adsb_hybrid_v5_tempered": (
+                    "node_adsb_hybrid_v5_tempered_t3",
+                    "node_fdm.architectures.adsb_hybrid_v5_tempered",
+                ),
+                "adsb_hybrid_v6_mlp": (
+                    "node_adsb_hybrid_v6_mlp_monotone",
+                    "node_fdm.architectures.adsb_hybrid_v6_mlp",
+                ),
+                "adsb_hybrid_v7_lean": (
+                    "node_adsb_hybrid_v7_lean_2features",
+                    "node_fdm.architectures.adsb_hybrid_v7_lean",
+                ),
+                "adsb_hybrid_v8_lean_t15": (
+                    "node_adsb_hybrid_v8_lean_t15",
+                    "node_fdm.architectures.adsb_hybrid_v8_lean_t15",
                 ),
             }[arch]
             return ArchitectureInfo(

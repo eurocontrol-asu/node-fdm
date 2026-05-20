@@ -33,6 +33,66 @@ __all__ = [
 log = structlog.get_logger("node_fdm.loader")
 
 
+_CLIMB_BAND_LOW_M: float = 1500.0
+_CLIMB_BAND_HIGH_M: float = 4500.0
+_FL240_M: float = 7300.0
+_GROUND_OFFSET_M: float = 1000.0
+_NOMINAL_DT_S: float = 4.0
+
+
+def _dynamic_mass_aggregates(df: pl.DataFrame, alt_arr: np.ndarray) -> dict[str, float]:
+    """Compute the three Experiment-01 dynamic mass-signature aggregates.
+
+    All three are robust to missing data and constrained to physically
+    plausible bands so noise in the early ground roll or top-of-climb
+    transition does not dominate the mean. ``time_to_fl240_s`` is derived
+    from ``raw_timestamp`` when available, falling back to a row-count x
+    nominal-step approximation.
+    """
+    band_mask = (
+        np.isfinite(alt_arr) & (alt_arr >= _CLIMB_BAND_LOW_M) & (alt_arr <= _CLIMB_BAND_HIGH_M)
+    )
+
+    def _band_mean(col_name: str) -> float:
+        if col_name not in df.columns:
+            return 0.0
+        arr = df.get_column(col_name).to_numpy().astype(np.float32)
+        mask = band_mask & np.isfinite(arr)
+        if not mask.any():
+            return 0.0
+        return float(np.nanmean(arr[mask]))
+
+    climb_rate = _band_mean("fdm_d_alt_ms")
+    accel = _band_mean("fdm_d_tas_ms2")
+
+    # time_to_fl240: time delta between the first row above _GROUND_OFFSET_M
+    # and the first row above _FL240_M. Falls back to row-count x dt when
+    # raw_timestamp is missing or non-monotone.
+    above_ground = np.isfinite(alt_arr) & (alt_arr >= _GROUND_OFFSET_M)
+    above_fl240 = np.isfinite(alt_arr) & (alt_arr >= _FL240_M)
+    if above_ground.any() and above_fl240.any():
+        idx_start = int(np.argmax(above_ground))
+        idx_top = int(np.argmax(above_fl240))
+        if idx_top > idx_start and "raw_timestamp" in df.columns:
+            try:
+                ts = df.get_column("raw_timestamp").to_numpy()
+                dt = float((ts[idx_top] - ts[idx_start]).astype("timedelta64[s]").astype(np.int64))
+                if dt <= 0 or not np.isfinite(dt):
+                    raise ValueError
+            except (AttributeError, ValueError, TypeError):
+                dt = float(idx_top - idx_start) * _NOMINAL_DT_S
+        else:
+            dt = float(max(idx_top - idx_start, 0)) * _NOMINAL_DT_S
+    else:
+        dt = 0.0
+
+    return {
+        "climb_rate_mean_climb": climb_rate,
+        "accel_mean_climb": accel,
+        "time_to_fl240_s": dt,
+    }
+
+
 def _fill_nan_sel(df: pl.DataFrame) -> pl.DataFrame:
     """Fill NaN and null to 0.0 on numeric ``fdm_*_sel*`` columns.
 
@@ -89,7 +149,21 @@ def _load_and_window(
     _require_routing = require_routing or has_flight_features
     routing_cols = ["fdm_adep_dist_m", "fdm_ades_dist_m"]
     aggregate_source_cols = ["raw_alt_m", "fdm_long_wind_ms", "era_temp_K"]
-    feature_source_cols = routing_cols + aggregate_source_cols if has_flight_features else []
+    # Dynamic mass-signature aggregates (Experiment 01, FLIGHT_FEATURE_COLS_9).
+    # Read source columns only when at least one dynamic feature is requested
+    # so older 5/6-feature archs keep their loader contract unchanged.
+    _dynamic_feature_names = {
+        "climb_rate_mean_climb",
+        "accel_mean_climb",
+        "time_to_fl240_s",
+    }
+    has_dynamic_features = bool(_dynamic_feature_names.intersection(requested_flight_feature_cols))
+    dynamic_source_cols = (
+        ["fdm_d_alt_ms", "fdm_d_tas_ms2", "raw_timestamp"] if has_dynamic_features else []
+    )
+    feature_source_cols = (
+        routing_cols + aggregate_source_cols + dynamic_source_cols if has_flight_features else []
+    )
 
     # Synthetic state/derivative columns are emitted at runtime (by the
     # MassEncoder, not observed in the delta). Skip them from the existence
@@ -160,12 +234,15 @@ def _load_and_window(
                 )
                 if in_range.any():
                     mach_cruise_planned = float(np.max(mach_arr[in_range]))
-            flight_aggregates[fid] = {
+            aggregates = {
                 "cruise_alt_max_flight": float(np.nanmax(alt_arr)),
                 "wind_long_mean_flight": float(np.nanmean(wind_arr)),
                 "temp_isa_dev_mean_flight": float(np.nanmean(temp_isa_dev)),
                 "mach_cruise_planned": mach_cruise_planned,
             }
+            if has_dynamic_features:
+                aggregates.update(_dynamic_mass_aggregates(df, alt_arr))
+            flight_aggregates[fid] = aggregates
 
         # Extract arrays (empty col lists → zero-width arrays).
         # Synthetic columns (e.g. fdm_mass_kg) are filled by the runtime

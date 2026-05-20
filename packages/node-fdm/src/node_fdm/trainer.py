@@ -8,6 +8,7 @@ and ``print()`` statements with a typed :class:`TrainingConfig` and
 from __future__ import annotations
 
 import csv
+import importlib
 import json
 import math
 import random
@@ -26,7 +27,7 @@ from torchdiffeq import odeint
 from node_fdm.architectures.registry import ArchitectureSpec, get
 from node_fdm.callbacks import ConsoleCallback, TrainingCallback
 from node_fdm.dataset import FlightDataset, FlightSample, compute_stats
-from node_fdm.layers.mass_encoder import MassEncoderLinear
+from node_fdm.layers.mass_encoder import MassEncoderLinear, MassEncoderLinearTempered
 from node_fdm.losses import get_loss
 from node_fdm.models.batch_neural_ode import BatchNeuralODE
 from node_fdm.models.fdm import FlightDynamicsModel
@@ -242,15 +243,29 @@ class ODETrainer:
         if self.device.type == "cuda":
             self.model = cast(FlightDynamicsModel, torch.compile(self.model))
 
-        self.mass_encoder: MassEncoderLinear | None = None
+        self.mass_encoder: nn.Module | None = None
         if flight_feature_cols:
-            self.mass_encoder = MassEncoderLinear(
-                feature_stats=self.stats_dict,
-                feature_cols=flight_feature_cols,
-                expected_signs=flight_feature_signs,
-                oew_kg=A320_OEW_KG,
-                mtow_kg=A320_MTOW_KG,
-            ).to(self.device)
+            encoder_temperature = float(getattr(self.spec, "mass_encoder_temperature", 1.0) or 1.0)
+            encoder_class_path = getattr(self.spec, "mass_encoder_class_path", None)
+            encoder_kwargs = dict(getattr(self.spec, "mass_encoder_kwargs", {}) or {})
+            common_kwargs = {
+                "feature_stats": self.stats_dict,
+                "feature_cols": flight_feature_cols,
+                "expected_signs": flight_feature_signs,
+                "oew_kg": A320_OEW_KG,
+                "mtow_kg": A320_MTOW_KG,
+            }
+            if encoder_class_path:
+                module_path, class_name = encoder_class_path.rsplit(".", 1)
+                module = importlib.import_module(module_path)
+                encoder_cls = getattr(module, class_name)
+                self.mass_encoder = encoder_cls(**common_kwargs, **encoder_kwargs).to(self.device)
+            elif encoder_temperature == 1.0:
+                self.mass_encoder = MassEncoderLinear(**common_kwargs).to(self.device)
+            else:
+                self.mass_encoder = MassEncoderLinearTempered(
+                    **common_kwargs, temperature=encoder_temperature
+                ).to(self.device)
             if "fdm_mass_kg" in self.spec.x_cols and (
                 config.alpha_dict is None or "fdm_mass_kg" not in config.alpha_dict
             ):
@@ -345,6 +360,9 @@ class ODETrainer:
             "use_mode_weights": self.config.use_mode_weights,
             "mode_weight_alpha": self.config.mode_weight_alpha,
             "mass_encoder": has_mass_encoder,
+            "mass_encoder_temperature": float(
+                getattr(self.spec, "mass_encoder_temperature", 1.0) or 1.0
+            ),
         }
         meta_path = self.model_dir / "meta.json"
         with meta_path.open("w") as f:

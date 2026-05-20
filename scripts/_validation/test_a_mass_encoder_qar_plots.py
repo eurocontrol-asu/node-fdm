@@ -63,7 +63,8 @@ def _collect(qar_dir: Path, models_dir: Path, model_names: list[str]) -> dict:
             continue
         truth.append(float(gw[seg_idx]))
         for n in model_names:
-            preds[n].append(predict_mass(encoders[n], features))
+            enc, feature_cols = encoders[n]
+            preds[n].append(predict_mass(enc, features, feature_cols))
 
     return {"truth": np.asarray(truth), "preds": {n: np.asarray(v) for n, v in preds.items()}}
 

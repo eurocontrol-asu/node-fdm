@@ -117,6 +117,29 @@ class ArchitectureSpec(BaseModel, frozen=True):
     same length as ``flight_feature_cols``. Empty for architectures without
     a mass-encoder branch.
     """
+    mass_encoder_temperature: float = 1.0
+    """Pre-sigmoid temperature for the MassEncoder (Strategy C).
+
+    ``T == 1.0`` (default) reproduces the original ``MassEncoderLinear``
+    response. ``T > 1`` activates :class:`MassEncoderLinearTempered` with a
+    broadened sigmoid: ``alpha = sigmoid(z / T)``. Used to diagnose / suppress
+    the bimodal OEW/MTOW saturation flagged in Experiment 01.
+    """
+    mass_encoder_class_path: str | None = None
+    """Optional dotted path to a custom MassEncoder class.
+
+    When ``None`` the trainer picks between :class:`MassEncoderLinear`
+    (T=1) and :class:`MassEncoderLinearTempered` (T>1) based on
+    ``mass_encoder_temperature``. Setting a class path activates a custom
+    encoder — e.g. ``"node_fdm.layers.mass_encoder.MassEncoderMLPMonotone"``
+    for Strategy B. The constructor receives ``feature_stats``,
+    ``feature_cols``, ``expected_signs``, ``oew_kg``, ``mtow_kg``,
+    plus any keyword arguments declared in ``mass_encoder_kwargs``.
+    """
+    mass_encoder_kwargs: dict[str, Any] = Field(default_factory=dict)
+    """Extra kwargs passed to the custom encoder class declared via
+    ``mass_encoder_class_path``. Ignored when ``mass_encoder_class_path``
+    is ``None``."""
 
 
 def register(spec: ArchitectureSpec) -> None:

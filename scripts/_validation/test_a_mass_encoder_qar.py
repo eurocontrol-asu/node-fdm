@@ -28,7 +28,19 @@ import numpy as np
 import polars as pl
 import torch
 
-from node_fdm.layers.mass_encoder import MassEncoderLinear
+import importlib
+
+from node_fdm.architectures import (  # noqa: F401  (auto-register)
+    adsb_hybrid_v2,
+    adsb_hybrid_v3,
+    adsb_hybrid_v4,
+    adsb_hybrid_v5_tempered,
+    adsb_hybrid_v6_mlp,
+    adsb_hybrid_v7_lean,
+    adsb_hybrid_v8_lean_t15,
+)
+from node_fdm.architectures.registry import get as get_arch_spec
+from node_fdm.layers.mass_encoder import MassEncoderLinear, MassEncoderLinearTempered
 from node_fdm_data.schemas.adsb_hybrid import (
     A320_MTOW_KG,
     A320_OEW_KG,
@@ -38,10 +50,16 @@ from node_fdm_data.schemas.adsb_hybrid import (
 
 _R_EARTH_M = 6_371_000.0
 _FT_TO_M = 0.3048
+_KT_TO_MS = 0.514444
 _MACH_CRUISE_MIN = 0.70
 _MACH_CRUISE_MAX = 0.86
 _MACH_CRUISE_FALLBACK = 0.78
 _STABLE_CRUISE_ALT_FT = 25_000.0
+_CLIMB_BAND_LOW_M = 1500.0
+_CLIMB_BAND_HIGH_M = 4500.0
+_FL240_M = 7300.0
+_GROUND_OFFSET_M = 1000.0
+_QAR_NOMINAL_DT_S = 1.0
 
 
 def _haversine_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
@@ -63,11 +81,79 @@ def _find_stable_cruise_idx(df: pl.DataFrame, min_alt_ft: float = _STABLE_CRUISE
     return int(np.argmax(above))
 
 
+def _resolve_feature_cols(meta: dict) -> tuple[list[str], list[float]]:
+    """Look up flight-feature columns and signs from the meta.json arch name.
+
+    Falls back to FLIGHT_FEATURE_COLS_6 / SIGNS_6 when the arch is not
+    registered (e.g. legacy checkpoints) so older models stay readable.
+    """
+    arch_name = meta.get("architecture_name", "")
+    try:
+        spec = get_arch_spec(arch_name)
+    except KeyError:
+        return list(FLIGHT_FEATURE_COLS_6), list(FLIGHT_FEATURE_SIGNS_6)
+    cols = list(getattr(spec, "flight_feature_cols", None) or FLIGHT_FEATURE_COLS_6)
+    signs = list(getattr(spec, "flight_feature_signs", None) or FLIGHT_FEATURE_SIGNS_6)
+    return cols, signs
+
+
+def _dynamic_qar_aggregates(df: pl.DataFrame, alt_m: np.ndarray) -> dict[str, float]:
+    """Compute the 3 Experiment-01 dynamic mass-signature aggregates on QAR.
+
+    Mirrors the ADS-B loader logic:
+      - climb_rate_mean_climb : mean ATT__VV (m/s) on the low-climb altitude band.
+      - accel_mean_climb : mean of finite-difference d(TAS)/dt on the same band.
+      - time_to_fl240_s : row-index delta × QAR nominal step (1 s).
+    """
+    band_mask = (
+        np.isfinite(alt_m) & (alt_m >= _CLIMB_BAND_LOW_M) & (alt_m <= _CLIMB_BAND_HIGH_M)
+    )
+
+    if "ATT__VV" in df.columns and band_mask.any():
+        vv = df["ATT__VV"].to_numpy().astype(np.float64)
+        m = band_mask & np.isfinite(vv)
+        climb_rate = float(np.nanmean(vv[m])) if m.any() else 0.0
+    else:
+        climb_rate = 0.0
+
+    if "SPD__TAS" in df.columns:
+        tas_kt = df["SPD__TAS"].to_numpy().astype(np.float64)
+        tas_ms = tas_kt * _KT_TO_MS
+        finite = np.isfinite(tas_ms)
+        accel = 0.0
+        if finite.sum() >= 2:
+            accel_arr = np.gradient(tas_ms) / _QAR_NOMINAL_DT_S
+            m = band_mask & np.isfinite(accel_arr)
+            if m.any():
+                accel = float(np.nanmean(accel_arr[m]))
+    else:
+        accel = 0.0
+
+    above_ground = np.isfinite(alt_m) & (alt_m >= _GROUND_OFFSET_M)
+    above_fl240 = np.isfinite(alt_m) & (alt_m >= _FL240_M)
+    if above_ground.any() and above_fl240.any():
+        idx_start = int(np.argmax(above_ground))
+        idx_top = int(np.argmax(above_fl240))
+        dt = float(max(idx_top - idx_start, 0)) * _QAR_NOMINAL_DT_S
+    else:
+        dt = 0.0
+
+    return {
+        "climb_rate_mean_climb": climb_rate,
+        "accel_mean_climb": accel,
+        "time_to_fl240_s": dt,
+    }
+
+
 def compute_qar_features(df: pl.DataFrame, seg_t0_idx: int) -> dict[str, float]:
-    """Compute the 6 MassEncoder vol-niveau features from a QAR flight DataFrame.
+    """Compute every MassEncoder vol-niveau feature from a QAR flight DataFrame.
+
+    Returns all 9 candidate features (6 baseline + 3 dynamic). Consumers
+    filter the dict by the architecture's ``flight_feature_cols``.
 
     Mirrors the ADS-B pipeline: distances via great-circle from departure point,
-    cruise alt max, wind/temp/mach aggregates over the whole flight.
+    cruise alt max, wind/temp/mach aggregates over the whole flight, and the
+    Experiment-01 dynamic aggregates over the climb altitude band.
     """
     lat = df["NAV__LAT"].to_numpy()
     lon = df["NAV__LONG"].to_numpy()
@@ -86,7 +172,9 @@ def compute_qar_features(df: pl.DataFrame, seg_t0_idx: int) -> dict[str, float]:
     ades_at_t0 = _haversine_m(lat_t, lon_t, lat_end, lon_end)
     dist_total = adep_at_t0 + ades_at_t0
 
-    cruise_alt_max_m = float(np.nanmax(df["ALT__STD"].to_numpy())) * _FT_TO_M
+    alt_ft = df["ALT__STD"].to_numpy().astype(np.float64)
+    alt_m = alt_ft * _FT_TO_M
+    cruise_alt_max_m = float(np.nanmax(alt_m))
     wind_long_mean = float(np.nanmean(df["WIND__LONG"].to_numpy()))
     temp_isa_dev_mean = float(np.nanmean(df["TEMP__DELTA_ISA"].to_numpy()))
 
@@ -94,7 +182,7 @@ def compute_qar_features(df: pl.DataFrame, seg_t0_idx: int) -> dict[str, float]:
     in_range = np.isfinite(mach_sel) & (mach_sel >= _MACH_CRUISE_MIN) & (mach_sel <= _MACH_CRUISE_MAX)
     mach_cruise = float(np.max(mach_sel[in_range])) if in_range.any() else _MACH_CRUISE_FALLBACK
 
-    return {
+    base = {
         "dist_total_flight": dist_total,
         "dist_adep_at_t0": adep_at_t0,
         "cruise_alt_max_flight": cruise_alt_max_m,
@@ -102,28 +190,74 @@ def compute_qar_features(df: pl.DataFrame, seg_t0_idx: int) -> dict[str, float]:
         "temp_isa_dev_mean_flight": temp_isa_dev_mean,
         "mach_cruise_planned": mach_cruise,
     }
+    base.update(_dynamic_qar_aggregates(df, alt_m))
+    return base
 
 
-def load_mass_encoder(model_dir: Path, device: str = "cpu") -> MassEncoderLinear:
-    """Re-instantiate and load a trained MassEncoder from its model directory."""
+def load_mass_encoder(
+    model_dir: Path, device: str = "cpu"
+) -> tuple[torch.nn.Module, list[str]]:
+    """Re-instantiate a trained MassEncoder from its model directory.
+
+    Selection priority:
+
+    1. If the architecture spec declares ``mass_encoder_class_path``,
+       instantiate that custom encoder with ``mass_encoder_kwargs``.
+    2. Else if ``mass_encoder_temperature > 1``, use
+       :class:`MassEncoderLinearTempered`.
+    3. Else, fall back to :class:`MassEncoderLinear`.
+
+    Returns the encoder plus the resolved ``feature_cols`` so the caller
+    can build feature vectors in the right column order.
+    """
     meta = json.loads((model_dir / "meta.json").read_text())
-    encoder = MassEncoderLinear(
-        feature_stats=meta["stats_dict"],
-        feature_cols=FLIGHT_FEATURE_COLS_6,
-        expected_signs=FLIGHT_FEATURE_SIGNS_6,
-        oew_kg=A320_OEW_KG,
-        mtow_kg=A320_MTOW_KG,
-    ).to(device)
+    feature_cols, feature_signs = _resolve_feature_cols(meta)
+    temperature = float(meta.get("mass_encoder_temperature", 1.0) or 1.0)
+
+    arch_spec = None
+    arch_name = meta.get("architecture_name", "")
+    try:
+        arch_spec = get_arch_spec(arch_name)
+    except KeyError:
+        pass
+
+    common_kwargs = {
+        "feature_stats": meta["stats_dict"],
+        "feature_cols": feature_cols,
+        "expected_signs": feature_signs,
+        "oew_kg": A320_OEW_KG,
+        "mtow_kg": A320_MTOW_KG,
+    }
+
+    encoder: torch.nn.Module
+    class_path = getattr(arch_spec, "mass_encoder_class_path", None) if arch_spec else None
+    extra_kwargs = (
+        dict(getattr(arch_spec, "mass_encoder_kwargs", {}) or {}) if arch_spec else {}
+    )
+    if class_path:
+        module_path, class_name = class_path.rsplit(".", 1)
+        encoder_cls = getattr(importlib.import_module(module_path), class_name)
+        encoder = encoder_cls(**common_kwargs, **extra_kwargs).to(device)
+    elif temperature == 1.0:
+        encoder = MassEncoderLinear(**common_kwargs).to(device)
+    else:
+        encoder = MassEncoderLinearTempered(**common_kwargs, temperature=temperature).to(device)
+
     state = torch.load(model_dir / "mass_encoder.pt", map_location=device, weights_only=True)
-    encoder.load_state_dict(state)
+    encoder.load_state_dict(state, strict=False)
     encoder.eval()
-    return encoder
+    return encoder, feature_cols
 
 
-def predict_mass(encoder: MassEncoderLinear, features: dict[str, float], device: str = "cpu") -> float:
+def predict_mass(
+    encoder: torch.nn.Module,
+    features: dict[str, float],
+    feature_cols: list[str],
+    device: str = "cpu",
+) -> float:
     """Pass a single feature row through the encoder and return scalar mass in kg."""
     vec = torch.tensor(
-        [features[c] for c in FLIGHT_FEATURE_COLS_6],
+        [features[c] for c in feature_cols],
         dtype=torch.float32,
         device=device,
     ).unsqueeze(0)
@@ -169,7 +303,9 @@ def main() -> None:
     qar_dir = Path(args.qar_dir)
     models_dir = Path(args.models_dir)
 
-    encoders = {name: load_mass_encoder(models_dir / name, args.device) for name in args.models}
+    encoders: dict[str, tuple[torch.nn.Module, list[str]]] = {
+        name: load_mass_encoder(models_dir / name, args.device) for name in args.models
+    }
 
     qar_files = _dedup_qar_files(sorted(qar_dir.glob("*.parquet")))
     print(f"Processing {len(qar_files)} unique QAR files...")
@@ -207,7 +343,10 @@ def main() -> None:
             print(f"  SKIP {flight_id}: {exc}")
             continue
 
-        preds = {name: predict_mass(enc, features, args.device) for name, enc in encoders.items()}
+        preds = {
+            name: predict_mass(enc, features, feature_cols, args.device)
+            for name, (enc, feature_cols) in encoders.items()
+        }
 
         rec: dict = {
             "flight_id": flight_id,

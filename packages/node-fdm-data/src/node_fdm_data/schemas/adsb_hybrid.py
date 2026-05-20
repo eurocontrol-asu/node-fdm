@@ -16,10 +16,14 @@ __all__ = [
     "DX_COLS",
     "E0_COLS",
     "E1_COLS",
+    "FLIGHT_FEATURE_COLS_2_LEAN",
     "FLIGHT_FEATURE_COLS_5",
     "FLIGHT_FEATURE_COLS_6",
+    "FLIGHT_FEATURE_COLS_9",
+    "FLIGHT_FEATURE_SIGNS_2_LEAN",
     "FLIGHT_FEATURE_SIGNS_5",
     "FLIGHT_FEATURE_SIGNS_6",
+    "FLIGHT_FEATURE_SIGNS_9",
     "U_COLS",
     "U_ODE_COLS",
     "X_COLS",
@@ -50,6 +54,35 @@ FLIGHT_FEATURE_COLS_6: list[str] = [
     "mach_cruise_planned",
 ]
 FLIGHT_FEATURE_SIGNS_6: list[float] = [*FLIGHT_FEATURE_SIGNS_5, -1.0]
+
+# Phase 2 — dynamic mass-signature features (Experiment 01).
+# All three are aggregated per flight from ADS-B columns:
+#   - climb_rate_mean_climb : mean fdm_d_alt_ms over low-climb band
+#     (raw_alt_m ∈ [1500, 4500] m). Heavier → lower Vz → sign -1.
+#   - accel_mean_climb : mean fdm_d_tas_ms2 over same band.
+#     Heavier → lower TAS-acceleration → sign -1.
+#   - time_to_fl240_s : seconds from first row above 1000 m to first row
+#     above 7300 m (FL240). Heavier → longer climb → sign +1.
+FLIGHT_FEATURE_COLS_9: list[str] = [
+    *FLIGHT_FEATURE_COLS_6,
+    "climb_rate_mean_climb",
+    "accel_mean_climb",
+    "time_to_fl240_s",
+]
+FLIGHT_FEATURE_SIGNS_9: list[float] = [*FLIGHT_FEATURE_SIGNS_6, -1.0, -1.0, 1.0]
+
+# Phase 3 — lean 2-feature subset (Experiment 04).
+# Identified by the LOOCV oracle linear-regression diagnostic on QAR: the
+# pair (cruise_alt_max_flight, dist_total_flight) maximises out-of-sample
+# corr (0.608) on the 18 validation flights; adding more features only
+# adds noise on this small validation set. Used to test whether removing
+# multi-collinear / weak features lets a trained encoder reach the 0.5
+# success threshold.
+FLIGHT_FEATURE_COLS_2_LEAN: list[str] = [
+    "dist_total_flight",
+    "cruise_alt_max_flight",
+]
+FLIGHT_FEATURE_SIGNS_2_LEAN: list[float] = [1.0, -1.0]
 
 A320_OEW_KG: float = 42_600.0
 A320_MTOW_KG: float = 77_000.0
