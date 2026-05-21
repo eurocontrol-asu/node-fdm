@@ -730,7 +730,17 @@ class ODETrainer:
         x0 = x_seq[:, 0, :]
         m_0: torch.Tensor | None = None
         if self.mass_encoder is not None and flight_features is not None:
-            m_0 = self.mass_encoder(flight_features[:, 0, :])
+            if hasattr(self.mass_encoder, "ps_fl_grid"):
+                # MassEncoderPSResidual (v11) consumes extra state at t0.
+                alt_idx_v11 = (
+                    self.spec.x_cols.index("raw_alt_m") if "raw_alt_m" in self.spec.x_cols else 0
+                )
+                alt_t0 = x_seq[:, 0, alt_idx_v11]
+                alt_t1 = x_seq[:, 1, alt_idx_v11]
+                dh_dt_t0 = (alt_t1 - alt_t0) / max(self.config.step, 1.0)
+                m_0 = self.mass_encoder(flight_features[:, 0, :], alt_t0, dh_dt_t0)
+            else:
+                m_0 = self.mass_encoder(flight_features[:, 0, :])
             if self._override_m0_factor is not None:
                 m_0 = m_0 * self._override_m0_factor
             x0 = torch.cat([x0[:, :4], m_0.to(x0.dtype).unsqueeze(-1)], dim=-1)

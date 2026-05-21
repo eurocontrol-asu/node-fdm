@@ -13,6 +13,7 @@ from node_fdm.architectures import adsb_hybrid_v7_lean as adsb_hybrid_v7_lean
 from node_fdm.architectures import adsb_hybrid_v8_lean_t15 as adsb_hybrid_v8_lean_t15
 from node_fdm.architectures import adsb_hybrid_v9_causal as adsb_hybrid_v9_causal
 from node_fdm.architectures import adsb_hybrid_v10_ps_auxloss as adsb_hybrid_v10_ps_auxloss
+from node_fdm.architectures import adsb_hybrid_v11_ps_residual as adsb_hybrid_v11_ps_residual
 from node_fdm.architectures import qar as qar
 
 __all__ = [
@@ -27,6 +28,7 @@ __all__ = [
     "adsb_hybrid_v8_lean_t15",
     "adsb_hybrid_v9_causal",
     "adsb_hybrid_v10_ps_auxloss",
+    "adsb_hybrid_v11_ps_residual",
     "qar",
     "registry",
 ]
