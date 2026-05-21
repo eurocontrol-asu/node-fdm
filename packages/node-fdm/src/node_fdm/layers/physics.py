@@ -138,8 +138,12 @@ class PhysicsLayer(nn.Module):
         # Lazily attached so the import graph stays acyclic ; the layer
         # itself is non-trainable and stateless beyond its constant buffers.
         from node_fdm.layers.ps_drag import PSDragLayer
+        from node_fdm.layers.ps_thrust import PSThrustLayer
 
         self.ps_drag = PSDragLayer()
+        # Phase 3 PSThrustLayer — analytical Poll-Schumann thrust prior.
+        # Same non-trainable contract as PSDragLayer.
+        self.ps_thrust = PSThrustLayer()
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Convert model outputs into ODE derivatives.
@@ -181,6 +185,77 @@ class PhysicsLayer(nn.Module):
                 "are mutually exclusive."
             )
             raise ValueError(msg)
+
+        if "fdm_t_correction" in x:
+            # --- Phase 3 : PSThrustLayer + bounded ±5 % NN correction ---
+            # The longitudinal head outputs ``fdm_throttle_norm`` (mapped
+            # via 0.1 + 0.9·sigmoid(...) to χ ∈ [0.1, 1.0]) and
+            # ``fdm_t_correction`` (bounded ±5 % via 0.05·tanh(...)). The
+            # thrust prior comes from the analytical PSThrustLayer (Eq 28 +
+            # Eq 17, A320 + CFM56-5B4_P). Lift + drag follow Phase 2 :
+            #
+            #   T_PS = ps_thrust(χ, M, alt, T, q)
+            #   T    = T_PS * (1 + 0.05·tanh(t_correction))
+            #   D    = q·S·C_D_PS·(1 + 0.05·tanh(cd_correction))   (Phase 2)
+            #   L    = q·S·(CL_baseline(q,m) + cl_residual)        (Phase 1.5)
+            #   d_TAS   = (T - D)/m - g·sin gamma
+            #   d_gamma = (L/m - g·cos gamma) / V
+            #
+            # ``fdm_t_minus_d_norm`` is intentionally *not* used here — the
+            # whole point of Phase 3 is to give the NN an analytical T prior
+            # so the closed-loop training cannot absorb the thrust signal
+            # via an unbounded scalar head (cf. AC7 cybernetic-migration).
+            throttle_norm = x["fdm_throttle_norm"]
+            t_correction = x["fdm_t_correction"]
+            cl_residual = x["fdm_cl_residual"]
+            cd_correction = x["fdm_cd_correction"]
+            mass = x["fdm_mass_kg"]
+            q_pa = x["fdm_q_pa"]
+            mach = x["era_mach"]
+            temp_k = x["era_temp_K"]
+            alt_m = x["raw_alt_m"]
+
+            # Map throttle_norm to χ ∈ [0.1, 1.0] — physical range (R8).
+            throttle = 0.1 + 0.9 * torch.sigmoid(throttle_norm)
+
+            # Lift (Phase 1.5 unchanged).
+            c_l = cl_baseline(q_pa, mass) + cl_residual
+            lift = q_pa * S_REF_A320_M2 * c_l
+            d_gamma = (lift / mass - G * torch.cos(gamma)) / tas_safe
+
+            # Drag (Phase 2 unchanged).
+            c_d_ps = self.ps_drag(c_l, mach, temp_k, q_pa, tas_safe)
+            cd_factor = 1.0 + 0.05 * torch.tanh(cd_correction)
+            c_d = c_d_ps * cd_factor
+            d_force = q_pa * S_REF_A320_M2 * c_d
+
+            # Thrust (Phase 3 new).
+            t_ps = self.ps_thrust(throttle, mach, alt_m, temp_k, q_pa)
+            t_factor = 1.0 + 0.05 * torch.tanh(t_correction)
+            t_total = t_ps * t_factor
+
+            d_tas = (t_total - d_force) / mass - G * torch.sin(gamma)
+
+            out = {
+                "fdm_d_tas_ms2": d_tas,
+                "fdm_d_gamma_rads": d_gamma,
+                "fdm_d_mass_kgs": torch.zeros_like(mass),
+                "fdm_lift_N": lift,
+                "fdm_drag_N": d_force,
+                "fdm_thrust_N": t_total,
+                # Phase 3 diagnostic outputs (AC4/AC5/AC6/AC7 forward-pass).
+                "fdm_T_PS": t_ps,
+                "fdm_T_total": t_total,
+                "fdm_throttle": throttle,
+                "fdm_c_d_ps": c_d_ps,
+                "fdm_c_d_total": c_d,
+            }
+
+            if "fdm_phi_bank_rad" in x:
+                phi_bank = x["fdm_phi_bank_rad"]
+                out["fdm_d_heading_rads"] = (G / tas_safe) * torch.tan(phi_bank)
+
+            return out
 
         if "fdm_t_minus_d_norm" in x:
             # The NN learns *normalised* (adimensional) quantities so the

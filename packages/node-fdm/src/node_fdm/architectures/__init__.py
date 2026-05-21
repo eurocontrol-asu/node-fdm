@@ -15,6 +15,7 @@ from node_fdm.architectures import adsb_hybrid_v9_causal as adsb_hybrid_v9_causa
 from node_fdm.architectures import adsb_hybrid_v10_ps_auxloss as adsb_hybrid_v10_ps_auxloss
 from node_fdm.architectures import adsb_hybrid_v11_ps_residual as adsb_hybrid_v11_ps_residual
 from node_fdm.architectures import adsb_hybrid_v12_psdrag as adsb_hybrid_v12_psdrag
+from node_fdm.architectures import adsb_hybrid_v13_psthrust as adsb_hybrid_v13_psthrust
 from node_fdm.architectures import qar as qar
 
 __all__ = [
@@ -31,6 +32,7 @@ __all__ = [
     "adsb_hybrid_v10_ps_auxloss",
     "adsb_hybrid_v11_ps_residual",
     "adsb_hybrid_v12_psdrag",
+    "adsb_hybrid_v13_psthrust",
     "qar",
     "registry",
 ]
