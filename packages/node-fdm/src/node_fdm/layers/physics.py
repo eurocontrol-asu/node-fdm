@@ -142,8 +142,11 @@ class PhysicsLayer(nn.Module):
 
         self.ps_drag = PSDragLayer()
         # Phase 3 PSThrustLayer — analytical Poll-Schumann thrust prior.
-        # Same non-trainable contract as PSDragLayer.
-        self.ps_thrust = PSThrustLayer()
+        # Same non-trainable contract as PSDragLayer. Two variants are
+        # instantiated so the forward branch can pick which to call based
+        # on the input column present (linear vs TET-nonlinear).
+        self.ps_thrust = PSThrustLayer(mode="linear")
+        self.ps_thrust_tet = PSThrustLayer(mode="tet_e3e5")
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Convert model outputs into ODE derivatives.
@@ -186,8 +189,26 @@ class PhysicsLayer(nn.Module):
             )
             raise ValueError(msg)
 
-        if "fdm_t_correction" in x:
-            # --- Phase 3 : PSThrustLayer + bounded ±5 % NN correction ---
+        phase3_cols = ("fdm_t_correction", "fdm_t_correction_w10", "fdm_t_correction_tet")
+        if any(k in x for k in phase3_cols):
+            # --- Phase 3 : PSThrustLayer + bounded NN correction ---
+            #
+            # Three variants share this branch :
+            #   * ``fdm_t_correction``      → ±5 % bound, linear T_PS (v13)
+            #   * ``fdm_t_correction_w10``  → ±10 % bound, linear T_PS (v13b)
+            #   * ``fdm_t_correction_tet``  → ±5 % bound, TET-nonlinear T_PS (v13c)
+            if "fdm_t_correction_w10" in x:
+                t_correction_raw = x["fdm_t_correction_w10"]
+                t_bound_amp = 0.10
+                ps_thrust_module = self.ps_thrust
+            elif "fdm_t_correction_tet" in x:
+                t_correction_raw = x["fdm_t_correction_tet"]
+                t_bound_amp = 0.05
+                ps_thrust_module = self.ps_thrust_tet
+            else:
+                t_correction_raw = x["fdm_t_correction"]
+                t_bound_amp = 0.05
+                ps_thrust_module = self.ps_thrust
             # The longitudinal head outputs ``fdm_throttle_norm`` (mapped
             # via 0.1 + 0.9·sigmoid(...) to χ ∈ [0.1, 1.0]) and
             # ``fdm_t_correction`` (bounded ±5 % via 0.05·tanh(...)). The
@@ -206,7 +227,7 @@ class PhysicsLayer(nn.Module):
             # so the closed-loop training cannot absorb the thrust signal
             # via an unbounded scalar head (cf. AC7 cybernetic-migration).
             throttle_norm = x["fdm_throttle_norm"]
-            t_correction = x["fdm_t_correction"]
+            t_correction = t_correction_raw
             cl_residual = x["fdm_cl_residual"]
             cd_correction = x["fdm_cd_correction"]
             mass = x["fdm_mass_kg"]
@@ -229,9 +250,10 @@ class PhysicsLayer(nn.Module):
             c_d = c_d_ps * cd_factor
             d_force = q_pa * S_REF_A320_M2 * c_d
 
-            # Thrust (Phase 3 new).
-            t_ps = self.ps_thrust(throttle, mach, alt_m, temp_k, q_pa)
-            t_factor = 1.0 + 0.05 * torch.tanh(t_correction)
+            # Thrust (Phase 3 new). The selected PSThrustLayer instance
+            # carries the right mode (linear or tet_e3e5).
+            t_ps = ps_thrust_module(throttle, mach, alt_m, temp_k, q_pa)
+            t_factor = 1.0 + t_bound_amp * torch.tanh(t_correction)
             t_total = t_ps * t_factor
 
             d_tas = (t_total - d_force) / mass - G * torch.sin(gamma)
