@@ -25,6 +25,9 @@ from node_fdm.architectures import (
 from node_fdm.architectures import (
     adsb_hybrid_v13d_psthrust_parallel as adsb_hybrid_v13d_psthrust_parallel,
 )
+from node_fdm.architectures import (
+    adsb_hybrid_v13e_psthrust_parallel_l025 as adsb_hybrid_v13e_psthrust_parallel_l025,
+)
 from node_fdm.architectures import qar as qar
 
 __all__ = [
@@ -45,6 +48,7 @@ __all__ = [
     "adsb_hybrid_v13b_psthrust_w10",
     "adsb_hybrid_v13c_psthrust_tet",
     "adsb_hybrid_v13d_psthrust_parallel",
+    "adsb_hybrid_v13e_psthrust_parallel_l025",
     "qar",
     "registry",
 ]

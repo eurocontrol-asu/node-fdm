@@ -123,10 +123,27 @@ def _run_val_with_diagnostics(
 
     original_forward = trainer.model.layers_dict["data_ode_long"].forward
 
+    # All Phase 3 variants of the bounded thrust correction column name.
+    # AC5 zeros whichever is present + the parallel residual (v13d) to fully
+    # disable NN influence on the longitudinal force.
+    t_correction_variants = (
+        "fdm_t_correction",
+        "fdm_t_correction_w10",
+        "fdm_t_correction_tet",
+        "fdm_t_correction_parallel",
+        "fdm_t_minus_d_norm_parallel",
+        "fdm_t_correction_parallel_l025",
+        "fdm_t_minus_d_norm_parallel_l025",
+    )
+
     def patched_forward(vect_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         out = original_forward(vect_dict)
-        if zero_t_correction and "fdm_t_correction" in out:
-            out = {**out, "fdm_t_correction": torch.zeros_like(out["fdm_t_correction"])}
+        if zero_t_correction:
+            patched = dict(out)
+            for col in t_correction_variants:
+                if col in patched:
+                    patched[col] = torch.zeros_like(patched[col])
+            out = patched
         return out
 
     trainer.model.layers_dict["data_ode_long"].forward = patched_forward  # type: ignore[method-assign]
