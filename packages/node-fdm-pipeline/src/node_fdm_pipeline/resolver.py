@@ -51,6 +51,8 @@ ARCH_BY_NAME: dict[str, str] = {
     "node_adsb_hybrid_v6_mlp_monotone": "adsb_hybrid_v6_mlp",
     "node_adsb_hybrid_v7_lean_2features": "adsb_hybrid_v7_lean",
     "node_adsb_hybrid_v8_lean_t15": "adsb_hybrid_v8_lean_t15",
+    "node_adsb_hybrid_v9_causal_3features": "adsb_hybrid_v9_causal",
+    "node_adsb_hybrid_v10_ps_auxloss": "adsb_hybrid_v10_ps_auxloss",
 }
 
 _SUPPORTED_ARCHS: tuple[str, ...] = (
@@ -64,6 +66,8 @@ _SUPPORTED_ARCHS: tuple[str, ...] = (
     "adsb_hybrid_v6_mlp",
     "adsb_hybrid_v7_lean",
     "adsb_hybrid_v8_lean_t15",
+    "adsb_hybrid_v9_causal",
+    "adsb_hybrid_v10_ps_auxloss",
 )
 
 
@@ -120,6 +124,8 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
             | "adsb_hybrid_v6_mlp"
             | "adsb_hybrid_v7_lean"
             | "adsb_hybrid_v8_lean_t15"
+            | "adsb_hybrid_v9_causal"
+            | "adsb_hybrid_v10_ps_auxloss"
         ):
             # All five hybrid variants share the same X/U/E/DX schema —
             # they only differ in flight_feature_cols (5 / 6 / 6 / 9 / 9),
@@ -164,6 +170,14 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 "adsb_hybrid_v8_lean_t15": (
                     "node_adsb_hybrid_v8_lean_t15",
                     "node_fdm.architectures.adsb_hybrid_v8_lean_t15",
+                ),
+                "adsb_hybrid_v9_causal": (
+                    "node_adsb_hybrid_v9_causal_3features",
+                    "node_fdm.architectures.adsb_hybrid_v9_causal",
+                ),
+                "adsb_hybrid_v10_ps_auxloss": (
+                    "node_adsb_hybrid_v10_ps_auxloss",
+                    "node_fdm.architectures.adsb_hybrid_v10_ps_auxloss",
                 ),
             }[arch]
             return ArchitectureInfo(

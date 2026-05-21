@@ -17,10 +17,12 @@ __all__ = [
     "E0_COLS",
     "E1_COLS",
     "FLIGHT_FEATURE_COLS_2_LEAN",
+    "FLIGHT_FEATURE_COLS_3_CAUSAL",
     "FLIGHT_FEATURE_COLS_5",
     "FLIGHT_FEATURE_COLS_6",
     "FLIGHT_FEATURE_COLS_9",
     "FLIGHT_FEATURE_SIGNS_2_LEAN",
+    "FLIGHT_FEATURE_SIGNS_3_CAUSAL",
     "FLIGHT_FEATURE_SIGNS_5",
     "FLIGHT_FEATURE_SIGNS_6",
     "FLIGHT_FEATURE_SIGNS_9",
@@ -83,6 +85,23 @@ FLIGHT_FEATURE_COLS_2_LEAN: list[str] = [
     "cruise_alt_max_flight",
 ]
 FLIGHT_FEATURE_SIGNS_2_LEAN: list[float] = [1.0, -1.0]
+
+# Phase 4 — causal lean subset (Experiment 06, "any-point").
+# Designed for an encoder that must predict m(t_segment_start) honestly
+# — including the fuel-burn evolution within the same flight.
+# The decisive feature is `dist_adep_at_t0`, which **varies with the
+# segment start** (distance already flown) and thus carries the only
+# per-segment signal in this subset. Sign -1 because the further the
+# aircraft has flown, the more fuel it has burned ⇒ lower mass.
+# `dist_total_flight` and `cruise_alt_max_flight` (or its
+# FMS-target equivalent in inference contexts) are plan-level
+# constants per flight and provide the between-flight baseline.
+FLIGHT_FEATURE_COLS_3_CAUSAL: list[str] = [
+    "dist_total_flight",
+    "dist_adep_at_t0",
+    "cruise_alt_max_flight",
+]
+FLIGHT_FEATURE_SIGNS_3_CAUSAL: list[float] = [1.0, -1.0, -1.0]
 
 A320_OEW_KG: float = 42_600.0
 A320_MTOW_KG: float = 77_000.0

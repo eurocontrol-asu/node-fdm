@@ -95,6 +95,18 @@ def train(
             help="Tracking loss weight on autopilot targets (0=disabled)",
         ),
     ] = None,
+    lambda_aux_ps: Annotated[
+        float | None,
+        cyclopts.Parameter(
+            name="--lambda-aux-ps",
+            help=(
+                "Poll-Schumann Eq 100 aux-loss weight (0=disabled). Pulls "
+                "the MassEncoder toward the algebraic P&S mass estimate "
+                "on cruise-stable segments. R5 compliant (uses only "
+                "observed altitude)."
+            ),
+        ),
+    ] = None,
     use_mode_weights: Annotated[
         bool | None,
         cyclopts.Parameter(
@@ -184,6 +196,7 @@ def train(
         device=device,
         model_name=model_name,
         lambda_tracking=lambda_tracking,
+        lambda_aux_ps=lambda_aux_ps,
         use_mode_weights=use_mode_weights,
         train_limit=train_limit,
         activation=activation,

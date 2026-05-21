@@ -102,6 +102,7 @@ class TrainingConfig(BaseModel):
     grad_clip_norm: float = Field(default=10.0, gt=0)
     alpha_dict: dict[str, float] | None = None
     lambda_tracking: float = Field(default=0.0, ge=0)
+    lambda_aux_ps: float = Field(default=0.0, ge=0)
     huber_beta_per_col: dict[str, float] | None = None
     eta_min: float | None = None
     schedule: str = Field(default="linear", pattern="^(linear|cosine)$")
@@ -309,6 +310,16 @@ class ODETrainer:
         if "fdm_heading_rad" in self.spec.x_cols:
             self._heading_idx = self.spec.x_cols.index("fdm_heading_rad")
 
+        # Poll-Schumann Eq 100 auxiliary-loss inversion table.
+        # Built lazily when ``config.lambda_aux_ps > 0`` from the A320 psi-set
+        # tabulated in poll_schumann_lib. Kept as plain tensors on the
+        # trainer's device so the step path is GPU/MPS-clean.
+        self._aux_ps_fl_grid: torch.Tensor | None = None
+        self._aux_ps_mass_ratio_grid: torch.Tensor | None = None
+        self._aux_ps_alt_idx: int | None = None
+        if config.lambda_aux_ps > 0 and self.mass_encoder is not None:
+            self._init_ps_eq100_table()
+
         self.save_meta()
 
         # Deterministic loaders for reproducible single-batch access
@@ -451,6 +462,108 @@ class ODETrainer:
         state = torch.load(optimizer_path, weights_only=True)
         self.optimizer.load_state_dict(state)
         log.debug("optimizer_state_loaded", path=str(optimizer_path))
+
+    def _init_ps_eq100_table(self) -> None:
+        """Pre-compute the Poll-Schumann Eq 100 mass-ratio ↔ FL_o lookup.
+
+        Built once at trainer init when ``config.lambda_aux_ps > 0``. The
+        ``ps_core`` library is pure-python and lives outside the
+        node-fdm-v2 repo, so we import it via an explicit sys.path
+        injection. The table is stored as ascending-FL tensors so
+        ``torch.searchsorted`` + linear interpolation can recover
+        ``mass_ratio`` from any ``FL_obs`` in the invertible range.
+
+        A320 psi-set (Poll-Schumann 2020 Part 2, Table 2).
+        """
+        import sys as _sys
+
+        ps_core_src = (
+            "/Users/gabriel/axm/04-papers/PS_MODEL/poll_schumann_lib/packages/ps-core/src"
+        )
+        if ps_core_src not in _sys.path:
+            _sys.path.insert(0, ps_core_src)
+        from ps_core._types import AircraftPsi  # type: ignore[import-not-found]
+        from ps_core.optimum import optimum_in_isa  # type: ignore[import-not-found]
+
+        a320_psi = AircraftPsi(
+            psi_1=0.156,
+            psi_2=8.05,
+            psi_4=0.753,
+            psi_5=6.29e7,
+            psi_6=0.656,
+            tau=0.162,
+        )
+        n_grid = 1001
+        mr = np.linspace(0.5, 1.0, n_grid, dtype=np.float64)
+        fl = np.array(
+            [optimum_in_isa(a320_psi, float(m)).fl_o for m in mr],
+            dtype=np.float64,
+        )
+        # fl(mr) is monotone-decreasing — flip to ascending-FL for searchsorted.
+        order = np.argsort(fl)
+        self._aux_ps_fl_grid = torch.tensor(fl[order], dtype=torch.float32, device=self.device)
+        self._aux_ps_mass_ratio_grid = torch.tensor(
+            mr[order], dtype=torch.float32, device=self.device
+        )
+        # ``raw_alt_m`` is X_COLS[0] in the adsb_hybrid schema. Resolve the
+        # index dynamically so the spec can evolve without breaking this.
+        if "raw_alt_m" in self.spec.x_cols:
+            self._aux_ps_alt_idx = self.spec.x_cols.index("raw_alt_m")
+        else:
+            self._aux_ps_alt_idx = 0  # fallback: first column is altitude.
+        log.info(
+            "ps_aux_loss_initialized",
+            lambda_aux_ps=self.config.lambda_aux_ps,
+            fl_min=float(self._aux_ps_fl_grid[0].item()),
+            fl_max=float(self._aux_ps_fl_grid[-1].item()),
+            alt_idx=self._aux_ps_alt_idx,
+        )
+
+    def _ps_eq100_aux_loss(self, x_seq: torch.Tensor, m_predicted: torch.Tensor) -> torch.Tensor:
+        """Auxiliary loss MSE(m_pred, m_PS_eq100) on cruise-stable segments.
+
+        Returns a dimensionless scalar normalised by ``(MTOW - OEW)**2`` so
+        it lives on the same order as the rollout MSE (z-scored). When no
+        segment qualifies (mask empty), returns zero gracefully.
+
+        R5 : ``m_PS`` is computed *purely from observed altitude* (already
+        in ``x_seq``) — no ground-truth mass leaked.
+        """
+        assert self._aux_ps_fl_grid is not None
+        assert self._aux_ps_mass_ratio_grid is not None
+        alt_idx = self._aux_ps_alt_idx
+        assert alt_idx is not None
+        # alt at t=0 and t=1 step apart by self.config.step seconds.
+        alt_t0 = x_seq[:, 0, alt_idx]
+        alt_t1 = x_seq[:, 1, alt_idx]
+        dh_dt = (alt_t1 - alt_t0) / max(self.config.step, 1.0)
+        fl_obs = alt_t0 * (1.0 / 0.3048) / 100.0
+
+        fl_grid = self._aux_ps_fl_grid
+        mr_grid = self._aux_ps_mass_ratio_grid
+        fl_min, fl_max = float(fl_grid[0].item()), float(fl_grid[-1].item())
+        in_range = (fl_obs >= fl_min) & (fl_obs <= fl_max)
+        is_cruise = (alt_t0 >= 9000.0) & (dh_dt.abs() <= 1.0)
+        mask = in_range & is_cruise
+        if not bool(mask.any()):
+            return torch.zeros((), device=x_seq.device, dtype=m_predicted.dtype)
+
+        # Clamp fl_obs into the invertible band for the interp; values
+        # outside are zeroed out by ``mask`` anyway.
+        fl_clamped = fl_obs.clamp(min=fl_min, max=fl_max)
+        idx = torch.searchsorted(fl_grid, fl_clamped).clamp(min=1, max=len(fl_grid) - 1)
+        fl_lo = fl_grid[idx - 1]
+        fl_hi = fl_grid[idx]
+        mr_lo = mr_grid[idx - 1]
+        mr_hi = mr_grid[idx]
+        t = (fl_clamped - fl_lo) / (fl_hi - fl_lo).clamp(min=1e-9)
+        mass_ratio = mr_lo + t * (mr_hi - mr_lo)
+        m_ps = mass_ratio * 77_000.0  # MTOM A320.
+
+        # Normalise so the aux term lives on the rollout loss scale.
+        denom = (77_000.0 - 42_600.0) ** 2  # (MTOW - OEW)²
+        diff = (m_predicted - m_ps) * mask.to(m_predicted.dtype)
+        return (diff * diff).sum() / mask.sum().clamp(min=1).to(diff.dtype) / denom
 
     def _build_norm_vectors(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Build normalization mean/std tensors for ``x_cols``.
@@ -615,6 +728,7 @@ class ODETrainer:
 
         seq_len = x_seq.shape[1]
         x0 = x_seq[:, 0, :]
+        m_0: torch.Tensor | None = None
         if self.mass_encoder is not None and flight_features is not None:
             m_0 = self.mass_encoder(flight_features[:, 0, :])
             if self._override_m0_factor is not None:
@@ -780,6 +894,17 @@ class ODETrainer:
             ).mean()
 
             loss = loss + self.config.lambda_tracking * tracking_loss
+
+        # --- Poll-Schumann Eq 100 auxiliary loss on cruise-stable rows ---
+        # Pulls the MassEncoder toward the algebraic P&S mass estimate
+        # computed from observed altitude alone (R5 preserved). Eq 100
+        # has corr 0.449 vs SYS__GW on QAR cruise (Exp 07) and a +14.5 %
+        # bias — the bias is left uncorrected so the aux loss does not
+        # leak any QAR statistic. The trajectory loss is expected to
+        # dominate the absolute level; the aux loss adds discrimination.
+        if self.config.lambda_aux_ps > 0 and m_0 is not None and self._aux_ps_fl_grid is not None:
+            aux_loss_ps = self._ps_eq100_aux_loss(x_seq, m_0)
+            loss = loss + self.config.lambda_aux_ps * aux_loss_ps
 
         if torch.isnan(loss) or torch.isinf(loss):
             log.warning("nan_or_inf_loss", loss=loss.item())

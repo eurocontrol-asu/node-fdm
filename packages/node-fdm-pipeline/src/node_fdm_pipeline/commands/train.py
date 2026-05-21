@@ -33,6 +33,7 @@ class _TrainOverrides:
     shift: int | None
     model_name: str | None
     lambda_tracking: float | None
+    lambda_aux_ps: float | None
     use_mode_weights: bool | None
     train_limit: int | None
     activation: str | None = None
@@ -105,6 +106,7 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
         method=ov.method,
         num_workers=4,
         lambda_tracking=ov.lambda_tracking or 0.0,
+        lambda_aux_ps=ov.lambda_aux_ps or 0.0,
         grad_clip_norm=10.0,
         alpha_dict={"fdm_heading_rad": 1.0},
         huber_beta_per_col={
@@ -217,6 +219,7 @@ def run_training(
     device: str = "cpu",
     model_name: str | None = None,
     lambda_tracking: float | None = None,
+    lambda_aux_ps: float | None = None,
     use_mode_weights: bool | None = None,
     train_limit: int | None = None,
     activation: str | None = None,
@@ -271,6 +274,7 @@ def run_training(
             shift=shift,
             model_name=model_name,
             lambda_tracking=lambda_tracking,
+            lambda_aux_ps=lambda_aux_ps,
             use_mode_weights=use_mode_weights,
             train_limit=train_limit,
             activation=activation,

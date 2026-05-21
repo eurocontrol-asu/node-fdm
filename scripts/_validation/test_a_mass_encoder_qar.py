@@ -38,6 +38,8 @@ from node_fdm.architectures import (  # noqa: F401  (auto-register)
     adsb_hybrid_v6_mlp,
     adsb_hybrid_v7_lean,
     adsb_hybrid_v8_lean_t15,
+    adsb_hybrid_v9_causal,
+    adsb_hybrid_v10_ps_auxloss,
 )
 from node_fdm.architectures.registry import get as get_arch_spec
 from node_fdm.layers.mass_encoder import MassEncoderLinear, MassEncoderLinearTempered
