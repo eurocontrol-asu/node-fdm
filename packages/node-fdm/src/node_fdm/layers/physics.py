@@ -189,15 +189,29 @@ class PhysicsLayer(nn.Module):
             )
             raise ValueError(msg)
 
-        phase3_cols = ("fdm_t_correction", "fdm_t_correction_w10", "fdm_t_correction_tet")
+        phase3_cols = (
+            "fdm_t_correction",
+            "fdm_t_correction_w10",
+            "fdm_t_correction_tet",
+            "fdm_t_correction_parallel",
+        )
         if any(k in x for k in phase3_cols):
             # --- Phase 3 : PSThrustLayer + bounded NN correction ---
             #
-            # Three variants share this branch :
-            #   * ``fdm_t_correction``      → ±5 % bound, linear T_PS (v13)
-            #   * ``fdm_t_correction_w10``  → ±10 % bound, linear T_PS (v13b)
-            #   * ``fdm_t_correction_tet``  → ±5 % bound, TET-nonlinear T_PS (v13c)
-            if "fdm_t_correction_w10" in x:
+            # Four variants share this branch :
+            #   * ``fdm_t_correction``           → ±5 % bound, linear T_PS (v13)
+            #   * ``fdm_t_correction_w10``       → ±10 % bound, linear T_PS (v13b)
+            #   * ``fdm_t_correction_tet``       → ±5 % bound, TET-nonlinear (v13c)
+            #   * ``fdm_t_correction_parallel``  → ±5 % bound + parallel unbounded
+            #                                       ``t_minus_d_norm`` (Strategy W,
+            #                                       v13d, Exp 18). λ static = 0.5.
+            parallel_lambda = 0.0
+            if "fdm_t_correction_parallel" in x:
+                t_correction_raw = x["fdm_t_correction_parallel"]
+                t_bound_amp = 0.05
+                ps_thrust_module = self.ps_thrust
+                parallel_lambda = 0.5
+            elif "fdm_t_correction_w10" in x:
                 t_correction_raw = x["fdm_t_correction_w10"]
                 t_bound_amp = 0.10
                 ps_thrust_module = self.ps_thrust
@@ -255,6 +269,13 @@ class PhysicsLayer(nn.Module):
             t_ps = ps_thrust_module(throttle, mach, alt_m, temp_k, q_pa)
             t_factor = 1.0 + t_bound_amp * torch.tanh(t_correction)
             t_total = t_ps * t_factor
+
+            # Strategy W (Plan B, Exp 18) — add parallel unbounded
+            # ``t_minus_d_norm·m_ref`` head scaled by static λ. λ=0 for
+            # all other variants ; λ=0.5 only when the v13d arch is active.
+            if parallel_lambda > 0.0 and "fdm_t_minus_d_norm_parallel" in x:
+                t_minus_d = x["fdm_t_minus_d_norm_parallel"]
+                t_total = t_total + parallel_lambda * t_minus_d * _M_REF_KG
 
             d_tas = (t_total - d_force) / mass - G * torch.sin(gamma)
 

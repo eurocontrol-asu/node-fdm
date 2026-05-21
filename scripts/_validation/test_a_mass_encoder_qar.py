@@ -43,6 +43,9 @@ from node_fdm.architectures import (  # noqa: F401  (auto-register)
     adsb_hybrid_v11_ps_residual,
     adsb_hybrid_v12_psdrag,
     adsb_hybrid_v13_psthrust,
+    adsb_hybrid_v13b_psthrust_w10,
+    adsb_hybrid_v13c_psthrust_tet,
+    adsb_hybrid_v13d_psthrust_parallel,
 )
 from node_fdm.architectures.registry import get as get_arch_spec
 from node_fdm.layers.mass_encoder import MassEncoderLinear, MassEncoderLinearTempered
