@@ -1056,6 +1056,14 @@ class ODETrainer:
             for cb in self.callbacks:
                 cb.on_epoch_start(epoch, epochs)
 
+            # Strategy W annealed-λ hook (v13f, Exp 21). PhysicsLayer
+            # uses (epoch, total_epochs) to compute the per-epoch parallel
+            # head weight ; no-op for other layer classes / arch variants.
+            if "physics" in self.model.layers_dict:
+                phys_layer = self.model.layers_dict["physics"]
+                if hasattr(phys_layer, "set_epoch"):
+                    phys_layer.set_epoch(epoch, epochs)
+
             # --- Train ---
             self.model.train()
             total_loss = 0.0

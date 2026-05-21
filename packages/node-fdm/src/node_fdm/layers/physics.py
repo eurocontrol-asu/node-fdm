@@ -147,6 +147,17 @@ class PhysicsLayer(nn.Module):
         # on the input column present (linear vs TET-nonlinear).
         self.ps_thrust = PSThrustLayer(mode="linear")
         self.ps_thrust_tet = PSThrustLayer(mode="tet_e3e5")
+        # Annealing schedule state for Strategy W annealed-λ variant (v13f).
+        # The trainer calls ``set_epoch(epoch, total_epochs)`` at the start
+        # of each epoch ; the forward branch reads these to compute the
+        # current λ when ``fdm_t_correction_parallel_anneal`` is present.
+        self._current_epoch = 0
+        self._total_epochs = 50
+
+    def set_epoch(self, epoch: int, total_epochs: int) -> None:
+        """Trainer hook : update annealing state at epoch start."""
+        self._current_epoch = epoch
+        self._total_epochs = max(total_epochs, 1)
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Convert model outputs into ODE derivatives.
@@ -195,6 +206,7 @@ class PhysicsLayer(nn.Module):
             "fdm_t_correction_tet",
             "fdm_t_correction_parallel",
             "fdm_t_correction_parallel_l025",
+            "fdm_t_correction_parallel_anneal",
         )
         if any(k in x for k in phase3_cols):
             # --- Phase 3 : PSThrustLayer + bounded NN correction ---
@@ -219,6 +231,18 @@ class PhysicsLayer(nn.Module):
                 ps_thrust_module = self.ps_thrust
                 parallel_lambda = 0.25
                 parallel_col = "fdm_t_minus_d_norm_parallel_l025"
+            elif "fdm_t_correction_parallel_anneal" in x:
+                t_correction_raw = x["fdm_t_correction_parallel_anneal"]
+                t_bound_amp = 0.05
+                ps_thrust_module = self.ps_thrust
+                # λ anneals linearly from 1.0 (epoch 1) to 0.0 (epoch total).
+                # Final epoch saved checkpoint has λ ≈ 0 — inference will
+                # use a v13-equivalent forward path (no parallel contribution),
+                # so AC5 with proper NN-zeroing reduces to v13's regime.
+                e = max(self._current_epoch, 1)
+                t = max(self._total_epochs - 1, 1)
+                parallel_lambda = max(0.0, 1.0 - (e - 1) / t)
+                parallel_col = "fdm_t_minus_d_norm_parallel_anneal"
             elif "fdm_t_correction_w10" in x:
                 t_correction_raw = x["fdm_t_correction_w10"]
                 t_bound_amp = 0.10

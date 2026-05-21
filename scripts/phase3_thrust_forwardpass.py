@@ -134,6 +134,8 @@ def _run_val_with_diagnostics(
         "fdm_t_minus_d_norm_parallel",
         "fdm_t_correction_parallel_l025",
         "fdm_t_minus_d_norm_parallel_l025",
+        "fdm_t_correction_parallel_anneal",
+        "fdm_t_minus_d_norm_parallel_anneal",
     )
 
     def patched_forward(vect_dict: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
