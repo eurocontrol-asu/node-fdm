@@ -119,7 +119,7 @@ from blowing up when an intermediate ODE substep produces a corrupted TAS
 
 
 class PhysicsLayer(nn.Module):
-    """Apply analytic flight dynamics in legacy or Newton force mode."""
+    """Apply analytic flight dynamics in legacy / Newton / Phase-2 modes."""
 
     def __init__(
         self,
@@ -134,6 +134,12 @@ class PhysicsLayer(nn.Module):
         """
         super().__init__()
         del input_stats  # unused
+        # Phase 2 PSDragLayer — analytical Poll-Schumann drag polar for A320.
+        # Lazily attached so the import graph stays acyclic ; the layer
+        # itself is non-trainable and stateless beyond its constant buffers.
+        from node_fdm.layers.ps_drag import PSDragLayer
+
+        self.ps_drag = PSDragLayer()
 
     def forward(self, x: dict[str, torch.Tensor]) -> dict[str, torch.Tensor]:
         """Convert model outputs into ODE derivatives.
@@ -227,6 +233,31 @@ class PhysicsLayer(nn.Module):
                 q_pa = x["fdm_q_pa"]
                 lift = q_pa * S_REF_A320_M2 * (cl_baseline(q_pa, mass) + cl_residual)
                 d_gamma = (lift / mass - G * torch.cos(gamma)) / tas_safe
+
+                # --- Phase 2 : PSDragLayer adds analytical drag prior ---
+                # When ``fdm_cd_correction`` is present alongside
+                # ``fdm_cl_residual`` and ``fdm_t_minus_d_norm``, the NN is
+                # learning T (thrust) directly and the drag is supplied by
+                # the analytical Part-3 polar with a +/-5% NN tweak. The
+                # head's ``fdm_t_minus_d_norm`` column gets re-interpreted
+                # as ``T / m_ref`` (the NN was previously absorbing T-D ;
+                # by subtracting D_PS analytically here we force it to
+                # absorb T alone).
+                #
+                # d_TAS = ( T_norm * m_ref  -  D_PS_corrected ) / m  -  g*sin gamma
+                # D_PS_corrected = q*S * C_D_PS * (1 + 0.05 * tanh(cd_correction))
+                if "fdm_cd_correction" in x:
+                    mach = x["era_mach"]
+                    temp_k = x["era_temp_K"]
+                    cd_correction = x["fdm_cd_correction"]
+                    c_l = cl_baseline(q_pa, mass) + cl_residual
+                    c_d_ps = self.ps_drag(c_l, mach, temp_k, q_pa, tas_safe)
+                    cd_factor = 1.0 + 0.05 * torch.tanh(cd_correction)
+                    c_d = c_d_ps * cd_factor
+                    d_force = q_pa * S_REF_A320_M2 * c_d
+                    # d_TAS recomposition : subtract D_PS analytically, so
+                    # the NN's t_minus_d_norm head learns the *thrust* part.
+                    d_tas = (t_minus_d_norm * _M_REF_KG - d_force) / mass - G * torch.sin(gamma)
             else:
                 lift_residual_norm = x["fdm_lift_residual_norm"]
                 d_gamma = (
@@ -242,6 +273,14 @@ class PhysicsLayer(nn.Module):
                 # diagnostics (CL_shadow once Phase 1.5 lands).
                 "fdm_lift_N": lift,
             }
+            # Phase 2 diagnostics : expose D, C_D_PS, C_D, T_implicit so the
+            # diagnostic report script can compute AC2/AC4/AC5 without a
+            # second forward pass.
+            if "fdm_cd_correction" in x and "fdm_cl_residual" in x:
+                out["fdm_drag_N"] = d_force
+                out["fdm_c_d_ps"] = c_d_ps
+                out["fdm_c_d_total"] = c_d
+                out["fdm_thrust_N"] = t_minus_d_norm * _M_REF_KG
         else:
             a_spec = x["fdm_a_spec_ms2"]
             n_z = x["fdm_n_z_residual"] + 1.0
