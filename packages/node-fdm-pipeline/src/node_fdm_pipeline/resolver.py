@@ -61,6 +61,7 @@ ARCH_BY_NAME: dict[str, str] = {
     "node_adsb_hybrid_v13d_psthrust_parallel": "adsb_hybrid_v13d_psthrust_parallel",
     "node_adsb_hybrid_v13e_psthrust_parallel_l025": "adsb_hybrid_v13e_psthrust_parallel_l025",
     "node_adsb_hybrid_v13f_psthrust_parallel_anneal": "adsb_hybrid_v13f_psthrust_parallel_anneal",
+    "node_adsb_hybrid_v13g_psthrust_tet_parallel": "adsb_hybrid_v13g_psthrust_tet_parallel",
 }
 
 _SUPPORTED_ARCHS: tuple[str, ...] = (
@@ -84,6 +85,7 @@ _SUPPORTED_ARCHS: tuple[str, ...] = (
     "adsb_hybrid_v13d_psthrust_parallel",
     "adsb_hybrid_v13e_psthrust_parallel_l025",
     "adsb_hybrid_v13f_psthrust_parallel_anneal",
+    "adsb_hybrid_v13g_psthrust_tet_parallel",
 )
 
 
@@ -150,6 +152,7 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
             | "adsb_hybrid_v13d_psthrust_parallel"
             | "adsb_hybrid_v13e_psthrust_parallel_l025"
             | "adsb_hybrid_v13f_psthrust_parallel_anneal"
+            | "adsb_hybrid_v13g_psthrust_tet_parallel"
         ):
             # All five hybrid variants share the same X/U/E/DX schema —
             # they only differ in flight_feature_cols (5 / 6 / 6 / 9 / 9),
@@ -234,6 +237,10 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 "adsb_hybrid_v13f_psthrust_parallel_anneal": (
                     "node_adsb_hybrid_v13f_psthrust_parallel_anneal",
                     "node_fdm.architectures.adsb_hybrid_v13f_psthrust_parallel_anneal",
+                ),
+                "adsb_hybrid_v13g_psthrust_tet_parallel": (
+                    "node_adsb_hybrid_v13g_psthrust_tet_parallel",
+                    "node_fdm.architectures.adsb_hybrid_v13g_psthrust_tet_parallel",
                 ),
             }[arch]
             return ArchitectureInfo(

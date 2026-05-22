@@ -207,6 +207,7 @@ class PhysicsLayer(nn.Module):
             "fdm_t_correction_parallel",
             "fdm_t_correction_parallel_l025",
             "fdm_t_correction_parallel_anneal",
+            "fdm_t_correction_tet_parallel",
         )
         if any(k in x for k in phase3_cols):
             # --- Phase 3 : PSThrustLayer + bounded NN correction ---
@@ -243,6 +244,12 @@ class PhysicsLayer(nn.Module):
                 t = max(self._total_epochs - 1, 1)
                 parallel_lambda = max(0.0, 1.0 - (e - 1) / t)
                 parallel_col = "fdm_t_minus_d_norm_parallel_anneal"
+            elif "fdm_t_correction_tet_parallel" in x:
+                t_correction_raw = x["fdm_t_correction_tet_parallel"]
+                t_bound_amp = 0.05
+                ps_thrust_module = self.ps_thrust_tet
+                parallel_lambda = 0.5
+                parallel_col = "fdm_t_minus_d_norm_tet_parallel"
             elif "fdm_t_correction_w10" in x:
                 t_correction_raw = x["fdm_t_correction_w10"]
                 t_bound_amp = 0.10
