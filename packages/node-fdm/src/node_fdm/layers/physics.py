@@ -28,6 +28,7 @@ from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
 __all__ = [
     "CL_MAX",
     "CL_REF",
+    "LCV_KEROSENE",
     "S_REF_A320_M2",
     "V_MIN_CLAMP",
     "G",
@@ -66,6 +67,11 @@ CL_REF: float = 0.5
 # A320 stall coefficient at 1 g, clean configuration, sea level. Used by
 # downstream sanity gates and ``nn_output_caps``.
 CL_MAX: float = 1.5
+
+# Lower calorific value of kerosene (P&S Part 1 Table 1). Used by the
+# Phase 4 fuel-flow branch (mdot_f = T * V / (eta * LCV), Eq 19).
+LCV_KEROSENE: float = 43.0e6
+"""Lower calorific value of jet-A kerosene (J/kg)."""
 
 
 def cl_baseline(q_pa: torch.Tensor, mass_kg: torch.Tensor) -> torch.Tensor:
@@ -138,6 +144,7 @@ class PhysicsLayer(nn.Module):
         # Lazily attached so the import graph stays acyclic ; the layer
         # itself is non-trainable and stateless beyond its constant buffers.
         from node_fdm.layers.ps_drag import PSDragLayer
+        from node_fdm.layers.ps_efficiency import PSEfficiencyLayer
         from node_fdm.layers.ps_thrust import PSThrustLayer
 
         self.ps_drag = PSDragLayer()
@@ -147,6 +154,11 @@ class PhysicsLayer(nn.Module):
         # on the input column present (linear vs TET-nonlinear).
         self.ps_thrust = PSThrustLayer(mode="linear")
         self.ps_thrust_tet = PSThrustLayer(mode="tet_e3e5")
+        # Phase 4 PSEfficiencyLayer — analytical overall propulsive
+        # efficiency from P&S Part 3 Eqs 24-29. Cruise mode (Eq 24 only)
+        # is sufficient for A320 ADS-B data ; the idle / LTO regime never
+        # appears in the dataset.
+        self.ps_efficiency = PSEfficiencyLayer(mode="cruise")
         # Annealing schedule state for Strategy W annealed-λ variant (v13f).
         # The trainer calls ``set_epoch(epoch, total_epochs)`` at the start
         # of each epoch ; the forward branch reads these to compute the
@@ -319,10 +331,39 @@ class PhysicsLayer(nn.Module):
 
             d_tas = (t_total - d_force) / mass - G * torch.sin(gamma)
 
+            # --- Phase 4 : analytical efficiency + fuel-flow closure ---
+            # When `fdm_eta_correction` is present, the architecture is
+            # v14_psefficiency : extend Phase 3 with eta_o(C_T, M) +
+            # bounded ±3 % NN tweak + Eq 19 fuel-flow. The Phase 1.5
+            # invariant `d_mass = 0` is broken — mass now drains at -mdot_f.
+            phase4 = "fdm_eta_correction" in x
+            d_mass_t: torch.Tensor
+            if phase4:
+                eta_correction = x["fdm_eta_correction"]
+                # Invert Eq 17 to recover the instantaneous thrust coefficient.
+                # q_safe and S_ref are the same factors used for D — keep the
+                # algebra symmetric so c_t_inst stays close to design C_T_DO.
+                q_safe = q_pa.clamp(min=100.0)
+                c_t_inst = t_total / (q_safe * S_REF_A320_M2)
+                # eta_PS — analytical prior. eta_total — ±3 % NN tweak.
+                eta_ps = self.ps_efficiency(c_t_inst, mach)
+                eta_total = eta_ps * (1.0 + 0.03 * torch.tanh(eta_correction))
+                # Hard floor to keep mdot_f finite if eta blows down toward 0.
+                eta_safe = eta_total.clamp(min=0.05)
+                # Eq 19 : mdot_f = T * V / (eta * LCV). Total aircraft burn,
+                # both engines combined (T already sums both engines).
+                mdot_f = t_total * tas_safe / (eta_safe * LCV_KEROSENE)
+                d_mass_t = -mdot_f
+            else:
+                eta_ps = torch.zeros_like(mass)
+                eta_total = torch.zeros_like(mass)
+                mdot_f = torch.zeros_like(mass)
+                d_mass_t = torch.zeros_like(mass)
+
             out = {
                 "fdm_d_tas_ms2": d_tas,
                 "fdm_d_gamma_rads": d_gamma,
-                "fdm_d_mass_kgs": torch.zeros_like(mass),
+                "fdm_d_mass_kgs": d_mass_t,
                 "fdm_lift_N": lift,
                 "fdm_drag_N": d_force,
                 "fdm_thrust_N": t_total,
@@ -332,6 +373,10 @@ class PhysicsLayer(nn.Module):
                 "fdm_throttle": throttle,
                 "fdm_c_d_ps": c_d_ps,
                 "fdm_c_d_total": c_d,
+                # Phase 4 diagnostic outputs (always present, zero outside v14).
+                "fdm_eta_PS": eta_ps,
+                "fdm_eta_total": eta_total,
+                "fdm_mdot_f": mdot_f,
             }
 
             if "fdm_phi_bank_rad" in x:

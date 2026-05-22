@@ -20,6 +20,7 @@ Writes ``data/models/_comparison/test_a_mass_encoder_qar.md``.
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import math
 from pathlib import Path
@@ -27,8 +28,6 @@ from pathlib import Path
 import numpy as np
 import polars as pl
 import torch
-
-import importlib
 
 from node_fdm.architectures import (  # noqa: F401  (auto-register)
     adsb_hybrid_v2,
@@ -46,6 +45,7 @@ from node_fdm.architectures import (  # noqa: F401  (auto-register)
     adsb_hybrid_v13b_psthrust_w10,
     adsb_hybrid_v13c_psthrust_tet,
     adsb_hybrid_v13d_psthrust_parallel,
+    adsb_hybrid_v14_psefficiency,
 )
 from node_fdm.architectures.registry import get as get_arch_spec
 from node_fdm.layers.mass_encoder import MassEncoderLinear, MassEncoderLinearTempered
@@ -113,9 +113,7 @@ def _dynamic_qar_aggregates(df: pl.DataFrame, alt_m: np.ndarray) -> dict[str, fl
       - accel_mean_climb : mean of finite-difference d(TAS)/dt on the same band.
       - time_to_fl240_s : row-index delta × QAR nominal step (1 s).
     """
-    band_mask = (
-        np.isfinite(alt_m) & (alt_m >= _CLIMB_BAND_LOW_M) & (alt_m <= _CLIMB_BAND_HIGH_M)
-    )
+    band_mask = np.isfinite(alt_m) & (alt_m >= _CLIMB_BAND_LOW_M) & (alt_m <= _CLIMB_BAND_HIGH_M)
 
     if "ATT__VV" in df.columns and band_mask.any():
         vv = df["ATT__VV"].to_numpy().astype(np.float64)
@@ -187,7 +185,9 @@ def compute_qar_features(df: pl.DataFrame, seg_t0_idx: int) -> dict[str, float]:
     temp_isa_dev_mean = float(np.nanmean(df["TEMP__DELTA_ISA"].to_numpy()))
 
     mach_sel = df["SPD__MACH_SEL"].to_numpy()
-    in_range = np.isfinite(mach_sel) & (mach_sel >= _MACH_CRUISE_MIN) & (mach_sel <= _MACH_CRUISE_MAX)
+    in_range = (
+        np.isfinite(mach_sel) & (mach_sel >= _MACH_CRUISE_MIN) & (mach_sel <= _MACH_CRUISE_MAX)
+    )
     mach_cruise = float(np.max(mach_sel[in_range])) if in_range.any() else _MACH_CRUISE_FALLBACK
 
     base = {
@@ -202,9 +202,7 @@ def compute_qar_features(df: pl.DataFrame, seg_t0_idx: int) -> dict[str, float]:
     return base
 
 
-def load_mass_encoder(
-    model_dir: Path, device: str = "cpu"
-) -> tuple[torch.nn.Module, list[str]]:
+def load_mass_encoder(model_dir: Path, device: str = "cpu") -> tuple[torch.nn.Module, list[str]]:
     """Re-instantiate a trained MassEncoder from its model directory.
 
     Selection priority:
@@ -239,9 +237,7 @@ def load_mass_encoder(
 
     encoder: torch.nn.Module
     class_path = getattr(arch_spec, "mass_encoder_class_path", None) if arch_spec else None
-    extra_kwargs = (
-        dict(getattr(arch_spec, "mass_encoder_kwargs", {}) or {}) if arch_spec else {}
-    )
+    extra_kwargs = dict(getattr(arch_spec, "mass_encoder_kwargs", {}) or {}) if arch_spec else {}
     if class_path:
         module_path, class_name = class_path.rsplit(".", 1)
         encoder_cls = getattr(importlib.import_module(module_path), class_name)
@@ -431,7 +427,14 @@ def _write_report(records: list[dict], models: list[str], segment: str, out_path
         bias_pct = float((err / m_truth * 100).mean())
         mae_pct = float((np.abs(err) / m_truth * 100).mean())
         corr = float(np.corrcoef(m_truth, m_pred)[0, 1]) if len(m_truth) >= 3 else float("nan")
-        stats[m] = {"bias": bias, "mae": mae, "rmse": rmse, "corr": corr, "bias_pct": bias_pct, "mae_pct": mae_pct}
+        stats[m] = {
+            "bias": bias,
+            "mae": mae,
+            "rmse": rmse,
+            "corr": corr,
+            "bias_pct": bias_pct,
+            "mae_pct": mae_pct,
+        }
         lines.append(
             f"| {m} | {len(records)} | {bias:+.0f} | {mae:.0f} | {rmse:.0f} | "
             f"{bias_pct:+.2f} | {mae_pct:.2f} | {corr:.3f} |"
@@ -442,7 +445,9 @@ def _write_report(records: list[dict], models: list[str], segment: str, out_path
         ranked = sorted(models, key=lambda m: stats[m]["mae"])
         best = ranked[0]
         worst = ranked[-1]
-        ratio = stats[worst]["mae"] / stats[best]["mae"] if stats[best]["mae"] > 0 else float("inf")
+        ratio = (
+            stats[worst]["mae"] / stats[best]["mae"] if stats[best]["mae"] > 0 else float("inf")
+        )
         if ratio < 1.1:
             verdict = (
                 f"- **Both models predict similarly** (MAE {stats[best]['mae']:.0f} vs "
