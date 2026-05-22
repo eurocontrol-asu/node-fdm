@@ -24,6 +24,7 @@ AC7 PASS : `corr(mdot_f_pred, mdot_f_qar) ≥ +0.50`.
 
 from __future__ import annotations
 
+import argparse
 import sys
 from pathlib import Path
 
@@ -85,41 +86,54 @@ def h_2(mach: np.ndarray) -> np.ndarray:
     return (num / den) * (M_DO / m_safe) ** 2
 
 
-def eta_o_np(c_t: np.ndarray, mach: np.ndarray) -> np.ndarray:
-    """Eqs 24-29 high-thrust branch only (cruise mode)."""
+def eta_o_np(
+    c_t: np.ndarray,
+    mach: np.ndarray,
+    eta_o_do_override: float | None = None,
+) -> np.ndarray:
+    """Eqs 24-29 high-thrust branch only (cruise mode).
+
+    Phase 4.5 : accepts an `eta_o_do_override` to sweep the fleet-effective
+    `η_o_DO` without modifying the module constant (which stays at the
+    textbook 0.309 to preserve v14 parity).
+    """
+    eta_o_do_eff = eta_o_do_override if eta_o_do_override is not None else ETA_O_DO
     m_safe = np.maximum(mach, 0.1)
     h_1 = (m_safe / M_DO) ** ETA_2
-    eta_o_b = h_1 * ETA_O_DO
+    eta_o_b = h_1 * eta_o_do_eff
     c_t_eta_b = h_2(m_safe) * C_T_DO
     ratio = c_t / np.maximum(c_t_eta_b, 1e-6)
     # Omega(M) — Eqs 25-26.
-    omega = np.where(m_safe >= 0.4, 0.0,
-                     np.where(m_safe >= 0.2, 1.30 * (0.4 - m_safe),
-                              1.30 * (0.4 - 0.2)))
+    omega = np.where(
+        m_safe >= 0.4, 0.0, np.where(m_safe >= 0.2, 1.30 * (0.4 - m_safe), 1.30 * (0.4 - 0.2))
+    )
     arg = ratio - 1.0
     h_0 = (1.0 - H0_CURVATURE * arg * arg) * (1.0 + omega * arg * arg)
     return h_0 * eta_o_b
 
 
-def c_d_ps(c_l: np.ndarray, mach: np.ndarray, temp_k: np.ndarray,
-           q_pa: np.ndarray, tas_ms: np.ndarray) -> np.ndarray:
+def c_d_ps(
+    c_l: np.ndarray, mach: np.ndarray, temp_k: np.ndarray, q_pa: np.ndarray, tas_ms: np.ndarray
+) -> np.ndarray:
     """Analytical C_D Part 3 §4 — same as PSDragLayer."""
     temp_safe = np.maximum(temp_k, 180.0)
     mu = (
-        MU_REF * (temp_safe / T_REF_K).clip(min=0.1) ** 1.5
-        * (T_REF_K + S_SUTH) / (temp_safe + S_SUTH)
+        MU_REF
+        * (temp_safe / T_REF_K).clip(min=0.1) ** 1.5
+        * (T_REF_K + S_SUTH)
+        / (temp_safe + S_SUTH)
     )
     tas_safe = np.maximum(tas_ms, 50.0)
     rho = (2.0 * np.maximum(q_pa, 100.0)) / (tas_safe * tas_safe)
     re_ac = np.maximum(rho * tas_safe * L_REF / np.maximum(mu, 1e-7), 1e3)
-    c_f = SKIN_A / re_ac ** SKIN_B
+    c_f = SKIN_A / re_ac**SKIN_B
     c_d0 = PSI_0 * c_f
     cl_safe = np.clip(c_l, 0.0, 2.0)
     cs = np.cos(np.radians(SWEEP_DEG))
     m_cc = MTF_AC - 0.10 * cl_safe / (cs * cs)
     m_cc_safe = np.maximum(m_cc, 0.30)
     x = mach * cs / m_cc_safe
-    c_dw = (cs ** 3) * J_1 * np.maximum(x - J_2, 0.0) ** 2
+    c_dw = (cs**3) * J_1 * np.maximum(x - J_2, 0.0) ** 2
     c_di = K_INDUCED * cl_safe * cl_safe
     return c_d0 + c_di + c_dw
 
@@ -145,23 +159,35 @@ def isa_temp_pressure(alt_m: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
 def process_flight(parquet_path: Path) -> dict[str, np.ndarray] | None:
     """Return per-cruise-sample arrays for the AC7 diagnostic."""
     df = pl.read_parquet(parquet_path)
-    needed = {"ALT__STD", "SPD__TAS", "SPD__MACH", "SYS__GW",
-              "ATT__PITCH", "TEMP__SAT",
-              "FUEL__FF_LEFT", "FUEL__FF_RIGHT"}
+    needed = {
+        "ALT__STD",
+        "SPD__TAS",
+        "SPD__MACH",
+        "SYS__GW",
+        "ATT__PITCH",
+        "TEMP__SAT",
+        "FUEL__FF_LEFT",
+        "FUEL__FF_RIGHT",
+    }
     if not needed.issubset(df.columns):
         return None
 
-    df = df.with_columns([
-        (pl.col("ALT__STD") / FT_PER_M).alias("alt_m"),
-        (pl.col("SPD__TAS") / KTS_PER_MS).alias("tas_ms"),
-        (pl.col("TEMP__SAT") + 273.15).alias("temp_k"),
-    ])
-    df = df.with_columns([
-        pl.col("alt_m").diff().alias("dalt_m_s"),
-        pl.col("tas_ms").diff().alias("dtas_ms2"),
-    ])
-    df = df.drop_nulls(["alt_m", "tas_ms", "dtas_ms2", "dalt_m_s", "SPD__MACH",
-                        "FUEL__FF_LEFT", "FUEL__FF_RIGHT"])
+    df = df.with_columns(
+        [
+            (pl.col("ALT__STD") / FT_PER_M).alias("alt_m"),
+            (pl.col("SPD__TAS") / KTS_PER_MS).alias("tas_ms"),
+            (pl.col("TEMP__SAT") + 273.15).alias("temp_k"),
+        ]
+    )
+    df = df.with_columns(
+        [
+            pl.col("alt_m").diff().alias("dalt_m_s"),
+            pl.col("tas_ms").diff().alias("dtas_ms2"),
+        ]
+    )
+    df = df.drop_nulls(
+        ["alt_m", "tas_ms", "dtas_ms2", "dalt_m_s", "SPD__MACH", "FUEL__FF_LEFT", "FUEL__FF_RIGHT"]
+    )
     df_cruise = df.filter(
         (pl.col("alt_m") > 8500.0)
         & (pl.col("alt_m") < 12500.0)
@@ -208,14 +234,11 @@ def process_flight(parquet_path: Path) -> dict[str, np.ndarray] | None:
     # C_T_inst = T_obs / (q * S_ref).
     c_t_inst = t_obs / np.maximum(q_pa * S_REF, 1.0)
 
-    # eta_PS analytical.
-    eta_ps = eta_o_np(c_t_inst, mach)
-
-    # Predicted fuel flow (Eq 19), total (sum both engines).
-    mdot_f_pred_kg_s = t_obs * tas_ms / np.maximum(eta_ps * LCV_KEROSENE, 1e-6)
-
     # QAR ground truth fuel flow. FUEL__FF_* is in kg/h on Honeywell A320.
     mdot_f_qar_kg_s = (ff_l + ff_r) / 3600.0
+
+    # Kinematic validity (independent of η_o_DO sweep value).
+    valid_kin = t_obs_valid & (mdot_f_qar_kg_s > 0.1) & (mdot_f_qar_kg_s < 5.0)
 
     return {
         "alt_m": alt_m,
@@ -226,14 +249,211 @@ def process_flight(parquet_path: Path) -> dict[str, np.ndarray] | None:
         "drag_n": drag_n,
         "t_obs_n": t_obs,
         "c_t_inst": c_t_inst,
-        "eta_ps": eta_ps,
-        "mdot_f_pred_kg_s": mdot_f_pred_kg_s,
         "mdot_f_qar_kg_s": mdot_f_qar_kg_s,
-        "valid": t_obs_valid & (eta_ps > 0.05) & (eta_ps < 0.55) & (mdot_f_qar_kg_s > 0.1) & (mdot_f_qar_kg_s < 5.0),
+        "valid_kin": valid_kin,
     }
 
 
-def main() -> int:  # noqa: PLR0912, PLR0915
+def compute_metrics_for_eta_o_do(
+    cached: dict[str, np.ndarray],
+    eta_o_do: float,
+) -> dict[str, float]:
+    """Apply a single `η_o_DO` value to cached kinematics, return AC7 metrics.
+
+    The QAR loop is run *once* (expensive ; loads ~500 parquet files and
+    runs the cruise filter), then this function is called per sweep value
+    on the cached arrays. Cost per call : ~150 ms on 793 k samples.
+    """
+    c_t_inst = cached["c_t_inst"]
+    mach = cached["mach"]
+    t_obs = cached["t_obs_n"]
+    tas_ms = cached["tas_ms"]
+    mdot_qar = cached["mdot_f_qar_kg_s"]
+    valid_kin = cached["valid_kin"]
+
+    eta_ps = eta_o_np(c_t_inst, mach, eta_o_do_override=eta_o_do)
+    mdot_pred = t_obs * tas_ms / np.maximum(eta_ps * LCV_KEROSENE, 1e-6)
+    valid = valid_kin & (eta_ps > 0.05) & (eta_ps < 0.55)
+
+    if int(valid.sum()) < 100:
+        return {
+            "eta_o_do": eta_o_do,
+            "n": 0,
+            "corr": float("nan"),
+            "bias": float("nan"),
+            "median_abs_rel_err": float("nan"),
+            "p90_abs_rel_err": float("nan"),
+            "p99_abs_rel_err": float("nan"),
+            "eta_ps_median": float("nan"),
+            "mdot_pred_median": float("nan"),
+            "mdot_qar_median": float("nan"),
+        }
+
+    mp = mdot_pred[valid]
+    mq = mdot_qar[valid]
+    corr = float(np.corrcoef(mp, mq)[0, 1])
+    abs_rel = np.abs((mp - mq) / mq)
+    return {
+        "eta_o_do": eta_o_do,
+        "n": int(valid.sum()),
+        "corr": corr,
+        "bias": float(np.median(mp / mq)),
+        "median_abs_rel_err": float(np.median(abs_rel)),
+        "p90_abs_rel_err": float(np.percentile(abs_rel, 90)),
+        "p99_abs_rel_err": float(np.percentile(abs_rel, 99)),
+        "eta_ps_median": float(np.median(eta_ps[valid])),
+        "mdot_pred_median": float(np.median(mp)),
+        "mdot_qar_median": float(np.median(mq)),
+    }
+
+
+def _run_sweep(
+    cached: dict[str, np.ndarray],
+    sweep_values: list[float],
+    out_csv: Path | None,
+    n_flights: int,
+) -> int:
+    """Sweep mode : evaluate every η_o_DO in the list, write CSV + markdown."""
+    rows: list[dict[str, float]] = []
+    print(f"\n=== Phase 4.5 η_o_DO sweep ({len(sweep_values)} values) ===\n")
+    print(f"{'η_o_DO':>8} {'n':>9} {'corr':>9} {'bias':>9} {'median|Δ|%':>11} "
+          f"{'p99|Δ|%':>9} {'η_PS_med':>9} {'mdot_pred':>10}")
+    for eta in sweep_values:
+        m = compute_metrics_for_eta_o_do(cached, eta)
+        rows.append(m)
+        print(
+            f"{m['eta_o_do']:>8.4f} {m['n']:>9d} {m['corr']:>+9.4f} "
+            f"{m['bias']:>9.4f} {m['median_abs_rel_err']*100:>11.2f} "
+            f"{m['p99_abs_rel_err']*100:>9.2f} {m['eta_ps_median']:>9.4f} "
+            f"{m['mdot_pred_median']:>10.4f}"
+        )
+
+    # Identify η_o_DO* : min |bias - 1| subject to corr ≥ +0.30 (loose filter).
+    feasible = [r for r in rows if np.isfinite(r["corr"]) and r["corr"] >= 0.30]
+    if feasible:
+        best = min(feasible, key=lambda r: abs(r["bias"] - 1.0))
+        print(f"\nBest by min |bias - 1| : η_o_DO* = {best['eta_o_do']:.4f}  "
+              f"(bias={best['bias']:.4f}, corr={best['corr']:+.4f}, "
+              f"median|Δ|={best['median_abs_rel_err']*100:.2f}%)")
+    else:
+        best = None
+        print("\nNo feasible point (all corr < +0.30) — sweep may need to widen.")
+
+    # Determine verdict.
+    if best is not None and abs(best["bias"] - 1.0) < 0.05 and best["corr"] >= 0.50 \
+       and best["median_abs_rel_err"] < 0.10:
+        verdict = "✅ Success — Stop Condition 1 reached"
+    elif best is not None and abs(best["bias"] - 1.0) < 0.05 and best["corr"] < 0.50:
+        verdict = "⚠️ Trade-off characterised — Stop Condition 2"
+    else:
+        # Check if any candidate has corr >> baseline.
+        max_corr = max((r["corr"] for r in rows if np.isfinite(r["corr"])), default=float("nan"))
+        if max_corr < 0.45:
+            verdict = "🔬 Theory falsified — Stop Condition 3 (no η_o_DO produces corr ≥ +0.45)"
+        else:
+            verdict = "⚠️ Partial — refine sweep (Strategy B)"
+
+    # Write CSV
+    if out_csv is None:
+        out_csv = Path("data/investigations/phase4_5_eta_recalib/artifacts/eta_sweep.csv")
+    out_csv.parent.mkdir(parents=True, exist_ok=True)
+    with out_csv.open("w") as f:
+        keys = list(rows[0].keys())
+        f.write(",".join(keys) + "\n")
+        for r in rows:
+            f.write(",".join(f"{r[k]:.6f}" if isinstance(r[k], float) else str(r[k])
+                              for k in keys) + "\n")
+    print(f"\nCSV written : {out_csv}")
+
+    # Write markdown report
+    out_md = out_csv.with_suffix(".md")
+    lines = [
+        "# Phase 4.5 — η_o_DO sweep results",
+        "",
+        f"> n_flights = {n_flights}. n_cached samples = {len(cached['valid_kin'])}.",
+        f"> Sweep values : {sweep_values}.",
+        "",
+        f"**Verdict** : {verdict}",
+        "",
+        "## Sweep table",
+        "",
+        "| η_o_DO | n | corr Pearson | bias (pred/qar) | median \\|Δ\\| % | p90 \\|Δ\\| % | p99 \\|Δ\\| % | η_PS median | mdot_pred median (kg/s) |",
+        "|---:|---:|---:|---:|---:|---:|---:|---:|---:|",
+    ]
+    for r in rows:
+        lines.append(
+            f"| {r['eta_o_do']:.4f} | {r['n']} | {r['corr']:+.4f} | "
+            f"{r['bias']:.4f} | {r['median_abs_rel_err']*100:.2f} | "
+            f"{r['p90_abs_rel_err']*100:.2f} | {r['p99_abs_rel_err']*100:.2f} | "
+            f"{r['eta_ps_median']:.4f} | {r['mdot_pred_median']:.4f} |"
+        )
+    if best is not None:
+        lines.extend([
+            "",
+            "## Best η_o_DO* (min |bias - 1|, corr ≥ +0.30)",
+            "",
+            f"- **η_o_DO* = {best['eta_o_do']:.4f}**",
+            f"- bias = {best['bias']:.4f}",
+            f"- corr Pearson = {best['corr']:+.4f}",
+            f"- median |Δ| = {best['median_abs_rel_err']*100:.2f} %",
+            f"- p99 |Δ| = {best['p99_abs_rel_err']*100:.2f} %",
+        ])
+    lines.extend([
+        "",
+        "## Compliance",
+        "",
+        "- R1 (no retraining) : ✅ — only the validation script touches η_o_DO.",
+        "- R2 (no QAR in training) : ✅ — script is read-only on QAR data.",
+        "- R6 (corr + bias + median |Δ| reported together) : ✅.",
+    ])
+    out_md.write_text("\n".join(lines))
+    print(f"Markdown report : {out_md}")
+    print(f"\nVerdict : {verdict}")
+    return 0
+
+
+def main() -> int:
+    parser = argparse.ArgumentParser(
+        description="AC7 QAR fuel-flow validation + Phase 4.5 η_o_DO sweep"
+    )
+    parser.add_argument(
+        "--eta-o-do",
+        type=float,
+        default=None,
+        help="Single η_o_DO override (default = textbook 0.309).",
+    )
+    parser.add_argument(
+        "--sweep-values",
+        type=str,
+        default=None,
+        help="Comma-separated list of η_o_DO values (sweep mode).",
+    )
+    parser.add_argument("--out", type=Path, default=None, help="Output CSV path for sweep mode.")
+    parser.add_argument(
+        "--report",
+        type=Path,
+        default=Path("data/models/_comparison/phase4_fuelflow_v14_qar_validation.md"),
+        help="Output markdown report (single-run mode).",
+    )
+    args = parser.parse_args()
+
+    sweep_mode = args.sweep_values is not None
+    if sweep_mode:
+        try:
+            sweep_values = [float(v.strip()) for v in args.sweep_values.split(",")]
+        except ValueError as exc:
+            print(f"Invalid --sweep-values : {exc}")
+            return 1
+        if not sweep_values:
+            print("--sweep-values empty")
+            return 1
+        print(f"Sweep mode : {len(sweep_values)} η_o_DO values = {sweep_values}")
+    else:
+        single_eta = args.eta_o_do  # may be None → textbook
+        print(
+            f"Single-run mode : η_o_DO = {single_eta if single_eta is not None else ETA_O_DO} (textbook default)"
+        )
+
     paths = sorted(QAR_DIR.glob("*A320*.parquet"))
     print(f"Found {len(paths)} A320 QAR files")
     if not paths:
@@ -243,7 +463,7 @@ def main() -> int:  # noqa: PLR0912, PLR0915
     all_data: list[dict[str, np.ndarray]] = []
     for i, p in enumerate(paths):
         if i % 50 == 0:
-            print(f"  [{i+1}/{len(paths)}] {p.name}")
+            print(f"  [{i + 1}/{len(paths)}] {p.name}")
         d = process_flight(p)
         if d is not None:
             all_data.append(d)
@@ -251,28 +471,47 @@ def main() -> int:  # noqa: PLR0912, PLR0915
         print("No cruise-stable flights — abort")
         return 1
 
-    # Concatenate across flights.
-    mdot_pred = np.concatenate([d["mdot_f_pred_kg_s"] for d in all_data])
-    mdot_qar = np.concatenate([d["mdot_f_qar_kg_s"] for d in all_data])
-    eta_ps = np.concatenate([d["eta_ps"] for d in all_data])
-    c_t_inst = np.concatenate([d["c_t_inst"] for d in all_data])
-    mach = np.concatenate([d["mach"] for d in all_data])
-    valid = np.concatenate([d["valid"] for d in all_data])
+    # Cache concatenated arrays across flights (kinematics + QAR FF only,
+    # not yet η- or mdot_pred-dependent so the sweep can replay cheaply).
+    cached = {
+        "alt_m": np.concatenate([d["alt_m"] for d in all_data]),
+        "tas_ms": np.concatenate([d["tas_ms"] for d in all_data]),
+        "mach": np.concatenate([d["mach"] for d in all_data]),
+        "mass_kg": np.concatenate([d["mass_kg"] for d in all_data]),
+        "q_pa": np.concatenate([d["q_pa"] for d in all_data]),
+        "drag_n": np.concatenate([d["drag_n"] for d in all_data]),
+        "t_obs_n": np.concatenate([d["t_obs_n"] for d in all_data]),
+        "c_t_inst": np.concatenate([d["c_t_inst"] for d in all_data]),
+        "mdot_f_qar_kg_s": np.concatenate([d["mdot_f_qar_kg_s"] for d in all_data]),
+        "valid_kin": np.concatenate([d["valid_kin"] for d in all_data]),
+    }
+    print(f"\nCached {len(cached['valid_kin'])} samples across {len(all_data)} flights")
 
-    n = int(valid.sum())
-    n_total = len(valid)
-    print(f"\n{n} valid cruise-stable samples (of {n_total}) across {len(all_data)} flights")
+    if sweep_mode:
+        return _run_sweep(cached, sweep_values, args.out, len(all_data))
 
+    # === Single-run mode (existing Phase 4 path) ===
+    eta_o_do = args.eta_o_do  # may be None → textbook
+    metrics = compute_metrics_for_eta_o_do(
+        cached,
+        eta_o_do if eta_o_do is not None else ETA_O_DO,
+    )
+    n = metrics["n"]
     if n < 100:
         print("Too few valid samples — abort")
         return 1
 
+    # Re-derive mp / mq for distribution reporting (already inside metrics).
+    eta_ps_full = eta_o_np(cached["c_t_inst"], cached["mach"], eta_o_do_override=eta_o_do)
+    mdot_pred = cached["t_obs_n"] * cached["tas_ms"] / np.maximum(eta_ps_full * LCV_KEROSENE, 1e-6)
+    valid = cached["valid_kin"] & (eta_ps_full > 0.05) & (eta_ps_full < 0.55)
     mp = mdot_pred[valid]
-    mq = mdot_qar[valid]
+    mq = cached["mdot_f_qar_kg_s"][valid]
+    eta_ps = eta_ps_full
 
     # === Test 1 : Pearson corr (AC7 central gate) ===
-    corr_pearson = float(np.corrcoef(mp, mq)[0, 1])
-    print(f"\n=== AC7 — corr(mdot_f_pred, mdot_f_qar) ===")
+    corr_pearson = metrics["corr"]
+    print("\n=== AC7 — corr(mdot_f_pred, mdot_f_qar) ===")
     print(f"Pearson corr : {corr_pearson:+.4f}")
 
     if corr_pearson >= 0.50:
@@ -284,15 +523,13 @@ def main() -> int:  # noqa: PLR0912, PLR0915
     print(f"AC7 verdict : {ac7_verdict}")
 
     # === Test 2 : relative error distribution ===
-    rel_err = (mp - mq) / mq
-    abs_rel_err = np.abs(rel_err)
-    median_abs_rel_err = float(np.median(abs_rel_err))
-    p99_abs_rel_err = float(np.percentile(abs_rel_err, 99))
-    p90_abs_rel_err = float(np.percentile(abs_rel_err, 90))
-    print(f"\n=== Bonus — relative error distribution ===")
-    print(f"median |Δmdot_f| / mdot_f_qar : {median_abs_rel_err*100:.1f} %  (target < 15 %)")
-    print(f"p90    |Δmdot_f| / mdot_f_qar : {p90_abs_rel_err*100:.1f} %")
-    print(f"p99    |Δmdot_f| / mdot_f_qar : {p99_abs_rel_err*100:.1f} %  (target < 50 %)")
+    median_abs_rel_err = metrics["median_abs_rel_err"]
+    p99_abs_rel_err = metrics["p99_abs_rel_err"]
+    p90_abs_rel_err = metrics["p90_abs_rel_err"]
+    print("\n=== Bonus — relative error distribution ===")
+    print(f"median |Δmdot_f| / mdot_f_qar : {median_abs_rel_err * 100:.1f} %  (target < 15 %)")
+    print(f"p90    |Δmdot_f| / mdot_f_qar : {p90_abs_rel_err * 100:.1f} %")
+    print(f"p99    |Δmdot_f| / mdot_f_qar : {p99_abs_rel_err * 100:.1f} %  (target < 50 %)")
 
     # === Stop Condition 3 : theory falsified if median |Δ| > 50 %
     theory_falsified = median_abs_rel_err > 0.50
@@ -303,16 +540,22 @@ def main() -> int:  # noqa: PLR0912, PLR0915
     print(f"\n{verdict_text}")
 
     # === Bonus : eta_PS distribution + mdot stats ===
-    print(f"\n=== eta_PS distribution (cruise) ===")
-    print(f"  min={eta_ps[valid].min():.3f}  median={np.median(eta_ps[valid]):.3f}  "
-          f"max={eta_ps[valid].max():.3f}")
-    print(f"\n=== mdot_f distributions (cruise, kg/s) ===")
-    print(f"  pred  median={np.median(mp):.3f}  p10={np.percentile(mp, 10):.3f}  p90={np.percentile(mp, 90):.3f}")
-    print(f"  qar   median={np.median(mq):.3f}  p10={np.percentile(mq, 10):.3f}  p90={np.percentile(mq, 90):.3f}")
-    print(f"  bias  pred/qar (median ratio) = {np.median(mp/mq):.3f}")
+    print("\n=== eta_PS distribution (cruise) ===")
+    print(
+        f"  min={eta_ps[valid].min():.3f}  median={np.median(eta_ps[valid]):.3f}  "
+        f"max={eta_ps[valid].max():.3f}"
+    )
+    print("\n=== mdot_f distributions (cruise, kg/s) ===")
+    print(
+        f"  pred  median={np.median(mp):.3f}  p10={np.percentile(mp, 10):.3f}  p90={np.percentile(mp, 90):.3f}"
+    )
+    print(
+        f"  qar   median={np.median(mq):.3f}  p10={np.percentile(mq, 10):.3f}  p90={np.percentile(mq, 90):.3f}"
+    )
+    print(f"  bias  pred/qar (median ratio) = {np.median(mp / mq):.3f}")
 
     # === Write report ===
-    report = Path("data/models/_comparison/phase4_fuelflow_v14_qar_validation.md")
+    report = args.report
     report.parent.mkdir(parents=True, exist_ok=True)
     lines = [
         "# Phase 4 — AC7 QAR fuel-flow validation",
@@ -322,8 +565,7 @@ def main() -> int:  # noqa: PLR0912, PLR0915
         "",
         "## Method",
         "",
-        "For each cruise-stable QAR sample (alt > 8500 m, |dh/dt|<0.5 m/s, "
-        "|dV/dt|<0.3 m/s²) :",
+        "For each cruise-stable QAR sample (alt > 8500 m, |dh/dt|<0.5 m/s, |dV/dt|<0.3 m/s²) :",
         "",
         "1. Reconstruct kinematic T-observable :",
         "   `T_obs = m·dV/dt + D_PS(C_L_qar) + m·g·sin γ`",
@@ -342,9 +584,9 @@ def main() -> int:  # noqa: PLR0912, PLR0915
         "",
         "## Relative error distribution",
         "",
-        f"- median |Δmdot_f| / mdot_f_qar : **{median_abs_rel_err*100:.1f} %**  (target < 15 %)",
-        f"- p90  : **{p90_abs_rel_err*100:.1f} %**",
-        f"- p99  : **{p99_abs_rel_err*100:.1f} %**  (target < 50 %)",
+        f"- median |Δmdot_f| / mdot_f_qar : **{median_abs_rel_err * 100:.1f} %**  (target < 15 %)",
+        f"- p90  : **{p90_abs_rel_err * 100:.1f} %**",
+        f"- p99  : **{p99_abs_rel_err * 100:.1f} %**  (target < 50 %)",
         "",
         f"## Stop Condition 3 : **{verdict_text}**",
         "",
@@ -355,7 +597,7 @@ def main() -> int:  # noqa: PLR0912, PLR0915
         f"| mdot_f_pred | {np.median(mp):.3f} | {np.percentile(mp, 10):.3f} | {np.percentile(mp, 90):.3f} |",
         f"| mdot_f_qar  | {np.median(mq):.3f} | {np.percentile(mq, 10):.3f} | {np.percentile(mq, 90):.3f} |",
         "",
-        f"Bias (median `mdot_f_pred / mdot_f_qar`) : **{np.median(mp/mq):.3f}** "
+        f"Bias (median `mdot_f_pred / mdot_f_qar`) : **{np.median(mp / mq):.3f}** "
         "(1.00 = unbiased).",
         "",
         "## eta_PS distribution",
