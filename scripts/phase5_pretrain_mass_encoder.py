@@ -317,7 +317,7 @@ def main() -> int:  # noqa: PLR0915
     lines = [
         "# Phase 5 Stage 1 — QAR pre-training mass encoder",
         "",
-        f"> Trained on {train_stats['n']} QAR Air France flights (train split, 2018).",
+        f"> Trained on {train_stats['n']} QAR OperatorX flights (train split, 2018).",
         f"> Evaluated on {test_stats['n']} held-out QAR flights (test split).",
         "> R5-status : QAR is the *training signal*. Weights transferable to v14 architecture (Stage 2).",
         "",
