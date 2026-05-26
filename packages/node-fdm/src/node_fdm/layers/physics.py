@@ -130,6 +130,9 @@ class PhysicsLayer(nn.Module):
     def __init__(
         self,
         input_stats: dict[str, dict[str, float]] | None = None,
+        throttle_activation: str = "sigmoid",
+        mass_coupling: str = "fuel_burn",
+        seymour_alpha: float = 0.0,
     ) -> None:
         """Initialize the physics layer.
 
@@ -137,9 +140,64 @@ class PhysicsLayer(nn.Module):
             input_stats: Optional column statistics; unused, accepted only to
                 keep the non-trainable layer instantiation contract uniform
                 with ``TrajectoryLayer``.
+            throttle_activation: Phase 7 — selector for the activation that
+                maps the StructuredLayer's ``fdm_throttle_norm`` head into
+                the physical throttle setting χ ∈ [0.1, 1.0]. One of
+                ``"sigmoid"`` (v14 baseline, default — backward-compat),
+                ``"clamp"`` (Phase 7 Strategy A : linear z∈[-5,+5]→χ∈[0.1,1.0]
+                with uniform dχ/dz = 0.09, dead outside) or
+                ``"tanh_stretched"`` (Phase 7 Strategy B :
+                0.55 + 0.45·tanh(z/2.5), gradient x6 less compressed than
+                sigmoid at extrema). See LESSONS_PHASE_6_C_T_DO_FALSIFIED.md
+                §5 for the gradient-compression diagnostic motivating Phase 7.
         """
         super().__init__()
         del input_stats  # unused
+        if throttle_activation not in {"sigmoid", "clamp", "tanh_stretched"}:
+            msg = (
+                f"throttle_activation must be one of "
+                "{'sigmoid', 'clamp', 'tanh_stretched'}; "
+                f"got {throttle_activation!r}."
+            )
+            raise ValueError(msg)
+        if mass_coupling not in {"fuel_burn", "frozen"}:
+            msg = f"mass_coupling must be one of {{'fuel_burn', 'frozen'}}; got {mass_coupling!r}."
+            raise ValueError(msg)
+        if seymour_alpha < 0.0 or seymour_alpha > 0.1:
+            msg = f"seymour_alpha must be in [0.0, 0.1] (dimensionless) ; got {seymour_alpha!r}."
+            raise ValueError(msg)
+        self.throttle_activation = throttle_activation
+        # Phase 8 — 'fuel_burn' (default = v14 : d_mass = -mdot_f) vs
+        # 'frozen' (v9-equivalent : d_mass = 0, Phase 1.5 invariant kept).
+        # The Phase 4 branch still computes mdot_f for the diagnostic output
+        # so closed-loop AC7 measurements still work regardless of the flag.
+        self.mass_coupling = mass_coupling
+        # Phase 10 — Seymour 2020 fuel-burn age correction coefficient
+        # (dimensionless, scales the log term). 0.0 = disabled
+        # (backward-compat default, v14/v17/v19 unchanged). Canonical
+        # Seymour 2020 value is **0.0128**, derived from the empirical
+        # fuel-flow penalty formula
+        #
+        #     mdot_f_corrected = mdot_f / (1 - k · ln(age + 1))
+        #
+        # with k = 0.0128 (i.e. 1.28 in the percent-units form
+        # ``mdot_f · 100/(100 - 1.28·ln(age+1))``). Equivalently on η :
+        #
+        #     η_corrected = η_PS · (1 - k · ln(age + 1))
+        #
+        # The log term plateaus engine-wear deterioration after the
+        # first decade, matching industry observations (Lufthansa
+        # Technik, ICAO CAEP). Applied inside the Phase 4 branch only
+        # when ``x["raw_age_years"]`` is present, so architectures that
+        # don't expose the column stay unaffected.
+        #
+        # The canonical value is conservative ; operators with above-
+        # average deterioration (older fleet, harsher maintenance regime,
+        # specific engine type) may need a higher k. If QAR-style
+        # fuel-flow ground truth becomes available, k can be calibrated
+        # empirically — but in default operation the literature value
+        # is used.
+        self.seymour_alpha = seymour_alpha
         # Phase 2 PSDragLayer — analytical Poll-Schumann drag polar for A320.
         # Lazily attached so the import graph stays acyclic ; the layer
         # itself is non-trainable and stateless beyond its constant buffers.
@@ -302,7 +360,23 @@ class PhysicsLayer(nn.Module):
             alt_m = x["raw_alt_m"]
 
             # Map throttle_norm to χ ∈ [0.1, 1.0] — physical range (R8).
-            throttle = 0.1 + 0.9 * torch.sigmoid(throttle_norm)
+            # Phase 7 : dispatch on the activation selected at __init__.
+            # ``sigmoid`` is the v14 baseline ; ``clamp`` / ``tanh_stretched``
+            # are the Phase 7 candidates aimed at restoring a non-compressed
+            # gradient at the χ extrema (idle ~0.1, full thrust ~1.0).
+            if self.throttle_activation == "clamp":
+                # Linear z∈[-5,+5] → χ∈[0.1,1.0]. dχ/dz = 0.09 uniform inside
+                # the range, 0 outside (the StructuredLayer caps |z|≤5 so the
+                # dead-gradient region is reached only at the head's own cap).
+                throttle = (0.1 + 0.9 * (throttle_norm + 5.0) / 10.0).clamp(0.1, 1.0)
+            elif self.throttle_activation == "tanh_stretched":
+                # 0.55 + 0.45·tanh(z/2.5). χ saturates at [0.10, 1.00] like
+                # sigmoid, but dχ/dz = (0.45/2.5)·sech²(z/2.5) is ≈ 0.18 at
+                # the center and 0.03 at the extrema -> x6 less compressed
+                # than the sigmoid's x13 attenuation.
+                throttle = 0.55 + 0.45 * torch.tanh(throttle_norm / 2.5)
+            else:  # "sigmoid" — v14 baseline, backward-compat default.
+                throttle = 0.1 + 0.9 * torch.sigmoid(throttle_norm)
 
             # Lift (Phase 1.5 unchanged).
             c_l = cl_baseline(q_pa, mass) + cl_residual
@@ -329,6 +403,24 @@ class PhysicsLayer(nn.Module):
                 t_minus_d = x[parallel_col]
                 t_total = t_total + parallel_lambda * t_minus_d * _M_REF_KG
 
+            # Phase 8 Exp 3 (v18) — parallel unbounded *drag* head, mirror
+            # of Strategy W on the drag channel. Generalises the parallel-
+            # escape pattern from thrust-only to drag too. v14 baseline
+            # diagnostic showed AC4_cd mean = 3.962 % / p99 = 4.975 % —
+            # the bounded ±5 % cd_correction is also glued to its cap, so
+            # the drag prior (PSDragLayer polar) is systematically off
+            # by > 5 % on a non-negligible fraction of samples. Adding
+            # ``- λ_cd · cd_minus·m_ref`` to d_force gives the NN an
+            # unbounded escape on the *negative* d_TAS direction (drag
+            # makes d_TAS less positive). λ_cd reuses the same scalar as
+            # the thrust parallel head for symmetry — these are the only
+            # two channels that benefit (AC4_eta is dormant, AC4_cd has
+            # the saturation signature; the v18 arch is built to verify
+            # the closure pollution side-effect from v17 is reduced).
+            if "fdm_cd_minus_d_norm_parallel" in x and parallel_lambda > 0.0:
+                cd_minus = x["fdm_cd_minus_d_norm_parallel"]
+                d_force = d_force + parallel_lambda * cd_minus * _M_REF_KG
+
             d_tas = (t_total - d_force) / mass - G * torch.sin(gamma)
 
             # --- Phase 4 : analytical efficiency + fuel-flow closure ---
@@ -348,12 +440,35 @@ class PhysicsLayer(nn.Module):
                 # eta_PS — analytical prior. eta_total — ±3 % NN tweak.
                 eta_ps = self.ps_efficiency(c_t_inst, mach)
                 eta_total = eta_ps * (1.0 + 0.03 * torch.tanh(eta_correction))
+                # Phase 10 — Seymour 2020 age correction. Older engines and
+                # airframes have higher SFC ; equivalently, lower overall
+                # propulsive efficiency at the same throttle. The
+                # multiplicative correction
+                #     η · (1 - k · ln(age + 1))
+                # is the η-side equivalent of Seymour's fuel-flow penalty
+                #     mdot_f · 100/(100 - 100·k·ln(age + 1)).
+                # k = 0.0128 = canonical Seymour 2020 (≈ 3 % fuel penalty
+                # at 9 yr, plateauing ≈ 6 % at 30 yr). Activated only when
+                # ``raw_age_years`` is in the input mapping AND
+                # ``self.seymour_alpha > 0`` ; otherwise no-op so v14/v17/v19
+                # stay bit-identical.
+                if self.seymour_alpha > 0.0 and "raw_age_years" in x:
+                    age_years = x["raw_age_years"]
+                    eta_total = eta_total * (1.0 - self.seymour_alpha * torch.log(age_years + 1.0))
                 # Hard floor to keep mdot_f finite if eta blows down toward 0.
                 eta_safe = eta_total.clamp(min=0.05)
                 # Eq 19 : mdot_f = T * V / (eta * LCV). Total aircraft burn,
                 # both engines combined (T already sums both engines).
                 mdot_f = t_total * tas_safe / (eta_safe * LCV_KEROSENE)
-                d_mass_t = -mdot_f
+                # Phase 8 — mass coupling dispatch. ``fuel_burn`` (v14
+                # default) drains mass at runtime ; ``frozen`` keeps the
+                # Phase 1.5 invariant ``d_mass = 0`` while still exposing
+                # mdot_f as a diagnostic output for AC7 / closed-loop
+                # measurements.
+                if self.mass_coupling == "frozen":
+                    d_mass_t = torch.zeros_like(mass)
+                else:  # "fuel_burn" — v14 baseline.
+                    d_mass_t = -mdot_f
             else:
                 eta_ps = torch.zeros_like(mass)
                 eta_total = torch.zeros_like(mass)

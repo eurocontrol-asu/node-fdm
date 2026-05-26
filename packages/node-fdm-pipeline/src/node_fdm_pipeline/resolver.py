@@ -63,6 +63,15 @@ ARCH_BY_NAME: dict[str, str] = {
     "node_adsb_hybrid_v13f_psthrust_parallel_anneal": "adsb_hybrid_v13f_psthrust_parallel_anneal",
     "node_adsb_hybrid_v13g_psthrust_tet_parallel": "adsb_hybrid_v13g_psthrust_tet_parallel",
     "node_adsb_hybrid_v14_psefficiency": "adsb_hybrid_v14_psefficiency",
+    "node_adsb_hybrid_v15_throttle_clamp": "adsb_hybrid_v15_throttle_clamp",
+    "node_adsb_hybrid_v15_throttle_tanh": "adsb_hybrid_v15_throttle_tanh",
+    "node_adsb_hybrid_v16_no_dmass": "adsb_hybrid_v16_no_dmass",
+    "node_adsb_hybrid_v17_psefficiency_parallel": "adsb_hybrid_v17_psefficiency_parallel",
+    "node_adsb_hybrid_v18_parallel_t_and_cd": "adsb_hybrid_v18_parallel_t_and_cd",
+    "node_adsb_hybrid_v19_psefficiency_parallel_l025": (
+        "adsb_hybrid_v19_psefficiency_parallel_l025"
+    ),
+    "node_adsb_hybrid_v20_seymour_age": "adsb_hybrid_v20_seymour_age",
 }
 
 _SUPPORTED_ARCHS: tuple[str, ...] = (
@@ -88,6 +97,13 @@ _SUPPORTED_ARCHS: tuple[str, ...] = (
     "adsb_hybrid_v13f_psthrust_parallel_anneal",
     "adsb_hybrid_v13g_psthrust_tet_parallel",
     "adsb_hybrid_v14_psefficiency",
+    "adsb_hybrid_v15_throttle_clamp",
+    "adsb_hybrid_v15_throttle_tanh",
+    "adsb_hybrid_v16_no_dmass",
+    "adsb_hybrid_v17_psefficiency_parallel",
+    "adsb_hybrid_v18_parallel_t_and_cd",
+    "adsb_hybrid_v19_psefficiency_parallel_l025",
+    "adsb_hybrid_v20_seymour_age",
 )
 
 
@@ -156,6 +172,13 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
             | "adsb_hybrid_v13f_psthrust_parallel_anneal"
             | "adsb_hybrid_v13g_psthrust_tet_parallel"
             | "adsb_hybrid_v14_psefficiency"
+            | "adsb_hybrid_v15_throttle_clamp"
+            | "adsb_hybrid_v15_throttle_tanh"
+            | "adsb_hybrid_v16_no_dmass"
+            | "adsb_hybrid_v17_psefficiency_parallel"
+            | "adsb_hybrid_v18_parallel_t_and_cd"
+            | "adsb_hybrid_v19_psefficiency_parallel_l025"
+            | "adsb_hybrid_v20_seymour_age"
         ):
             # All five hybrid variants share the same X/U/E/DX schema —
             # they only differ in flight_feature_cols (5 / 6 / 6 / 9 / 9),
@@ -248,6 +271,34 @@ def resolve_architecture(arch: str) -> ArchitectureInfo:
                 "adsb_hybrid_v14_psefficiency": (
                     "node_adsb_hybrid_v14_psefficiency",
                     "node_fdm.architectures.adsb_hybrid_v14_psefficiency",
+                ),
+                "adsb_hybrid_v15_throttle_clamp": (
+                    "node_adsb_hybrid_v15_throttle_clamp",
+                    "node_fdm.architectures.adsb_hybrid_v15_throttle_clamp",
+                ),
+                "adsb_hybrid_v15_throttle_tanh": (
+                    "node_adsb_hybrid_v15_throttle_tanh",
+                    "node_fdm.architectures.adsb_hybrid_v15_throttle_tanh",
+                ),
+                "adsb_hybrid_v16_no_dmass": (
+                    "node_adsb_hybrid_v16_no_dmass",
+                    "node_fdm.architectures.adsb_hybrid_v16_no_dmass",
+                ),
+                "adsb_hybrid_v17_psefficiency_parallel": (
+                    "node_adsb_hybrid_v17_psefficiency_parallel",
+                    "node_fdm.architectures.adsb_hybrid_v17_psefficiency_parallel",
+                ),
+                "adsb_hybrid_v18_parallel_t_and_cd": (
+                    "node_adsb_hybrid_v18_parallel_t_and_cd",
+                    "node_fdm.architectures.adsb_hybrid_v18_parallel_t_and_cd",
+                ),
+                "adsb_hybrid_v19_psefficiency_parallel_l025": (
+                    "node_adsb_hybrid_v19_psefficiency_parallel_l025",
+                    "node_fdm.architectures.adsb_hybrid_v19_psefficiency_parallel_l025",
+                ),
+                "adsb_hybrid_v20_seymour_age": (
+                    "node_adsb_hybrid_v20_seymour_age",
+                    "node_fdm.architectures.adsb_hybrid_v20_seymour_age",
                 ),
             }[arch]
             return ArchitectureInfo(

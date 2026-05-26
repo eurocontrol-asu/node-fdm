@@ -84,7 +84,12 @@ def _build_trainer(
         data_df=data_df,
         x_cols=info.x_cols,
         u_cols=info.u_cols,
-        e_cols=info.e0_cols,
+        # Phase 10 — use the registered ArchitectureSpec's e0_cols so
+        # arch-level extensions (e.g. v20's ``raw_age_years``) are
+        # honoured. The resolver's ArchitectureInfo.e0_cols carries only
+        # schema-level columns ; the loader downstream needs the arch's
+        # actual e0_cols to stay in sync with compute_stats.
+        e_cols=list(spec.e0_cols),
         e1_cols=info.e1_cols,
         dx_cols=[c for _, c in info.dx_cols],
         seq_len=training_config.seq_len,
@@ -151,6 +156,8 @@ def _run_val_with_diagnostics(
                 "fdm_T_PS",
                 "fdm_T_total",
                 "fdm_throttle",
+                "fdm_c_d_ps",
+                "fdm_c_d_total",
                 "fdm_drag_N",
                 "fdm_thrust_N",
                 "fdm_lift_N",
@@ -219,6 +226,29 @@ def main() -> int:  # noqa: PLR0912, PLR0915
     print(f"  mean |delta T_NN| = {mean_abs_delta_t:.3f} %")
     print(f"  p99  |delta T_NN| = {p99_abs_delta_t:.3f} %")
     print(f"  AC4_thrust {'PASS' if ac4_thrust_pass else 'FAIL'} (target < 3 %)")
+
+    # === AC4_cd : Phase 8 — drag-correction saturation diagnostic ===
+    # Mirrors AC4_thrust : measure how far the NN's c_d_correction pushes
+    # c_d_total away from the analytical c_d_PS prior. If the head is glued
+    # to its ±5 % cap (mean approaching 5 %, p99 = 4.975 %), the PSDragLayer
+    # prior is systematically off and the NN wants an unbounded escape.
+    print("\n=== AC4_cd : mean |delta c_d_NN| / c_d_PS (Phase 8 saturation diagnostic) ===")
+    c_d_ps = base.get("fdm_c_d_ps")
+    c_d_total = base.get("fdm_c_d_total")
+    if c_d_ps is not None and c_d_total is not None:
+        valid_cd = (c_d_ps > 1e-4) & np.isfinite(c_d_ps) & np.isfinite(c_d_total)
+        delta_cd_pct = np.abs(c_d_total[valid_cd] / c_d_ps[valid_cd] - 1.0) * 100.0
+        mean_abs_delta_cd = float(delta_cd_pct.mean())
+        p99_abs_delta_cd = float(np.percentile(delta_cd_pct, 99))
+        ac4_cd_pass = mean_abs_delta_cd < 3.0
+        print(f"  n_samples = {valid_cd.sum()}")
+        print(f"  mean |delta c_d_NN| = {mean_abs_delta_cd:.3f} %")
+        print(f"  p99  |delta c_d_NN| = {p99_abs_delta_cd:.3f} %")
+        print(f"  AC4_cd {'PASS' if ac4_cd_pass else 'FAIL'} (target < 3 %)")
+    else:
+        mean_abs_delta_cd = p99_abs_delta_cd = float("nan")
+        ac4_cd_pass = False
+        print("  c_d_ps / c_d_total not in history — skipping AC4_cd")
 
     # === AC4_eta : Phase 4 new ===
     print("\n=== AC4_eta : mean |delta eta_NN| / eta_PS (Phase 4 new) ===")
@@ -303,6 +333,14 @@ def main() -> int:  # noqa: PLR0912, PLR0915
         f"- p99  |delta T_NN| : **{p99_abs_delta_t:.3f} %**",
         "- target : mean < 3 %",
         f"- status : **{'✅ PASS' if ac4_thrust_pass else '⚠️ FAIL'}**",
+        "",
+        "## AC4_cd — Mean |delta c_d_NN| / c_d_PS (Phase 8 saturation diagnostic)",
+        "",
+        f"- n samples : **{int(valid_cd.sum()) if c_d_ps is not None else 0}**",
+        f"- mean |delta c_d_NN| : **{mean_abs_delta_cd:.3f} %**",
+        f"- p99  |delta c_d_NN| : **{p99_abs_delta_cd:.3f} %**",
+        "- target : mean < 3 %",
+        f"- status : **{'✅ PASS' if ac4_cd_pass else '⚠️ FAIL'}**",
         "",
         "## AC4_eta — Mean |delta eta_NN| / eta_PS (Phase 4 new)",
         "",

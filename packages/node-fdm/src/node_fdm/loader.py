@@ -6,6 +6,8 @@ sequences, and returns typed :class:`FlightDataset` instances.
 
 from __future__ import annotations
 
+from pathlib import Path
+
 import numpy as np
 import polars as pl
 import structlog
@@ -14,6 +16,17 @@ import torch
 from node_fdm.dataset import FlightDataset, FlightSample
 from node_fdm_data.physics.isa import isa_temperature
 from node_fdm_data.schemas.adsb_hybrid import FLIGHT_FEATURE_COLS_6 as FLIGHT_FEATURE_COLS
+
+# Phase 10 — path to the static aircraft registry used by the Seymour
+# age correction. Resolved relative to the repo root via the package
+# location. CSV schema : icao24, registration, typecode, model, built,
+# age_years, ... (12 columns, 150 A320s as of 2026-05). When the dataset
+# delta lacks a 1:1 hit, the loader falls back to the fleet median age.
+_AIRCRAFT_DB_PATH: Path = Path(__file__).resolve().parents[4] / "data" / "aircraft_db.csv"
+# Fleet median age from data/aircraft_db.csv at the 2026-05 snapshot.
+# Used as fallback for ICAOs not in the registry. Kept conservative —
+# the registry covers ~95 % of the test set, so the fallback is rare.
+_AIRCRAFT_AGE_FALLBACK_YR: float = 17.7
 
 # Physical clamp range for ``fdm_mach_sel`` when building the flight-level
 # aggregate ``mach_cruise_planned``. A320 cruise Mach is typically 0.78-0.80;
@@ -91,6 +104,62 @@ def _dynamic_mass_aggregates(df: pl.DataFrame, alt_arr: np.ndarray) -> dict[str,
         "accel_mean_climb": accel,
         "time_to_fl240_s": dt,
     }
+
+
+def _attach_age_years(flights_df: pl.DataFrame) -> pl.DataFrame:
+    """Phase 10 — join aircraft age (years) to the flights frame.
+
+    Reads ``data/aircraft_db.csv`` and joins on ``raw_icao24`` so every
+    timestep of every flight carries the age of its aircraft (broadcast
+    per flight). Missing matches (ICAO not in registry) fall back to the
+    fleet median ``_AIRCRAFT_AGE_FALLBACK_YR`` and are logged.
+
+    The aircraft registry is the public OpenSky / FAA dump checked into
+    ``data/`` — not derived from QAR. Joining it preserves R1 (no
+    validation-side data leaks into training).
+    """
+    if "raw_icao24" not in flights_df.columns:
+        log.warning(
+            "age_join_no_icao24",
+            message=(
+                "raw_icao24 column missing from flights_df — Seymour age "
+                "feature will fall back to fleet median for all rows."
+            ),
+        )
+        return flights_df.with_columns(
+            pl.lit(_AIRCRAFT_AGE_FALLBACK_YR, dtype=pl.Float32).alias("raw_age_years"),
+        )
+    if not _AIRCRAFT_DB_PATH.exists():
+        log.warning(
+            "age_join_no_registry",
+            path=str(_AIRCRAFT_DB_PATH),
+            message="aircraft_db.csv not found — using fleet median fallback.",
+        )
+        return flights_df.with_columns(
+            pl.lit(_AIRCRAFT_AGE_FALLBACK_YR, dtype=pl.Float32).alias("raw_age_years"),
+        )
+    registry = (
+        pl.read_csv(_AIRCRAFT_DB_PATH)
+        .select(
+            pl.col("icao24").cast(pl.Utf8).str.to_lowercase().alias("raw_icao24"),
+            pl.col("age_years").cast(pl.Float32).alias("raw_age_years"),
+        )
+        .unique(subset=["raw_icao24"], keep="first")
+    )
+    joined = flights_df.join(registry, on="raw_icao24", how="left")
+    n_total = joined.height
+    n_matched = joined.filter(pl.col("raw_age_years").is_not_null()).height
+    if n_total > 0:
+        log.info(
+            "age_join_coverage",
+            n_matched=n_matched,
+            n_total=n_total,
+            pct=round(100.0 * n_matched / n_total, 2),
+            fallback_yr=_AIRCRAFT_AGE_FALLBACK_YR,
+        )
+    return joined.with_columns(
+        pl.col("raw_age_years").fill_null(_AIRCRAFT_AGE_FALLBACK_YR),
+    )
 
 
 def _fill_nan_sel(df: pl.DataFrame) -> pl.DataFrame:
@@ -175,6 +244,14 @@ def _load_and_window(
     synthetic_dx_idx = [i for i, c in enumerate(dx_cols) if c in synthetic_cols]
 
     all_cols = real_x_cols + u_cols + e_cols + real_dx_cols + feature_source_cols
+
+    # Phase 10 — Seymour age feature : if any architecture column requests
+    # ``raw_age_years`` and the source delta doesn't already carry it,
+    # enrich the dataframe from the static aircraft_db.csv registry
+    # (join on raw_icao24). Backward-compat : archs not requesting the
+    # column are unaffected.
+    if "raw_age_years" in all_cols and "raw_age_years" not in flights_df.columns:
+        flights_df = _attach_age_years(flights_df)
 
     # Verify all columns exist
     missing = [c for c in all_cols if c not in flights_df.columns]

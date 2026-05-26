@@ -37,6 +37,27 @@ from node_fdm.architectures import (
 from node_fdm.architectures import (
     adsb_hybrid_v14_psefficiency as adsb_hybrid_v14_psefficiency,
 )
+from node_fdm.architectures import (
+    adsb_hybrid_v15_throttle_clamp as adsb_hybrid_v15_throttle_clamp,
+)
+from node_fdm.architectures import (
+    adsb_hybrid_v15_throttle_tanh as adsb_hybrid_v15_throttle_tanh,
+)
+from node_fdm.architectures import (
+    adsb_hybrid_v16_no_dmass as adsb_hybrid_v16_no_dmass,
+)
+from node_fdm.architectures import (
+    adsb_hybrid_v17_psefficiency_parallel as adsb_hybrid_v17_psefficiency_parallel,
+)
+from node_fdm.architectures import (
+    adsb_hybrid_v18_parallel_t_and_cd as adsb_hybrid_v18_parallel_t_and_cd,
+)
+from node_fdm.architectures import (
+    adsb_hybrid_v19_psefficiency_parallel_l025 as adsb_hybrid_v19_psefficiency_parallel_l025,
+)
+from node_fdm.architectures import (
+    adsb_hybrid_v20_seymour_age as adsb_hybrid_v20_seymour_age,
+)
 from node_fdm.architectures import qar as qar
 
 __all__ = [
@@ -61,6 +82,13 @@ __all__ = [
     "adsb_hybrid_v13f_psthrust_parallel_anneal",
     "adsb_hybrid_v13g_psthrust_tet_parallel",
     "adsb_hybrid_v14_psefficiency",
+    "adsb_hybrid_v15_throttle_clamp",
+    "adsb_hybrid_v15_throttle_tanh",
+    "adsb_hybrid_v16_no_dmass",
+    "adsb_hybrid_v17_psefficiency_parallel",
+    "adsb_hybrid_v18_parallel_t_and_cd",
+    "adsb_hybrid_v19_psefficiency_parallel_l025",
+    "adsb_hybrid_v20_seymour_age",
     "qar",
     "registry",
 ]

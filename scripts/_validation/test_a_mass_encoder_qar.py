@@ -46,6 +46,13 @@ from node_fdm.architectures import (  # noqa: F401  (auto-register)
     adsb_hybrid_v13c_psthrust_tet,
     adsb_hybrid_v13d_psthrust_parallel,
     adsb_hybrid_v14_psefficiency,
+    adsb_hybrid_v15_throttle_clamp,
+    adsb_hybrid_v15_throttle_tanh,
+    adsb_hybrid_v16_no_dmass,
+    adsb_hybrid_v17_psefficiency_parallel,
+    adsb_hybrid_v18_parallel_t_and_cd,
+    adsb_hybrid_v19_psefficiency_parallel_l025,
+    adsb_hybrid_v20_seymour_age,
 )
 from node_fdm.architectures.registry import get as get_arch_spec
 from node_fdm.layers.mass_encoder import MassEncoderLinear, MassEncoderLinearTempered

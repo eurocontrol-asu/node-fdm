@@ -177,11 +177,19 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
     arch_spec = get_arch_spec(ctx.info.name)
     flight_feature_cols = list(getattr(arch_spec, "flight_feature_cols", []) or [])
 
+    # Phase 10 fix : pull e0_cols from the registered ArchitectureSpec
+    # instead of the resolver's ArchitectureInfo. The resolver hard-codes
+    # the schema-level E0_COLS, which doesn't see arch-level extensions
+    # like Phase 10's ``raw_age_years``. compute_stats downstream reads
+    # ``spec.e0_cols`` directly, so this keeps the loader and the trainer
+    # in sync. Backward-compat : v14/v17/v19 all keep the schema E0_COLS
+    # verbatim in their specs, so this widening has zero effect on them.
+    spec_e0_cols = list(arch_spec.e0_cols)
     train_ds, val_ds = get_train_val_data(
         data_df=data_df,
         x_cols=ctx.info.x_cols,
         u_cols=ctx.info.u_cols,
-        e_cols=ctx.info.e0_cols,
+        e_cols=spec_e0_cols,
         e1_cols=ctx.info.e1_cols,
         dx_cols=ctx.dx_col_names,
         seq_len=training_config.seq_len,
