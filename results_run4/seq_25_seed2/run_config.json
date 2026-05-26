@@ -1,0 +1,19 @@
+{
+  "run_id": "seq_25_seed2",
+  "axis": "seq_25",
+  "seed": 2,
+  "batch_size": 64,
+  "epochs": 50,
+  "lr": 0.001,
+  "use_mode_weights": false,
+  "mode_weight_alpha": 0.5,
+  "activation": "relu",
+  "train_limit": 5000,
+  "seq_len": 25,
+  "method": "rk4",
+  "predict_limit": null,
+  "backbone_depth": 3,
+  "head_depth": 2,
+  "hidden_width": 48,
+  "arch": "adsb"
+}

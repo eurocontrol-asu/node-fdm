@@ -1,0 +1,14 @@
+{
+  "run_id": "lr_1.5e-3_seed1",
+  "gpu_id": 0,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1779408600.2810853,
+  "status": "completed",
+  "finished_at": 1779433262.7652936,
+  "wall_clock_sec": 24662.484208345413
+}

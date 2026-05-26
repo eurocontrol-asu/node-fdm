@@ -1,0 +1,14 @@
+{
+  "run_id": "baseline_seed1",
+  "gpu_id": 0,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1779294534.4866803,
+  "status": "completed",
+  "finished_at": 1779320254.5495703,
+  "wall_clock_sec": 25720.062890052795
+}

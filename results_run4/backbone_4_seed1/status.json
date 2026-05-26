@@ -1,0 +1,14 @@
+{
+  "run_id": "backbone_4_seed1",
+  "gpu_id": 0,
+  "stage": "evaluate",
+  "exit_codes": {
+    "train": 0,
+    "predict": 0,
+    "evaluate": 0
+  },
+  "started_at": 1779319768.4697645,
+  "status": "completed",
+  "finished_at": 1779345559.5524004,
+  "wall_clock_sec": 25791.082635879517
+}
