@@ -360,6 +360,7 @@ def process_flight(parquet_path: Path) -> dict | None:
     return {
         "flight_id": flight_id,
         "n_samples": int(df_proc.height),
+        "alt_current_m": alt_m_proc,
         "alt_pred_m": alt_pred_m,
         "alt_truth_m": truth_aligned["alt_truth_m"],
         "alt_known": alt_known,
@@ -435,6 +436,70 @@ def compute_channel_metrics(
     return out
 
 
+def compute_directional_consistency(
+    pred: np.ndarray,
+    truth: np.ndarray,
+    current: np.ndarray,
+    known: np.ndarray,
+    phase: np.ndarray,
+    tol: float,
+) -> dict[str, dict[str, float]]:
+    """Directional-consistency metric for altitude.
+
+    The pipeline anchors `alt_target_pred` to the *next detected* plateau,
+    which is typically the final cruise FL. The FCU truth steps through
+    intermediate dialed altitudes (FL250 → FL360). Both are valid views
+    of "the target" — the pipeline forecasts forward, the FCU shows the
+    immediate next step. A prediction is consistent when it lies on the
+    same side of truth as the current aircraft position is heading.
+
+    Direction: ``gap = truth - current``.
+      - gap > 0 (still climbing toward truth): pred ≥ truth - tol is OK.
+      - gap < 0 (still descending toward truth): pred ≤ truth + tol is OK.
+      - |gap| ≤ tol (at target, level flight): strict |pred - truth| < tol.
+
+    Wrong-direction-error := max(0, -sign(gap) · (pred - truth)).
+    """
+    out: dict[str, dict[str, float]] = {}
+    for ph in ("climb", "descent", "level", "global"):
+        if ph == "global":
+            phase_mask = np.ones_like(phase, dtype=bool)
+        elif ph == "level":
+            # Use the trajectory's own definition of "currently at target" so
+            # this row is independent of the climb/cruise/descent classifier.
+            phase_mask = np.abs(truth - current) <= 91.0
+        else:
+            phase_mask = phase == ph
+        eligible = phase_mask & known.astype(bool) & np.isfinite(pred) & np.isfinite(truth) & np.isfinite(current)
+        n = int(eligible.sum())
+        if n == 0:
+            out[ph] = dict(
+                n=0,
+                consistency_pct=float("nan"),
+                directional_mae=float("nan"),
+                wrong_direction_p99=float("nan"),
+            )
+            continue
+        gap = truth[eligible] - current[eligible]
+        delta = pred[eligible] - truth[eligible]
+        # Directional sign: +1 if going up, -1 if going down, 0 if level.
+        dir_sign = np.where(gap > tol, 1.0, np.where(gap < -tol, -1.0, 0.0))
+        # Wrong-direction error: pred lies on the opposite side of truth.
+        wrong = np.where(
+            dir_sign == 0.0,
+            np.abs(delta),                       # level → strict
+            np.maximum(0.0, -dir_sign * delta),  # directional → one-sided
+        )
+        consistent = wrong < tol
+        out[ph] = dict(
+            n=n,
+            consistency_pct=float(100.0 * consistent.mean()),
+            directional_mae=float(wrong.mean()),
+            wrong_direction_p99=float(np.quantile(wrong, 0.99)),
+        )
+    return out
+
+
 def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, float]]]:
     """Pool every flight's samples and compute per-channel-per-phase metrics."""
     if not per_flight:
@@ -442,6 +507,7 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
     pooled = {
         k: np.concatenate([f[k] for f in per_flight])
         for k in (
+            "alt_current_m",
             "alt_pred_m",
             "alt_truth_m",
             "alt_known",
@@ -504,6 +570,15 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
         CHANNEL_TOL["track_deg"],
         CHANNEL_PHASES["track_deg"],
         angular=True,
+    )
+    # Altitude directional consistency (anchored-target methodology fairness).
+    results["alt_directional"] = compute_directional_consistency(
+        pooled["alt_pred_m"],
+        pooled["alt_truth_m"],
+        pooled["alt_current_m"],
+        pooled["alt_known"],
+        pooled["phase"],
+        CHANNEL_TOL["alt_m"],
     )
     return results
 
@@ -795,6 +870,19 @@ def _ac_verdict(
     out.append(
         ("AC3", "altitude", "MAE < 91 m (pool)", _bin("alt_m", "mae", "global", 91.0, False))
     )
+    # AC3b: directional-consistency variant — pred must lie on the side of
+    # truth that the aircraft is heading toward (rationale: the pipeline
+    # anchors to the next plateau, FCU shows the immediate dialed step ;
+    # both are valid views of the target if the pipeline overshoots in
+    # the same direction the aircraft is moving).
+    out.append(
+        (
+            "AC3b",
+            "altitude (directional)",
+            "wrong-direction MAE < 91 m (pool)",
+            _bin("alt_directional", "directional_mae", "global", 91.0, False),
+        )
+    )
     out.append(
         (
             "AC4",
@@ -871,7 +959,9 @@ def write_markdown(
 ) -> None:
     n_flights = len(per_flight)
     rows_per_channel = {
-        ch: {ph: results[ch].get(ph, {}) for ph in CHANNEL_PHASES[ch]} for ch in results
+        ch: {ph: results[ch].get(ph, {}) for ph in CHANNEL_PHASES[ch]}
+        for ch in results
+        if ch in CHANNEL_PHASES
     }
     ac = _ac_verdict(results)
     overall = (
@@ -938,6 +1028,27 @@ def write_markdown(
                 f"{m.get('p99', float('nan')):.4g} | "
                 f"{m.get('coverage_pct', float('nan')):.1f}% | "
                 f"{m.get('agreement_pct', float('nan')):.1f}% |"
+            )
+        lines.append("")
+    # Altitude directional consistency (anchored-target methodology fairness).
+    if "alt_directional" in results:
+        lines.append("### Altitude — directional consistency")
+        lines.append("")
+        lines.append(
+            "Pipeline target is methodology-consistent when it lies on the "
+            "side of FCU truth that the aircraft is heading toward "
+            "(climbing → pred ≥ truth - 91m ; descending → pred ≤ truth + 91m ; "
+            "level → strict |Δ| < 91m). Wrong-direction MAE is 0 when consistent."
+        )
+        lines.append("")
+        lines.append("| Phase | n | Consistency | Wrong-direction MAE (m) | p99 wrong-dir (m) |")
+        lines.append("|---|---:|---:|---:|---:|")
+        for ph, m in results["alt_directional"].items():
+            lines.append(
+                f"| {ph:8s} | {m.get('n', 0):>8,d} | "
+                f"{m.get('consistency_pct', float('nan')):.1f}% | "
+                f"{m.get('directional_mae', float('nan')):.4g} | "
+                f"{m.get('wrong_direction_p99', float('nan')):.4g} |"
             )
         lines.append("")
     lines.append("## Acceptance criteria")
