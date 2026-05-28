@@ -34,6 +34,7 @@ import polars as pl
 from node_fdm_data.lateral import augment_lateral
 from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
 from node_fdm_data.segments import build_selected_params
+from node_fdm_pipeline.config import SelectedParamConfig
 
 # ---------------------------------------------------------------- constants --
 QAR_DIR = Path("/Users/gabriel/Downloads/QAR3")
@@ -67,33 +68,13 @@ VS_CLIMB_FTMIN = 400.0
 VS_DESCENT_FTMIN = -400.0
 
 # Pipeline configuration for build_selected_params.
-# Mirrors the production current-pipeline defaults from
-# `scripts/debug/check_crossover_segments.CURRENT_CONFIG`.
-SEL_PARAMS_CONFIG: dict[str, object] = {
-    "mach": {
-        "tol": 0.0005, "min_len": 120, "alt_threshold": 15000,
-        "use_alt": True, "smooth_window": 10,
-    },
-    "cas": {
-        "tol": 0.75, "min_len": 30, "use_alt": False,
-        "smooth_window": 10, "smooth_method": "savgol",
-    },
-    "tas": {"tol": 1.0, "min_len": 30, "use_alt": False},
-    "vz": {
-        "tol": 25, "min_len": 20, "use_alt": False, "min_abs_value": 75,
-        "smooth_window": 15, "smooth_method": "savgol",
-    },
-    "gamma": {
-        "tol": 0.002, "min_len": 15, "use_alt": False,
-        "smooth_window": 5, "smooth_method": "savgol",
-    },
-    "alt": {
-        "tol": 25, "min_len": 5, "use_alt": False, "min_abs_value": 25,
-        "smooth_window": 5, "smooth_method": "savgol",
-    },
-    "mach_min_value": 0.5,
-    "alt_hold_relax": 15,
-}
+# Uses the SAME Pydantic config as the production pipeline (AXM-1689 bilateral
+# defaults: bilateral_mach, bilateral_cas, bilateral_vz, bilateral_gamma).
+# An earlier version of this experiment incorrectly used the legacy savgol_*
+# CURRENT_CONFIG snapshot from scripts/debug/check_crossover_segments.py —
+# that file is a before/after comparison artifact, NOT the prod config.
+SEL_PARAMS_CONFIG: dict[str, object] = SelectedParamConfig().model_dump()
+SEL_PARAMS_CONFIG["alt_hold_relax"] = 15  # only key not in the Pydantic model
 
 # Acceptance criteria (channel → (mae_target, cov_target_pct)).
 AC_TARGETS = {
