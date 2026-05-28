@@ -95,13 +95,15 @@ AC_TARGETS = {
     "track_deg": (3.0, 80.0),  # AC10, AC11
 }
 
-# Channels per protocol §5.
-CHANNELS = ("alt_m", "mach", "cas_kt", "gamma_rad", "track_deg")
+# Channels per protocol §5 + vz (added: V/S knob value compared directly in
+# ftmin space when FMA__LONGITUDINAL == 'V_S', no γ trigonometry round-trip).
+CHANNELS = ("alt_m", "mach", "cas_kt", "gamma_rad", "vz_ftmin", "track_deg")
 CHANNEL_LABEL = {
     "alt_m": "Altitude (m)",
     "mach": "Mach",
     "cas_kt": "CAS (kt)",
     "gamma_rad": "Gamma (rad)",
+    "vz_ftmin": "Vz (ft/min)",
     "track_deg": "Track (deg)",
 }
 CHANNEL_TOL = {
@@ -109,6 +111,7 @@ CHANNEL_TOL = {
     "mach": 0.005,
     "cas_kt": 5.0,
     "gamma_rad": 0.005,
+    "vz_ftmin": 100.0,  # A320 V/S knob steps at 100 ftmin
     "track_deg": 3.0,
 }
 CHANNEL_PHASES = {
@@ -116,6 +119,7 @@ CHANNEL_PHASES = {
     "mach": ("cruise",),
     "cas_kt": ("climb", "descent"),
     "gamma_rad": ("climb", "descent"),
+    "vz_ftmin": ("climb", "descent"),
     "track_deg": ("straight",),
 }
 
@@ -269,6 +273,11 @@ def extract_qar_truth(df_qar: pl.DataFrame) -> dict[str, np.ndarray]:
     gamma_truth = np.where(np.isin(long_mode, GAMMA_VS_MODES), gamma_from_vs, gamma_truth)
     gamma_truth = np.where(np.isin(long_mode, GAMMA_FPA_MODES), gamma_from_fpa, gamma_truth)
 
+    # vz truth: the FCU V/S knob value, only meaningful when V_S mode is the
+    # active longitudinal mode. Outside V_S the VS_SEL column may carry a
+    # stale pre-dialed value (same zombie issue as γ — see #6 in §A1).
+    vz_truth_ftmin = np.where(np.isin(long_mode, GAMMA_VS_MODES), vs_ftmin, np.nan)
+
     # Lateral truth: use FMA lateral mode to switch between HDG_SEL (HDG mode)
     # and actual NAV__TRACK as proxy-for-FMS-target (NAV mode, dominant ~72%).
     # On straight legs (filtered downstream via fdm_in_turn==False) the FMS-
@@ -292,6 +301,7 @@ def extract_qar_truth(df_qar: pl.DataFrame) -> dict[str, np.ndarray]:
         "mach_truth": mach_truth,
         "cas_truth_kt": cas_truth_kt,
         "gamma_truth_rad": gamma_truth,
+        "vz_truth_ftmin": vz_truth_ftmin,
         "hdg_truth_deg": hdg_truth,
     }
 
@@ -396,6 +406,11 @@ def process_flight(parquet_path: Path) -> dict | None:
     # comparison (coverage reflects plateau detection rate).
     cas_pred_kt = _pull("fdm_cas_sel_kt")
     mach_pred = _pull("fdm_mach_sel")
+    # vz: pipeline point-wise plateau (`fdm_vz_sel_ftmin`). Same point-wise
+    # philosophy as CAS / Mach: compare only where the pipeline produces a
+    # value. The pilot dials V/S in flight (e.g. -1500 ftmin on managed
+    # descent override), so anchoring forward would be a fabrication.
+    vz_pred_ftmin = _pull("fdm_vz_sel_ftmin")
 
     gamma_pred = _pull("fdm_gamma_target_rad")
     track_pred_deg = _pull("fdm_track_ortho_deg")
@@ -442,6 +457,10 @@ def process_flight(parquet_path: Path) -> dict | None:
         else np.full(df_proc.height, np.nan)
     )
 
+    # Current vz = raw_vz_ftmin (actual vertical rate).
+    vz_current_ftmin = df_proc["raw_vz_ftmin"].cast(pl.Float64).to_numpy()
+    vz_known = np.isfinite(vz_pred_ftmin)
+
     return {
         "flight_id": flight_id,
         "n_samples": int(df_proc.height),
@@ -461,6 +480,10 @@ def process_flight(parquet_path: Path) -> dict | None:
         "gamma_pred_rad": gamma_pred,
         "gamma_truth_rad": truth_aligned["gamma_truth_rad"],
         "gamma_known": gamma_known,
+        "vz_current_ftmin": vz_current_ftmin,
+        "vz_pred_ftmin": vz_pred_ftmin,
+        "vz_truth_ftmin": truth_aligned["vz_truth_ftmin"],
+        "vz_known": vz_known,
         "track_pred_deg": track_pred_deg,
         "track_truth_deg": truth_aligned["hdg_truth_deg"],
         "track_known": track_known,
@@ -613,6 +636,10 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
             "gamma_pred_rad",
             "gamma_truth_rad",
             "gamma_known",
+            "vz_current_ftmin",
+            "vz_pred_ftmin",
+            "vz_truth_ftmin",
+            "vz_known",
             "track_pred_deg",
             "track_truth_deg",
             "track_known",
@@ -652,6 +679,14 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
         pooled["phase"],
         CHANNEL_TOL["gamma_rad"],
         CHANNEL_PHASES["gamma_rad"],
+    )
+    results["vz_ftmin"] = compute_channel_metrics(
+        pooled["vz_pred_ftmin"],
+        pooled["vz_truth_ftmin"],
+        pooled["vz_known"],
+        pooled["phase"],
+        CHANNEL_TOL["vz_ftmin"],
+        CHANNEL_PHASES["vz_ftmin"],
     )
     # Track: straight-leg only (in_turn == False).
     straight = ~pooled["in_turn"]
@@ -698,6 +733,14 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
         pooled["gamma_known"],
         pooled["phase"],
         CHANNEL_TOL["gamma_rad"],
+    )
+    results["vz_directional"] = compute_directional_consistency(
+        pooled["vz_pred_ftmin"],
+        pooled["vz_truth_ftmin"],
+        pooled["vz_current_ftmin"],
+        pooled["vz_known"],
+        pooled["phase"],
+        CHANNEL_TOL["vz_ftmin"],
     )
     return results
 
@@ -923,6 +966,7 @@ def plot_scatters(per_flight: list[dict], out_dir: Path) -> None:
                 "mach": pooled["mach_known"],
                 "cas_kt": pooled["cas_known"],
                 "gamma_rad": pooled["gamma_known"],
+                "vz_ftmin": pooled["vz_known"],
                 "track_deg": pooled["track_known"],
             }[ch]
             truth_col = {
@@ -930,6 +974,7 @@ def plot_scatters(per_flight: list[dict], out_dir: Path) -> None:
                 "mach": pooled["mach_truth"],
                 "cas_kt": pooled["cas_truth_kt"],
                 "gamma_rad": pooled["gamma_truth_rad"],
+                "vz_ftmin": pooled["vz_truth_ftmin"],
                 "track_deg": pooled["track_truth_deg"],
             }[ch]
             cov.append(
@@ -1094,6 +1139,30 @@ def _ac_verdict(
             else ("SKIP" if not math.isfinite(g_dir_worst) else "FAIL"),
         )
     )
+    # Vz channel ACs (only meaningful when FMA__LONGITUDINAL == V_S ; no
+    # coverage AC because V_S mode is structurally rare on A320 commercial
+    # ops — coverage is cohort-side bounded, not a methodology metric).
+    vz_phases = [results.get("vz_ftmin", {}).get(p, {}) for p in ("climb", "descent")]
+    vz_mae = max((p.get("mae", float("-inf")) for p in vz_phases), default=float("-inf"))
+    out.append(
+        (
+            "AC9c",
+            "vz (climb/descent V_S mode)",
+            "MAE < 100 ftmin",
+            "PASS" if vz_mae < 100.0 and math.isfinite(vz_mae)
+            else ("SKIP" if not math.isfinite(vz_mae) else "FAIL"),
+        )
+    )
+    vz_dir_worst = _worst_dir_mae("vz_directional")
+    out.append(
+        (
+            "AC9d",
+            "vz (directional, worst phase)",
+            "wrong-direction MAE < 100 ftmin",
+            "PASS" if vz_dir_worst < 100.0 and math.isfinite(vz_dir_worst)
+            else ("SKIP" if not math.isfinite(vz_dir_worst) else "FAIL"),
+        )
+    )
     out.append(
         (
             "AC10",
@@ -1196,6 +1265,7 @@ def write_markdown(
         ("cas_directional", "CAS (kt)", "kt", CHANNEL_TOL["cas_kt"]),
         ("mach_directional", "Mach", "", CHANNEL_TOL["mach"]),
         ("gamma_directional", "Gamma (rad)", "rad", CHANNEL_TOL["gamma_rad"]),
+        ("vz_directional", "Vz (ft/min)", "ftmin", CHANNEL_TOL["vz_ftmin"]),
     ]
     lines.append("## Directional consistency (anchored-target methodology fairness)")
     lines.append("")
