@@ -55,10 +55,11 @@ COL_ALT_SEL_FT = "NAV__ALT_SEL_F"  # filtered Float64 (ft) → m
 COL_MACH_SEL = "SPD__MACH_SEL"  # gated by SPD__SPD_MACH_SEL == 'MACH'
 COL_CAS_SEL_KT = "SPD__SPD_SEL"  # gated by SPD__SPD_MACH_SEL == 'SPEED'
 COL_SPD_MODE = "SPD__SPD_MACH_SEL"  # 'MACH' | 'SPEED'
-COL_FPA_SEL_DEG = "ATT__FPA_SEL"  # degrees → rad
-COL_VS_SEL_FTMIN = "SPD__VERT_SEL"  # ft/min (fallback for γ)
-COL_HDG_SEL_DEG = "NAV__HDG_SEL"  # signed deg, gated by SYS__HDG_SEL_ON
-COL_HDG_SEL_ON = "SYS__HDG_SEL_ON"  # 'ON' | 'OFF'
+COL_FPA_SEL_DEG = "ATT__FPA_SEL"  # degrees → rad (filter on != 0 — FPA mode active)
+COL_VS_SEL_FTMIN = "SPD__VERT_SEL"  # ft/min (filter on != 0 — V/S mode active)
+COL_HDG_SEL_DEG = "NAV__HDG_SEL"  # signed deg
+COL_LAT_MODE = "FMA__LAT_MODES"  # 'NAV' | 'HDG' | 'LOC TRK' | 'LOC*' | 'RWY' | 'NRD'
+COL_TRACK_ACTUAL = "NAV__TRACK"  # 0-360°, used as FMS proxy in NAV mode on straight legs
 
 # Phase classification thresholds.
 CRUISE_ALT_MIN_FT = 24000.0
@@ -136,6 +137,13 @@ def qar_to_raw_schema(df: pl.DataFrame, flight_id: str) -> pl.DataFrame:
         pl.col("SPD__TAS").cast(pl.Float64).alias("bds_tas_kt"),
         pl.lit(None, dtype=pl.Float64).alias("bds_mcp_alt_sel_ft"),
         pl.lit(None, dtype=pl.Float64).alias("bds_fms_alt_sel_ft"),
+        # ISA temperature stand-in for the missing ERA5 — required by
+        # clean_bds_speeds to compute fdm_tas_from_cas_kt (which feeds the γ
+        # chain). Below 11 km: T = 288.15 - 0.0065·h ; above: T = 216.65.
+        pl.when(pl.col("ALT__STD") * FT_TO_M <= 11000.0)
+        .then(288.15 - 0.0065 * pl.col("ALT__STD") * FT_TO_M)
+        .otherwise(216.65)
+        .alias("era_temp_K"),
         pl.lit(flight_id).alias("meta_flight_id"),
         pl.int_range(0, n, dtype=pl.Int64).alias("meta_row_idx"),
     )
@@ -154,6 +162,16 @@ def run_preprocessing(df_raw: pl.DataFrame) -> pl.DataFrame:
     ``fdm_in_turn``, and ``fdm_*_known`` flags.
     """
     df = clean_bds_speeds(df_raw)
+    # `_build_gamma_target` in segments.py requires `fdm_gamma_rad` to be
+    # present ; that column is normally produced by `derive_columns` (étape 4).
+    # Inline its definition here so the γ target chain wires up. Formula
+    # matches preprocessing/derive.py: γ = asin( (vz·FTMIN) / (TAS·KT) ).
+    if {"raw_vz_ftmin", "fdm_tas_from_cas_kt"}.issubset(df.columns):
+        vz_ms = pl.col("raw_vz_ftmin") * FTMIN_TO_MS
+        tas_ms = (pl.col("fdm_tas_from_cas_kt") * KT_TO_MS).clip(lower_bound=1e-6)
+        df = df.with_columns(
+            (vz_ms / tas_ms).clip(-1.0, 1.0).arcsin().alias("fdm_gamma_rad"),
+        )
     df = build_selected_params(df, SEL_PARAMS_CONFIG)
     df = augment_lateral(df, dt=PIPELINE_DT_S)
     return df
@@ -189,28 +207,50 @@ def extract_qar_truth(df_qar: pl.DataFrame) -> dict[str, np.ndarray]:
     mach_truth = np.where(mode == "MACH", mach_raw, np.nan)
     cas_truth_kt = np.where(mode == "SPEED", cas_raw_kt, np.nan)
 
+    # γ truth: FPA_SEL is ALWAYS finite (just 0.0 outside FPA mode); same for
+    # VS_SEL. Use non-zero filter to detect FCU intent. FPA mode (rare on A320)
+    # gives γ directly; V/S mode (common) gives γ = asin(VS_SEL · 0.00508 / TAS).
     fpa_deg = _col_or_nan(COL_FPA_SEL_DEG)
-    gamma_primary = fpa_deg * DEG_TO_RAD
+    vs_ftmin = _col_or_nan(COL_VS_SEL_FTMIN)
     tas_kt = (
         df_qar["SPD__TAS"].cast(pl.Float64).to_numpy()
         if "SPD__TAS" in df_qar.columns
         else np.full(n, np.nan)
     )
-    vs_ftmin = _col_or_nan(COL_VS_SEL_FTMIN)
-    vs_ms = vs_ftmin * FTMIN_TO_MS
     tas_ms = tas_kt * KT_TO_MS
+
+    fpa_active = (fpa_deg != 0.0) & np.isfinite(fpa_deg)
+    vs_active = (vs_ftmin != 0.0) & np.isfinite(vs_ftmin)
+
+    gamma_from_fpa = fpa_deg * DEG_TO_RAD
+    vs_ms = vs_ftmin * FTMIN_TO_MS
     with np.errstate(invalid="ignore", divide="ignore"):
         ratio = np.where((tas_ms > 1.0) & np.isfinite(vs_ms), vs_ms / tas_ms, np.nan)
         ratio = np.clip(ratio, -1.0, 1.0)
-        gamma_fallback = np.arcsin(ratio)
-    gamma_truth = np.where(np.isfinite(gamma_primary), gamma_primary, gamma_fallback)
+        gamma_from_vs = np.arcsin(ratio)
 
-    if COL_HDG_SEL_ON in df_qar.columns:
-        on = df_qar[COL_HDG_SEL_ON].to_numpy()
-        hdg_raw = _col_or_nan(COL_HDG_SEL_DEG)
-        hdg_truth = np.where(on == "ON", hdg_raw, np.nan)
+    gamma_truth = np.where(
+        fpa_active, gamma_from_fpa,
+        np.where(vs_active, gamma_from_vs, np.nan),
+    )
+
+    # Lateral truth: use FMA lateral mode to switch between HDG_SEL (HDG mode)
+    # and actual NAV__TRACK as proxy-for-FMS-target (NAV mode, dominant ~72%).
+    # On straight legs (filtered downstream via fdm_in_turn==False) the FMS-
+    # commanded track equals the actual flown track modulo small wind drift.
+    if COL_LAT_MODE in df_qar.columns:
+        lat_mode = df_qar[COL_LAT_MODE].to_numpy()
     else:
-        hdg_truth = _col_or_nan(COL_HDG_SEL_DEG)
+        lat_mode = np.array(["NRD"] * n)
+    hdg_sel = _col_or_nan(COL_HDG_SEL_DEG)
+    track_actual = _col_or_nan(COL_TRACK_ACTUAL)
+    # Map HDG_SEL (signed [-180,180]) and TRACK (unsigned [0,360]) into a
+    # common unsigned [0,360] convention for the comparison side.
+    hdg_sel_unsigned = np.where(np.isfinite(hdg_sel), hdg_sel % 360.0, np.nan)
+    hdg_truth = np.where(
+        lat_mode == "HDG", hdg_sel_unsigned,
+        np.where(np.isin(lat_mode, ["NAV", "LOC TRK"]), track_actual, np.nan),
+    )
 
     return {
         "alt_truth_m": alt_truth_m,
@@ -232,8 +272,11 @@ def classify_phase(df: pl.DataFrame) -> np.ndarray:
     alt_ft = df["raw_alt_ft"].to_numpy()
     vz = df["raw_vz_ftmin"].to_numpy()
 
-    climb_mask = (alt_ft < CRUISE_ALT_MIN_FT) & (vz > VS_CLIMB_FTMIN)
-    descent_mask = (alt_ft < CRUISE_ALT_MIN_FT) & (vz < VS_DESCENT_FTMIN)
+    # vz-based climb/descent (any altitude) so the initial descent FL340→FL240
+    # falls under "descent" — that band is precisely where V/S mode is most
+    # often dialed (the FCU γ truth column comes from there).
+    climb_mask = vz > VS_CLIMB_FTMIN
+    descent_mask = vz < VS_DESCENT_FTMIN
     cruise_mask = (alt_ft >= CRUISE_ALT_MIN_FT) & (np.abs(vz) < VS_LEVEL_FTMIN)
     tma_mask = alt_ft < TMA_ALT_FT
 
@@ -310,16 +353,35 @@ def process_flight(parquet_path: Path) -> dict | None:
     track_pred_deg = _pull("fdm_track_ortho_deg")
     in_turn = _pull_bool("fdm_in_turn")
 
-    # Mach is derived from TAS target + ISA at altitude (where TAS is known).
-    # mach ≈ TAS_ms / a_isa(alt). Use ISA temperature at altitude.
     alt_ft_proc = df_proc["raw_alt_ft"].cast(pl.Float64).to_numpy()
     alt_m_proc = alt_ft_proc * FT_TO_M
-    # ISA temperature: 288.15 - 0.0065 * h for h ≤ 11000 m, else 216.65.
+
+    # Mach predicted: use the point-wise plateau Mach `fdm_mach_sel` directly
+    # when available (output of the bilateral_mach detector on bds_mach_clean).
+    # Fallback: derive from `fdm_tas_target_kt` + ISA speed of sound, but only
+    # where `fdm_mach_sel` is NaN. The TAS-based derivation can drift when the
+    # anchored TAS target points to a different plateau than the current sample.
+    mach_pred_sel = _pull("fdm_mach_sel")
     T_isa = np.where(alt_m_proc <= 11000.0, 288.15 - 0.0065 * alt_m_proc, 216.65)
     a_isa = np.sqrt(1.4 * 287.058 * T_isa)
     tas_pred_ms = tas_pred_kt * KT_TO_MS
     with np.errstate(invalid="ignore", divide="ignore"):
-        mach_pred = np.where(a_isa > 0, tas_pred_ms / a_isa, np.nan)
+        mach_pred_derived = np.where(a_isa > 0, tas_pred_ms / a_isa, np.nan)
+    mach_pred = np.where(np.isfinite(mach_pred_sel), mach_pred_sel, mach_pred_derived)
+
+    # Current pointwise CAS / Mach (for directional metric — same logic as
+    # altitude: pipeline anchors to the next plateau ; FCU truth steps through
+    # intermediate dialed values ; both are valid views of the target).
+    cas_current_kt = (
+        df_proc["bds_ias_kt_clean"].cast(pl.Float64).to_numpy()
+        if "bds_ias_kt_clean" in df_proc.columns
+        else np.full(df_proc.height, np.nan)
+    )
+    mach_current = (
+        df_proc["bds_mach_clean"].cast(pl.Float64).to_numpy()
+        if "bds_mach_clean" in df_proc.columns
+        else np.full(df_proc.height, np.nan)
+    )
 
     # Known flags (NaN-preserving).
     alt_known = np.isfinite(alt_pred_m)
@@ -338,6 +400,13 @@ def process_flight(parquet_path: Path) -> dict | None:
 
     phase = classify_phase(df_proc)
 
+    # Current instantaneous γ for the directional metric.
+    gamma_current = (
+        df_proc["fdm_gamma_rad"].cast(pl.Float64).to_numpy()
+        if "fdm_gamma_rad" in df_proc.columns
+        else np.full(df_proc.height, np.nan)
+    )
+
     return {
         "flight_id": flight_id,
         "n_samples": int(df_proc.height),
@@ -345,12 +414,15 @@ def process_flight(parquet_path: Path) -> dict | None:
         "alt_pred_m": alt_pred_m,
         "alt_truth_m": truth_aligned["alt_truth_m"],
         "alt_known": alt_known,
+        "mach_current": mach_current,
         "mach_pred": mach_pred,
         "mach_truth": truth_aligned["mach_truth"],
         "mach_known": mach_known,
+        "cas_current_kt": cas_current_kt,
         "cas_pred_kt": cas_pred_kt,
         "cas_truth_kt": truth_aligned["cas_truth_kt"],
         "cas_known": cas_known,
+        "gamma_current_rad": gamma_current,
         "gamma_pred_rad": gamma_pred,
         "gamma_truth_rad": truth_aligned["gamma_truth_rad"],
         "gamma_known": gamma_known,
@@ -424,31 +496,36 @@ def compute_directional_consistency(
     known: np.ndarray,
     phase: np.ndarray,
     tol: float,
+    *,
+    phases: tuple[str, ...] = ("climb", "descent", "level", "global"),
 ) -> dict[str, dict[str, float]]:
-    """Directional-consistency metric for altitude.
+    """Chain-consistency metric: truth must lie inside the convex hull of
+    (current, pred) ± tol.
 
-    The pipeline anchors `alt_target_pred` to the *next detected* plateau,
-    which is typically the final cruise FL. The FCU truth steps through
-    intermediate dialed altitudes (FL250 → FL360). Both are valid views
-    of "the target" — the pipeline forecasts forward, the FCU shows the
-    immediate next step. A prediction is consistent when it lies on the
-    same side of truth as the current aircraft position is heading.
+    The pipeline anchors to the *next detected plateau* — typically the
+    chain's endpoint (cruise FL, Vapp). The FCU truth shows the current
+    dialed step within the chain. Both are valid views of "the target".
 
-    Direction: ``gap = truth - current``.
-      - gap > 0 (still climbing toward truth): pred ≥ truth - tol is OK.
-      - gap < 0 (still descending toward truth): pred ≤ truth + tol is OK.
-      - |gap| ≤ tol (at target, level flight): strict |pred - truth| < tol.
+    A sample is consistent when truth ∈ [min(current, pred) - tol,
+    max(current, pred) + tol]. This subsumes:
+      - climb chain (current < truth < pred): ✓
+      - descent chain (pred < truth < current): ✓
+      - intermediate-step hold during a chain
+        (current = truth, pred = chain endpoint): ✓
+      - level (current = truth = pred): ✓
+      - wrong direction (truth outside the chain interval): flagged with
+        magnitude = distance from truth to the nearest interval bound.
 
-    Wrong-direction-error := max(0, -sign(gap) · (pred - truth)).
+    Args:
+        tol: tolerance in the channel's units (e.g. 91 m, 5 kt, 0.005 mach).
     """
     out: dict[str, dict[str, float]] = {}
-    for ph in ("climb", "descent", "level", "global"):
+    for ph in phases:
         if ph == "global":
             phase_mask = np.ones_like(phase, dtype=bool)
         elif ph == "level":
-            # Use the trajectory's own definition of "currently at target" so
-            # this row is independent of the climb/cruise/descent classifier.
-            phase_mask = np.abs(truth - current) <= 91.0
+            # Trajectory-defined level: |truth - current| ≤ tol.
+            phase_mask = np.abs(truth - current) <= tol
         else:
             phase_mask = phase == ph
         eligible = phase_mask & known.astype(bool) & np.isfinite(pred) & np.isfinite(truth) & np.isfinite(current)
@@ -461,16 +538,13 @@ def compute_directional_consistency(
                 wrong_direction_p99=float("nan"),
             )
             continue
-        gap = truth[eligible] - current[eligible]
-        delta = pred[eligible] - truth[eligible]
-        # Directional sign: +1 if going up, -1 if going down, 0 if level.
-        dir_sign = np.where(gap > tol, 1.0, np.where(gap < -tol, -1.0, 0.0))
-        # Wrong-direction error: pred lies on the opposite side of truth.
-        wrong = np.where(
-            dir_sign == 0.0,
-            np.abs(delta),                       # level → strict
-            np.maximum(0.0, -dir_sign * delta),  # directional → one-sided
-        )
+        c = current[eligible]
+        t = truth[eligible]
+        p = pred[eligible]
+        lo = np.minimum(c, p) - tol
+        hi = np.maximum(c, p) + tol
+        # Distance from truth to the [lo, hi] interval (0 if truth is inside).
+        wrong = np.maximum(0.0, np.maximum(t - hi, lo - t))
         consistent = wrong < tol
         out[ph] = dict(
             n=n,
@@ -492,12 +566,15 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
             "alt_pred_m",
             "alt_truth_m",
             "alt_known",
+            "mach_current",
             "mach_pred",
             "mach_truth",
             "mach_known",
+            "cas_current_kt",
             "cas_pred_kt",
             "cas_truth_kt",
             "cas_known",
+            "gamma_current_rad",
             "gamma_pred_rad",
             "gamma_truth_rad",
             "gamma_known",
@@ -552,7 +629,9 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
         CHANNEL_PHASES["track_deg"],
         angular=True,
     )
-    # Altitude directional consistency (anchored-target methodology fairness).
+    # Directional-consistency metric — same logic as altitude, applied to every
+    # one-dimensional channel where the FCU dial steps through intermediate
+    # values while the pipeline anchors forward to the next plateau.
     results["alt_directional"] = compute_directional_consistency(
         pooled["alt_pred_m"],
         pooled["alt_truth_m"],
@@ -560,6 +639,30 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
         pooled["alt_known"],
         pooled["phase"],
         CHANNEL_TOL["alt_m"],
+    )
+    results["cas_directional"] = compute_directional_consistency(
+        pooled["cas_pred_kt"],
+        pooled["cas_truth_kt"],
+        pooled["cas_current_kt"],
+        pooled["cas_known"],
+        pooled["phase"],
+        CHANNEL_TOL["cas_kt"],
+    )
+    results["mach_directional"] = compute_directional_consistency(
+        pooled["mach_pred"],
+        pooled["mach_truth"],
+        pooled["mach_current"],
+        pooled["mach_known"],
+        pooled["phase"],
+        CHANNEL_TOL["mach"],
+    )
+    results["gamma_directional"] = compute_directional_consistency(
+        pooled["gamma_pred_rad"],
+        pooled["gamma_truth_rad"],
+        pooled["gamma_current_rad"],
+        pooled["gamma_known"],
+        pooled["phase"],
+        CHANNEL_TOL["gamma_rad"],
     )
     return results
 
@@ -856,12 +959,20 @@ def _ac_verdict(
     # anchors to the next plateau, FCU shows the immediate dialed step ;
     # both are valid views of the target if the pipeline overshoots in
     # the same direction the aircraft is moving).
+    # AC3b: directional, worst-of-three regimes (climb / descent / level).
+    def _worst_dir_mae(channel: str) -> float:
+        phs = [results.get(channel, {}).get(p, {}) for p in ("climb", "descent", "level")]
+        vals = [p.get("directional_mae", float("nan")) for p in phs]
+        return max((v for v in vals if math.isfinite(v)), default=float("nan"))
+
+    alt_dir_worst = _worst_dir_mae("alt_directional")
     out.append(
         (
             "AC3b",
-            "altitude (directional)",
-            "wrong-direction MAE < 91 m (pool)",
-            _bin("alt_directional", "directional_mae", "global", 91.0, False),
+            "altitude (directional, worst phase)",
+            "wrong-direction MAE < 91 m",
+            "PASS" if alt_dir_worst < 91.0 and math.isfinite(alt_dir_worst)
+            else ("SKIP" if not math.isfinite(alt_dir_worst) else "FAIL"),
         )
     )
     out.append(
@@ -874,6 +985,16 @@ def _ac_verdict(
     )
     out.append(
         ("AC5", "Mach (cruise)", "MAE < 0.005", _bin("mach", "mae", "cruise", 0.005, False))
+    )
+    mach_dir_worst = _worst_dir_mae("mach_directional")
+    out.append(
+        (
+            "AC5b",
+            "Mach (directional, worst phase)",
+            "wrong-direction MAE < 0.005",
+            "PASS" if mach_dir_worst < 0.005 and math.isfinite(mach_dir_worst)
+            else ("SKIP" if not math.isfinite(mach_dir_worst) else "FAIL"),
+        )
     )
     # CAS: pooled over climb+descent — use the worse of the two for the verdict.
     cas_phases = [results.get("cas_kt", {}).get(p, {}) for p in ("climb", "descent")]
@@ -897,6 +1018,16 @@ def _ac_verdict(
             else ("SKIP" if not math.isfinite(cas_mae) else "FAIL"),
         )
     )
+    cas_dir_worst = _worst_dir_mae("cas_directional")
+    out.append(
+        (
+            "AC7b",
+            "CAS (directional, worst phase)",
+            "wrong-direction MAE < 5 kt",
+            "PASS" if cas_dir_worst < 5.0 and math.isfinite(cas_dir_worst)
+            else ("SKIP" if not math.isfinite(cas_dir_worst) else "FAIL"),
+        )
+    )
     g_phases = [results.get("gamma_rad", {}).get(p, {}) for p in ("climb", "descent")]
     g_cov = max((p.get("coverage_pct", float("nan")) for p in g_phases), default=float("nan"))
     g_mae = max((p.get("mae", float("-inf")) for p in g_phases), default=float("-inf"))
@@ -916,6 +1047,16 @@ def _ac_verdict(
             "PASS"
             if g_mae < 0.005 and math.isfinite(g_mae)
             else ("SKIP" if not math.isfinite(g_mae) else "FAIL"),
+        )
+    )
+    g_dir_worst = _worst_dir_mae("gamma_directional")
+    out.append(
+        (
+            "AC9b",
+            "γ (directional, worst phase)",
+            "wrong-direction MAE < 0.005 rad",
+            "PASS" if g_dir_worst < 0.005 and math.isfinite(g_dir_worst)
+            else ("SKIP" if not math.isfinite(g_dir_worst) else "FAIL"),
         )
     )
     out.append(
@@ -984,13 +1125,16 @@ def write_markdown(
         f"| CAS       | `{COL_CAS_SEL_KT}`   | `{COL_SPD_MODE}=='SPEED'`       | —           |"
     )
     lines.append(
-        f"| γ primary | `{COL_FPA_SEL_DEG}` | —                              | ×π/180 → rad |"
+        f"| γ primary | `{COL_FPA_SEL_DEG}` | `!= 0` (FPA mode active)        | ×π/180 → rad |"
     )
     lines.append(
-        f"| γ fallback| `{COL_VS_SEL_FTMIN}`| FPA_SEL=NaN; needs `SPD__TAS`   | asin(VS·0.00508 / TAS·0.514) |"
+        f"| γ fallback| `{COL_VS_SEL_FTMIN}`| `!= 0` (V/S mode active) ; needs `SPD__TAS` | asin(VS·0.00508 / TAS·0.514) |"
     )
     lines.append(
-        f"| Track     | `{COL_HDG_SEL_DEG}` | `{COL_HDG_SEL_ON}=='ON'`        | —           |"
+        f"| Track HDG | `{COL_HDG_SEL_DEG}` | `{COL_LAT_MODE}=='HDG'`         | mod 360°     |"
+    )
+    lines.append(
+        f"| Track NAV | `{COL_TRACK_ACTUAL}`| `{COL_LAT_MODE} in ('NAV','LOC TRK')` (FMS-target proxy) | — |"
     )
     lines.append("")
     lines.append("## Per-channel summary")
@@ -1011,20 +1155,29 @@ def write_markdown(
                 f"{m.get('agreement_pct', float('nan')):.1f}% |"
             )
         lines.append("")
-    # Altitude directional consistency (anchored-target methodology fairness).
-    if "alt_directional" in results:
-        lines.append("### Altitude — directional consistency")
-        lines.append("")
-        lines.append(
-            "Pipeline target is methodology-consistent when it lies on the "
-            "side of FCU truth that the aircraft is heading toward "
-            "(climbing → pred ≥ truth - 91m ; descending → pred ≤ truth + 91m ; "
-            "level → strict |Δ| < 91m). Wrong-direction MAE is 0 when consistent."
-        )
-        lines.append("")
-        lines.append("| Phase | n | Consistency | Wrong-direction MAE (m) | p99 wrong-dir (m) |")
+    # Directional-consistency metric (applied to altitude, CAS, Mach).
+    dir_channels = [
+        ("alt_directional", "Altitude (m)", "m", CHANNEL_TOL["alt_m"]),
+        ("cas_directional", "CAS (kt)", "kt", CHANNEL_TOL["cas_kt"]),
+        ("mach_directional", "Mach", "", CHANNEL_TOL["mach"]),
+        ("gamma_directional", "Gamma (rad)", "rad", CHANNEL_TOL["gamma_rad"]),
+    ]
+    lines.append("## Directional consistency (anchored-target methodology fairness)")
+    lines.append("")
+    lines.append(
+        "Pipeline target is methodology-consistent when it lies on the side of "
+        "FCU truth that the aircraft is heading toward (current<truth → pred ≥ "
+        "truth - tol ; current>truth → pred ≤ truth + tol ; |truth-current|≤tol "
+        "→ strict |Δ| < tol). Wrong-direction MAE is 0 when consistent."
+    )
+    lines.append("")
+    for key, label, unit, tol in dir_channels:
+        if key not in results:
+            continue
+        lines.append(f"### {label} — directional (tol = {tol}{unit})")
+        lines.append(f"| Phase | n | Consistency | Wrong-direction MAE | p99 wrong-dir |")
         lines.append("|---|---:|---:|---:|---:|")
-        for ph, m in results["alt_directional"].items():
+        for ph, m in results[key].items():
             lines.append(
                 f"| {ph:8s} | {m.get('n', 0):>8,d} | "
                 f"{m.get('consistency_pct', float('nan')):.1f}% | "
