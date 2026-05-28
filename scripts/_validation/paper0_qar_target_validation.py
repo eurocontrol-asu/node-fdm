@@ -431,6 +431,9 @@ def process_flight(parquet_path: Path) -> dict | None:
     # in segments.py). Justified: pilots dial the cleared altitude at takeoff
     # and hold it across the entire climb chain.
     alt_pred_m = _pull("fdm_alt_target_ft") * FT_TO_M
+    # Point-wise plateau alt (NaN outside detected plateau) — used for the
+    # self-consistency metric (chain-consistency uses the anchored target).
+    alt_pred_sel_m = _pull("fdm_alt_sel_ft") * FT_TO_M
 
     # CAS + Mach: point-wise plateau values only — `fdm_cas_sel_kt` /
     # `fdm_mach_sel` are NaN outside detected plateaus. No backward-fill
@@ -501,6 +504,7 @@ def process_flight(parquet_path: Path) -> dict | None:
         "n_samples": int(df_proc.height),
         "alt_current_m": alt_m_proc,
         "alt_pred_m": alt_pred_m,
+        "alt_pred_sel_m": alt_pred_sel_m,
         "alt_truth_m": truth_aligned["alt_truth_m"],
         "alt_known": alt_known,
         "mach_current": mach_current,
@@ -648,6 +652,68 @@ def compute_directional_consistency(
     return out
 
 
+def compute_self_consistency(
+    pred: np.ndarray,
+    raw: np.ndarray,
+    known: np.ndarray,
+    phase: np.ndarray,
+    tol: float,
+    *,
+    phases: tuple[str, ...] = ("climb", "descent", "level", "global"),
+    angular: bool = False,
+) -> dict[str, dict[str, float]]:
+    """Detection-only self-consistency: does the pipeline-predicted plateau
+    value stay close to the *raw* instantaneous signal everywhere it claims
+    a plateau?
+
+    Unlike the directional metric (which compares against the FCU dial as
+    external truth), this metric validates the M1 detector's own output:
+    when the pipeline says "stable plateau at value v on [a, b]", does the
+    raw signal actually hold v ± tol on that window?
+
+    This validates **100 % of detected samples** — including the FMS-latent
+    plateaus that have no FCU truth (e.g. CAS held stable as a consequence
+    of Mach being dialed during cruise, γ at OP_DES schedule equilibrium,
+    vz that emerges from idle thrust + speed law in OP_CLB / OP_DES).
+
+    A sample is self-consistent if `|raw - pred| < tol`.
+    """
+    out: dict[str, dict[str, float]] = {}
+    for ph in phases:
+        if ph == "global":
+            phase_mask = np.ones_like(phase, dtype=bool)
+        elif ph == "level":
+            phase_mask = (phase == "cruise") | (phase == "tma")
+        else:
+            phase_mask = phase == ph
+        n_phase = int(phase_mask.sum())
+        eligible = phase_mask & known.astype(bool) & np.isfinite(pred) & np.isfinite(raw)
+        n = int(eligible.sum())
+        coverage_pct = 100.0 * n / max(n_phase, 1)
+        if n == 0:
+            out[ph] = dict(
+                n=0,
+                coverage_pct=coverage_pct,
+                self_consistency_pct=float("nan"),
+                self_consistency_mae=float("nan"),
+                p99=float("nan"),
+            )
+            continue
+        if angular:
+            d = (pred[eligible] - raw[eligible] + 180.0) % 360.0 - 180.0
+            err = np.abs(d)
+        else:
+            err = np.abs(pred[eligible] - raw[eligible])
+        out[ph] = dict(
+            n=n,
+            coverage_pct=coverage_pct,
+            self_consistency_pct=float(100.0 * (err < tol).mean()),
+            self_consistency_mae=float(err.mean()),
+            p99=float(np.quantile(err, 0.99)),
+        )
+    return out
+
+
 def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, float]]]:
     """Pool every flight's samples and compute per-channel-per-phase metrics."""
     if not per_flight:
@@ -657,6 +723,7 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
         for k in (
             "alt_current_m",
             "alt_pred_m",
+            "alt_pred_sel_m",
             "alt_truth_m",
             "alt_known",
             "mach_current",
@@ -776,6 +843,35 @@ def aggregate_results(per_flight: list[dict]) -> dict[str, dict[str, dict[str, f
         pooled["vz_known"],
         pooled["phase"],
         CHANNEL_TOL["vz_ftmin"],
+    )
+    # Self-consistency (detection-only): pipeline pred vs raw instantaneous
+    # signal, on 100 % of detected samples (no FCU dial needed). Validates
+    # M1 plateau detection in FMS-latent regions too.
+    # For altitude self-consistency we use the *point-wise* `fdm_alt_sel_ft`
+    # (NaN outside detected plateaus) — NOT the anchored `fdm_alt_target_ft`.
+    # The anchored version is for chain-consistency where pred lives at the
+    # chain endpoint by design ; the self-consistency check is "where M1 fires
+    # a plateau, does the raw signal match the plateau value".
+    alt_sel_known = np.isfinite(pooled["alt_pred_sel_m"])
+    results["alt_self"] = compute_self_consistency(
+        pooled["alt_pred_sel_m"], pooled["alt_current_m"],
+        alt_sel_known, pooled["phase"], CHANNEL_TOL["alt_m"],
+    )
+    results["mach_self"] = compute_self_consistency(
+        pooled["mach_pred"], pooled["mach_current"],
+        pooled["mach_known"], pooled["phase"], CHANNEL_TOL["mach"],
+    )
+    results["cas_self"] = compute_self_consistency(
+        pooled["cas_pred_kt"], pooled["cas_current_kt"],
+        pooled["cas_known"], pooled["phase"], CHANNEL_TOL["cas_kt"],
+    )
+    results["gamma_self"] = compute_self_consistency(
+        pooled["gamma_pred_rad"], pooled["gamma_current_rad"],
+        pooled["gamma_known"], pooled["phase"], CHANNEL_TOL["gamma_rad"],
+    )
+    results["vz_self"] = compute_self_consistency(
+        pooled["vz_pred_ftmin"], pooled["vz_current_ftmin"],
+        pooled["vz_known"], pooled["phase"], CHANNEL_TOL["vz_ftmin"],
     )
     return results
 
@@ -1326,6 +1422,41 @@ def write_markdown(
                 f"{m.get('consistency_pct', float('nan')):.1f}% | "
                 f"{m.get('directional_mae', float('nan')):.4g} | "
                 f"{m.get('wrong_direction_p99', float('nan')):.4g} |"
+            )
+        lines.append("")
+    # ----- Self-consistency (detection-only, no FCU truth needed) -----
+    self_channels = [
+        ("alt_self", "Altitude (m)", "m", CHANNEL_TOL["alt_m"]),
+        ("mach_self", "Mach", "", CHANNEL_TOL["mach"]),
+        ("cas_self", "CAS (kt)", "kt", CHANNEL_TOL["cas_kt"]),
+        ("gamma_self", "Gamma (rad)", "rad", CHANNEL_TOL["gamma_rad"]),
+        ("vz_self", "Vz (ft/min)", "ftmin", CHANNEL_TOL["vz_ftmin"]),
+    ]
+    lines.append("## Self-consistency (detection-only, 100 % of detected samples)")
+    lines.append("")
+    lines.append(
+        "Tests **the M1 plateau detector** in isolation, without any FCU dial "
+        "truth — does the pipeline's predicted plateau value stay within tol of "
+        "the *raw instantaneous* signal everywhere it claims a plateau? Validates "
+        "FMS-latent plateaus too (CAS held stable as a consequence of Mach being "
+        "dialed during cruise, γ at OP_DES schedule equilibrium, vz that emerges "
+        "from idle thrust + speed law in OP_CLB / OP_DES). A sample is "
+        "self-consistent if `|raw - pred| < tol`."
+    )
+    lines.append("")
+    for key, label, unit, tol in self_channels:
+        if key not in results:
+            continue
+        lines.append(f"### {label} — self-consistency (tol = {tol}{unit})")
+        lines.append(f"| Phase | n | Coverage | Self-consistency | MAE |raw-pred| | p99 |")
+        lines.append("|---|---:|---:|---:|---:|---:|")
+        for ph, m in results[key].items():
+            lines.append(
+                f"| {ph:8s} | {m.get('n', 0):>8,d} | "
+                f"{m.get('coverage_pct', float('nan')):.1f}% | "
+                f"{m.get('self_consistency_pct', float('nan')):.1f}% | "
+                f"{m.get('self_consistency_mae', float('nan')):.4g} | "
+                f"{m.get('p99', float('nan')):.4g} |"
             )
         lines.append("")
     lines.append("## Acceptance criteria")
