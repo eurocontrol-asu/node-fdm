@@ -55,11 +55,20 @@ COL_ALT_SEL_FT = "NAV__ALT_SEL_F"  # filtered Float64 (ft) → m
 COL_MACH_SEL = "SPD__MACH_SEL"  # gated by SPD__SPD_MACH_SEL == 'MACH'
 COL_CAS_SEL_KT = "SPD__SPD_SEL"  # gated by SPD__SPD_MACH_SEL == 'SPEED'
 COL_SPD_MODE = "SPD__SPD_MACH_SEL"  # 'MACH' | 'SPEED'
-COL_FPA_SEL_DEG = "ATT__FPA_SEL"  # degrees → rad (filter on != 0 — FPA mode active)
-COL_VS_SEL_FTMIN = "SPD__VERT_SEL"  # ft/min (filter on != 0 — V/S mode active)
+COL_FPA_SEL_DEG = "ATT__FPA_SEL"  # degrees → rad (only when FPA mode active)
+COL_VS_SEL_FTMIN = "SPD__VERT_SEL"  # ft/min (only when V_S mode active)
+COL_LONG_MODE = "FMA__LONGITUDINAL"  # ALT|ALT_CAPT|V_S|G_S|FLARE|... determines γ truth
 COL_HDG_SEL_DEG = "NAV__HDG_SEL"  # signed deg
 COL_LAT_MODE = "FMA__LAT_MODES"  # 'NAV' | 'HDG' | 'LOC TRK' | 'LOC*' | 'RWY' | 'NRD'
 COL_TRACK_ACTUAL = "NAV__TRACK"  # 0-360°, used as FMS proxy in NAV mode on straight legs
+
+# γ truth dispatch by longitudinal FMA mode. Modes not listed here yield NaN
+# (the autopilot is managing γ, no FCU intent to compare against).
+GAMMA_LEVEL_MODES = ("ALT", "ALT_CAPT", "FLARE")              # γ_truth = 0
+GAMMA_GS_MODES = ("G_S", "G_S_CAPT")                          # γ_truth = -3° (ILS std)
+GAMMA_VS_MODES = ("V_S",)                                      # γ_truth from VS_SEL
+GAMMA_FPA_MODES = ("FPA",)                                     # γ_truth from FPA_SEL
+GLIDESLOPE_GAMMA_RAD = -3.0 * math.pi / 180.0                 # -0.05236 rad
 
 # Phase classification thresholds.
 CRUISE_ALT_MIN_FT = 24000.0
@@ -206,10 +215,35 @@ def extract_qar_truth(df_qar: pl.DataFrame) -> dict[str, np.ndarray]:
     cas_raw_kt = _col_or_nan(COL_CAS_SEL_KT)
     mach_truth = np.where(mode == "MACH", mach_raw, np.nan)
     cas_truth_kt = np.where(mode == "SPEED", cas_raw_kt, np.nan)
+    # Sanity-filter QAR data-quality outliers in the polymorphic-knob columns.
+    # On some flights the `SPD__MACH_SEL` column contains non-physical values
+    # (e.g. 0.984 repeated for 870 samples on AAF231) even when the mode
+    # discriminator reports 'MACH' — likely a CAS value that leaked through
+    # a transient mode toggle. Operational A320 envelopes: M ∈ [0.50, 0.90],
+    # CAS dialed ∈ [80, 380] kt. Anything outside is QAR-side garbage.
+    mach_truth = np.where(
+        np.isfinite(mach_truth) & (mach_truth >= 0.50) & (mach_truth <= 0.90),
+        mach_truth, np.nan,
+    )
+    cas_truth_kt = np.where(
+        np.isfinite(cas_truth_kt) & (cas_truth_kt >= 80.0) & (cas_truth_kt <= 380.0),
+        cas_truth_kt, np.nan,
+    )
 
-    # γ truth: FPA_SEL is ALWAYS finite (just 0.0 outside FPA mode); same for
-    # VS_SEL. Use non-zero filter to detect FCU intent. FPA mode (rare on A320)
-    # gives γ directly; V/S mode (common) gives γ = asin(VS_SEL · 0.00508 / TAS).
+    # γ truth: dispatch by the active FMA__LONGITUDINAL mode (the only sane way
+    # to know what the FCU is actually doing). FPA_SEL and VS_SEL retain stale
+    # values across mode transitions, so "non-zero" is NOT a valid mode-active
+    # proxy — the pilot pre-dials a descent V/S before initiating descent while
+    # the autopilot is still in CLB managed mode ; my old filter then captured
+    # -1500 ftmin as truth during climb, which is wrong-sign garbage.
+    #
+    # Modes that give a meaningful γ truth:
+    #   ALT / ALT_CAPT / FLARE  → γ = 0  (level)
+    #   G_S / G_S_CAPT          → γ = -3° (ILS standard glideslope)
+    #   V_S                     → γ = asin(VS_SEL · 0.00508 / TAS · 0.514)
+    #   FPA (if A320 schema exposes it) → γ = FPA_SEL · π/180
+    # Everything else (CLB, DES, OP_CLB, OP_DES, SRS, FINAL_APP, ROLL_OUT, OFF):
+    # autopilot-managed γ, no FCU intent to compare against → NaN.
     fpa_deg = _col_or_nan(COL_FPA_SEL_DEG)
     vs_ftmin = _col_or_nan(COL_VS_SEL_FTMIN)
     tas_kt = (
@@ -218,21 +252,22 @@ def extract_qar_truth(df_qar: pl.DataFrame) -> dict[str, np.ndarray]:
         else np.full(n, np.nan)
     )
     tas_ms = tas_kt * KT_TO_MS
-
-    fpa_active = (fpa_deg != 0.0) & np.isfinite(fpa_deg)
-    vs_active = (vs_ftmin != 0.0) & np.isfinite(vs_ftmin)
-
-    gamma_from_fpa = fpa_deg * DEG_TO_RAD
     vs_ms = vs_ftmin * FTMIN_TO_MS
     with np.errstate(invalid="ignore", divide="ignore"):
         ratio = np.where((tas_ms > 1.0) & np.isfinite(vs_ms), vs_ms / tas_ms, np.nan)
         ratio = np.clip(ratio, -1.0, 1.0)
         gamma_from_vs = np.arcsin(ratio)
+    gamma_from_fpa = fpa_deg * DEG_TO_RAD
 
-    gamma_truth = np.where(
-        fpa_active, gamma_from_fpa,
-        np.where(vs_active, gamma_from_vs, np.nan),
-    )
+    if COL_LONG_MODE in df_qar.columns:
+        long_mode = df_qar[COL_LONG_MODE].to_numpy()
+    else:
+        long_mode = np.array([""] * n)
+    gamma_truth = np.full(n, np.nan)
+    gamma_truth = np.where(np.isin(long_mode, GAMMA_LEVEL_MODES), 0.0, gamma_truth)
+    gamma_truth = np.where(np.isin(long_mode, GAMMA_GS_MODES), GLIDESLOPE_GAMMA_RAD, gamma_truth)
+    gamma_truth = np.where(np.isin(long_mode, GAMMA_VS_MODES), gamma_from_vs, gamma_truth)
+    gamma_truth = np.where(np.isin(long_mode, GAMMA_FPA_MODES), gamma_from_fpa, gamma_truth)
 
     # Lateral truth: use FMA lateral mode to switch between HDG_SEL (HDG mode)
     # and actual NAV__TRACK as proxy-for-FMS-target (NAV mode, dominant ~72%).
@@ -346,28 +381,28 @@ def process_flight(parquet_path: Path) -> dict | None:
             return np.asarray(arr, dtype=bool)
         return np.zeros(df_proc.height, dtype=bool)
 
+    # Altitude: anchored target (backward-fill from the next detected plateau,
+    # forward-fill for the post-last-plateau tail — semantics of `_anchored_target`
+    # in segments.py). Justified: pilots dial the cleared altitude at takeoff
+    # and hold it across the entire climb chain.
     alt_pred_m = _pull("fdm_alt_target_ft") * FT_TO_M
-    cas_pred_kt = _pull("fdm_cas_target_kt")
-    tas_pred_kt = _pull("fdm_tas_target_kt")
+
+    # CAS + Mach: point-wise plateau values only — `fdm_cas_sel_kt` /
+    # `fdm_mach_sel` are NaN outside detected plateaus. No backward-fill
+    # extrapolation: the pilot may re-dial CAS / Mach in flight (descent
+    # step-downs, cruise Mach changes), so anchoring forward would be a
+    # data-fabrication artifact. We compare strictly where the pipeline
+    # produces a value ; samples outside any plateau drop out of the
+    # comparison (coverage reflects plateau detection rate).
+    cas_pred_kt = _pull("fdm_cas_sel_kt")
+    mach_pred = _pull("fdm_mach_sel")
+
     gamma_pred = _pull("fdm_gamma_target_rad")
     track_pred_deg = _pull("fdm_track_ortho_deg")
     in_turn = _pull_bool("fdm_in_turn")
 
     alt_ft_proc = df_proc["raw_alt_ft"].cast(pl.Float64).to_numpy()
     alt_m_proc = alt_ft_proc * FT_TO_M
-
-    # Mach predicted: use the point-wise plateau Mach `fdm_mach_sel` directly
-    # when available (output of the bilateral_mach detector on bds_mach_clean).
-    # Fallback: derive from `fdm_tas_target_kt` + ISA speed of sound, but only
-    # where `fdm_mach_sel` is NaN. The TAS-based derivation can drift when the
-    # anchored TAS target points to a different plateau than the current sample.
-    mach_pred_sel = _pull("fdm_mach_sel")
-    T_isa = np.where(alt_m_proc <= 11000.0, 288.15 - 0.0065 * alt_m_proc, 216.65)
-    a_isa = np.sqrt(1.4 * 287.058 * T_isa)
-    tas_pred_ms = tas_pred_kt * KT_TO_MS
-    with np.errstate(invalid="ignore", divide="ignore"):
-        mach_pred_derived = np.where(a_isa > 0, tas_pred_ms / a_isa, np.nan)
-    mach_pred = np.where(np.isfinite(mach_pred_sel), mach_pred_sel, mach_pred_derived)
 
     # Current pointwise CAS / Mach (for directional metric — same logic as
     # altitude: pipeline anchors to the next plateau ; FCU truth steps through
