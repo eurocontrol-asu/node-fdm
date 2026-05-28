@@ -34,7 +34,14 @@ import polars as pl
 from node_fdm_data.lateral import augment_lateral
 from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
 from node_fdm_data.segments import build_selected_params
-from node_fdm_pipeline.config import SelectedParamConfig
+from node_fdm_pipeline.config import (
+    AltFilterConfig,
+    CasFilterConfig,
+    GammaFilterConfig,
+    MachFilterConfig,
+    SelectedParamConfig,
+    VzFilterConfig,
+)
 
 # ---------------------------------------------------------------- constants --
 QAR_DIR = Path("/Users/gabriel/Downloads/QAR3")
@@ -83,8 +90,36 @@ VS_DESCENT_FTMIN = -400.0
 # An earlier version of this experiment incorrectly used the legacy savgol_*
 # CURRENT_CONFIG snapshot from scripts/debug/check_crossover_segments.py —
 # that file is a before/after comparison artifact, NOT the prod config.
-SEL_PARAMS_CONFIG: dict[str, object] = SelectedParamConfig().model_dump()
-SEL_PARAMS_CONFIG["alt_hold_relax"] = 15  # only key not in the Pydantic model
+#
+# `--legacy-config` swaps each filter's mode to its savgol_* variant for the
+# methodology-comparison sweep (AXM-1689 before/after). Other config knobs
+# (tolerances, smoothing windows, ...) keep the Pydantic defaults.
+def _build_sel_params_config(*, legacy: bool = False) -> dict[str, object]:
+    """Build the SEL_PARAMS_CONFIG dict consumed by build_selected_params.
+
+    When ``legacy=True``, every filter's ``mode`` is forced to its savgol_*
+    variant (savgol_mach / savgol_cas / savgol_vz / savgol_alt / savgol_gamma),
+    matching the pre-AXM-1689 production behaviour. All other fields keep
+    the Pydantic defaults.
+    """
+    if legacy:
+        cfg = SelectedParamConfig(
+            mach=MachFilterConfig(mode="savgol_mach"),
+            cas=CasFilterConfig(mode="savgol_cas"),
+            vz=VzFilterConfig(mode="savgol_vz"),
+            alt=AltFilterConfig(mode="savgol_alt"),
+            gamma=GammaFilterConfig(mode="savgol_gamma"),
+        )
+    else:
+        cfg = SelectedParamConfig()
+    d = cfg.model_dump()
+    d["alt_hold_relax"] = 15  # only key not in the Pydantic model
+    return d
+
+
+# Module-level default kept for back-compat with helpers that close over it.
+# `main()` may reassign this global when --legacy-config is set.
+SEL_PARAMS_CONFIG: dict[str, object] = _build_sel_params_config(legacy=False)
 
 # Acceptance criteria (channel → (mae_target, cov_target_pct)).
 AC_TARGETS = {
@@ -792,6 +827,9 @@ def plot_scatters(per_flight: list[dict], out_dir: Path) -> None:
             "gamma_pred_rad",
             "gamma_truth_rad",
             "gamma_known",
+            "vz_pred_ftmin",
+            "vz_truth_ftmin",
+            "vz_known",
             "track_pred_deg",
             "track_truth_deg",
             "track_known",
@@ -1378,7 +1416,25 @@ def main() -> int:
     parser.add_argument("--max-flights", type=int, default=None, help="cap for quick smoke test")
     parser.add_argument("--qar-dir", type=Path, default=QAR_DIR)
     parser.add_argument("--qar-glob", type=str, default=QAR_GLOB)
+    parser.add_argument(
+        "--legacy-config",
+        action="store_true",
+        help=(
+            "Swap each detector mode to its savgol_* legacy variant for the "
+            "methodology comparison sweep (AXM-1689 before/after). All other "
+            "filter knobs keep Pydantic defaults."
+        ),
+    )
     args = parser.parse_args()
+
+    # Reconfigure module-level SEL_PARAMS_CONFIG before any process_flight call
+    # (run_preprocessing closes over the global). Idempotent for default path.
+    global SEL_PARAMS_CONFIG
+    SEL_PARAMS_CONFIG = _build_sel_params_config(legacy=args.legacy_config)
+    if args.legacy_config:
+        print("Using legacy savgol_* detectors (--legacy-config).")
+    else:
+        print("Using bilateral_* detectors (AXM-1689 prod defaults).")
 
     paths = sorted(args.qar_dir.glob(args.qar_glob))
     if args.max_flights is not None:
