@@ -3,13 +3,11 @@ repos:
     rev: v6.0.0
     hooks:
       - id: trailing-whitespace
-        exclude: ^fixtures/
       - id: end-of-file-fixer
-        exclude: ^fixtures/
       - id: check-yaml
         args: [--unsafe]
       - id: check-toml
-      # data/ is gitignored, but fixtures/ and papers/ are not — keep .pt and
+      # data/ is gitignored, but papers/ is not — keep .pt and
       # parquet blobs from silently entering history.
       - id: check-added-large-files
 

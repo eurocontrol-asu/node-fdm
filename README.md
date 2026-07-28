@@ -186,7 +186,6 @@ node-fdm-v2/
 │       ├── config              # PipelineConfig (Pydantic, YAML)
 │       └── resolver            # Architecture dispatcher
 ├── scripts/                    # Development utilities (e.g. validate_01_acquisition.py — acquisition QA)
-├── fixtures/                   # Golden test data
 └── docs/                       # MkDocs documentation
 ```
 
