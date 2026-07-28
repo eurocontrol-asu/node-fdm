@@ -1,0 +1,3 @@
+[submodule "papers/paper_opensky26"]
+	path = papers/paper_opensky26
+	url = https://github.com/JarryGabriel/Opensky26-plateau.git

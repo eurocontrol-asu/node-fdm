@@ -27,14 +27,12 @@ fmt:
 ## Alias for fmt
 format: fmt
 
-## Run type checks (per-package, then the root config for papers/)
+## Run type checks (per-package; papers/ is a submodule with its own tooling)
 typecheck:
 	@for pkg in packages/*/; do \
 		echo "==> mypy $$pkg"; \
 		(cd $$pkg && uv run mypy src/ tests/) || exit 1; \
 	done
-	@echo "==> mypy papers/"
-	uv run mypy
 
 ## Alias for typecheck
 type-check: typecheck

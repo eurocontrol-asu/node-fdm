@@ -89,12 +89,12 @@ show_missing = true
 fail_under = 80
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
 
-# mypy is configured per-package under packages/*/pyproject.toml.
-# This root config only covers papers/ (paper analysis drivers, exempted from
-# strict typing in the same register scripts/ used to be before it moved to
-# archive/).
+# mypy is configured per-package under packages/*/pyproject.toml, and
+# `make typecheck` runs it there. This root block only carries the shared
+# defaults; it declares no `files` on purpose, since the only non-package
+# Python left at the root is papers/, a submodule with its own tooling that is
+# empty in a clone without --recurse-submodules.
 [tool.mypy]
 python_version = "3.12"
-files = ["papers"]
 ignore_missing_imports = true
 ignore_errors = true
