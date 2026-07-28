@@ -59,6 +59,8 @@ config.yaml
 # Claude Code local settings
 .claude/
 
+
+archive/
 # One-shot debug & exploration scripts (keep curated utilities tracked)
 scripts/debug/diag_*
 scripts/debug/bench_*
