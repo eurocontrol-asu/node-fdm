@@ -8,7 +8,7 @@ compute_stats and ODETrainer, producing NaN statistics.
 from __future__ import annotations
 
 from pathlib import Path
-from typing import ClassVar
+from typing import Any, ClassVar
 from unittest.mock import MagicMock, patch
 
 import numpy as np
@@ -345,7 +345,7 @@ class TestTrainerE1ColsForwarding:
         calls: list[dict[str, object]] = []
         original_compute_stats = compute_stats
 
-        def spy_compute_stats(*args, **kwargs):
+        def spy_compute_stats(*args: Any, **kwargs: Any) -> Any:
             calls.append(kwargs)
             return original_compute_stats(*args, **kwargs)
 

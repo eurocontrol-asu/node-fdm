@@ -1,11 +1,13 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 from typing import Any
 from unittest.mock import MagicMock
 
 import polars as pl
 import pytest
+from pytest_mock import MockerFixture
 
 from node_fdm_bada.predictor import (
     _bank_angle_for_turn,
@@ -32,7 +34,7 @@ def _tcl_result(hp: float = 10000.0, tas_kt: float = 486.0, mass: float = 60000.
     )
 
 
-def test_run_bada_step_passes_turn_metrics_when_in_turn(mocker):
+def test_run_bada_step_passes_turn_metrics_when_in_turn(mocker: MockerFixture) -> None:
     """AC1: explicit turn args are forwarded as turnMetrics to TCL calls."""
     mock_tcl = mocker.patch("node_fdm_bada.predictor.constantSpeedLevel")
     mock_tcl.return_value = _tcl_result()
@@ -66,7 +68,7 @@ def test_run_bada_step_passes_turn_metrics_when_in_turn(mocker):
     }
 
 
-def test_run_bada_step_default_turn_metrics_when_straight(mocker):
+def test_run_bada_step_default_turn_metrics_when_straight(mocker: MockerFixture) -> None:
     """AC4: with no turn args, turnMetrics keeps its default (rate=0, bank=0, dir=None)."""
     mock_tcl = mocker.patch("node_fdm_bada.predictor.constantSpeedLevel")
     mock_tcl.return_value = _tcl_result()
@@ -97,7 +99,7 @@ def test_run_bada_step_default_turn_metrics_when_straight(mocker):
     }
 
 
-def test_bank_angle_derived_from_turn_formula():
+def test_bank_angle_derived_from_turn_formula() -> None:
     """AC3: bank = degrees(arctan(omega * V / g)) with g=9.80665."""
     omega_rads = 0.05
     tas_ms = 200.0
@@ -110,13 +112,15 @@ def test_bank_angle_derived_from_turn_formula():
     assert result == pytest.approx(45.566, abs=0.1)
 
 
-def test_turn_direction_from_d_heading_sign():
+def test_turn_direction_from_d_heading_sign() -> None:
     """AC2: positive d_heading -> RIGHT, negative -> LEFT (heading clockwise)."""
     assert _turn_direction(0.05) == "RIGHT"
     assert _turn_direction(-0.05) == "LEFT"
 
 
-def test_in_turn_below_threshold_treated_as_straight(tmp_path, mocker):
+def test_in_turn_below_threshold_treated_as_straight(
+    tmp_path: Path, mocker: MockerFixture
+) -> None:
     """AC4: |fdm_d_heading_rads| < 1e-3 with fdm_in_turn=True -> default turnMetrics."""
     flight_path = tmp_path / "flight.parquet"
     n = 2
@@ -144,7 +148,7 @@ def test_in_turn_below_threshold_treated_as_straight(tmp_path, mocker):
 
     captured: list[dict[str, Any]] = []
 
-    def fake_run(**kwargs):
+    def fake_run(**kwargs: Any) -> Any:
         captured.append(kwargs)
         return _tcl_result(hp=kwargs["hp_init"], mass=kwargs["m_init"])
 

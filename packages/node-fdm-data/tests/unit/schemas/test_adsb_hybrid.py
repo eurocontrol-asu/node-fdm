@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from types import ModuleType
+
 from node_fdm_data.schemas import adsb, adsb_hybrid
 
 
@@ -71,8 +73,21 @@ def test_a320_tcds_bounds_constants() -> None:
 
 
 def test_all_exports_complete() -> None:
-    """AC7: hybrid schema exports every public constant."""
-    assert set(adsb_hybrid.__all__) == {
+    """AC7: hybrid schema exports every public constant.
+
+    Checked as a round-trip against the module rather than against a literal
+    list: the feature-set constants grow with each variant (2_LEAN, 3_CAUSAL,
+    9, ...), and a frozen list silently rots into a failure that says nothing
+    about the schema itself.
+    """
+    public = {
+        name
+        for name, value in vars(adsb_hybrid).items()
+        if name.isupper() and not name.startswith("_") and not isinstance(value, ModuleType)
+    }
+    assert set(adsb_hybrid.__all__) == public
+    # The core contract stays pinned: these must never silently disappear.
+    assert {
         "X_COLS",
         "U_COLS",
         "U_ODE_COLS",
@@ -85,4 +100,4 @@ def test_all_exports_complete() -> None:
         "FLIGHT_FEATURE_SIGNS_6",
         "A320_OEW_KG",
         "A320_MTOW_KG",
-    }
+    } <= set(adsb_hybrid.__all__)

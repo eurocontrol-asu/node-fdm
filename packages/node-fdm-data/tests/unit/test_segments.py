@@ -909,7 +909,7 @@ def _bsp_three_phase_alt(
 class TestMachPlateauOnly:
     """AC1: Mach detected only on altitude plateaus."""
 
-    def test_mach_detected_only_on_alt_plateau(self):
+    def test_mach_detected_only_on_alt_plateau(self) -> None:
         n_climb, n_cruise, n_descent = 100, 100, 100
         alt = _bsp_three_phase_alt(n_climb, n_cruise, n_descent)
         n = alt.size
@@ -923,7 +923,7 @@ class TestMachPlateauOnly:
         assert np.any(~np.isnan(sel[plateau_mask]))
         assert np.all(np.isnan(sel[~plateau_mask]))
 
-    def test_mach_outside_plateau_dropped(self):
+    def test_mach_outside_plateau_dropped(self) -> None:
         n = 200
         alt = np.linspace(1000.0, 34000.0, n)
         mach = np.full(n, 0.78)
@@ -937,7 +937,7 @@ class TestMachPlateauOnly:
 class TestAberrantMachFilter:
     """AC7: Reject Mach segments with mean < 0.5."""
 
-    def test_aberrant_low_mach_segment_filtered(self):
+    def test_aberrant_low_mach_segment_filtered(self) -> None:
         alt = _bsp_three_phase_alt(100, 100, 100)
         n = alt.size
         mach = np.full(n, 0.23)
@@ -947,7 +947,7 @@ class TestAberrantMachFilter:
 
         assert np.all(np.isnan(out["fdm_mach_sel"].to_numpy()))
 
-    def test_aberrant_high_mach_segment_kept(self):
+    def test_aberrant_high_mach_segment_kept(self) -> None:
         alt = _bsp_three_phase_alt(100, 100, 100)
         n = alt.size
         mach = np.full(n, 0.78)
@@ -1035,7 +1035,7 @@ def test_build_selected_params_no_apply_transition() -> None:
 class TestEraTemperature:
     """AC4: Use era_temp_K when present, fall back to ISA otherwise."""
 
-    def test_uses_era_temp_when_present(self):
+    def test_uses_era_temp_when_present(self) -> None:
         from node_fdm_data.physics.isa import isa_temperature
 
         alt = _bsp_three_phase_alt(100, 100, 100)
@@ -1061,7 +1061,7 @@ class TestEraTemperature:
         for i in idx[:5]:
             assert abs(target[100 + i] - expected_kt[i]) < 1.0
 
-    def test_falls_back_to_isa_when_era_temp_absent(self):
+    def test_falls_back_to_isa_when_era_temp_absent(self) -> None:
         from node_fdm_data.physics.speed import mach_to_tas
 
         alt = _bsp_three_phase_alt(100, 100, 100)
@@ -1087,7 +1087,7 @@ class TestEraTemperature:
 class TestTasTargetEnvelope:
     """AC5: TAS target = min(mach_to_tas, cas_to_tas) on overlap; NaN outside."""
 
-    def test_tas_target_uses_envelope_on_overlap(self):
+    def test_tas_target_uses_envelope_on_overlap(self) -> None:
         from node_fdm_data.physics.speed import cas_to_tas, mach_to_tas
 
         alt_ft, mach, cas_real_kt, tas_kt = _ConsistentFlightFactory.build(
@@ -1116,7 +1116,7 @@ class TestTasTargetEnvelope:
         expected = np.minimum(tas_mach, tas_cas)
         np.testing.assert_allclose(target[overlap], expected, atol=1.0)
 
-    def test_tas_target_nan_outside_segments(self):
+    def test_tas_target_nan_outside_segments(self) -> None:
         n = 200
         alt = np.linspace(1000.0, 34000.0, n)
         mach = np.full(n, np.nan)
@@ -1126,7 +1126,7 @@ class TestTasTargetEnvelope:
 
         assert np.all(np.isnan(out["fdm_tas_target_kt"].to_numpy()))
 
-    def test_tas_target_no_global_backfill(self):
+    def test_tas_target_no_global_backfill(self) -> None:
         """AXM-1690: contract update.
 
         After AXM-1690 the target column is forward+backward filled, so
@@ -1152,7 +1152,7 @@ class TestTasTargetEnvelope:
 class TestTasTargetKnownMaskBSP:
     """AC6: fdm_tas_target_known column."""
 
-    def test_tas_target_known_mask_emitted(self):
+    def test_tas_target_known_mask_emitted(self) -> None:
         """AXM-1690: contract update.
 
         ``fdm_tas_target_known`` reflects the pre-fill detection mask;
@@ -1179,7 +1179,7 @@ class TestTasTargetKnownMaskBSP:
 class TestNoOptimisationEdgeCases:
     """AC8: Skip optimisation when first/last plateau is within margin."""
 
-    def test_no_climb_skips_optimisation(self):
+    def test_no_climb_skips_optimisation(self) -> None:
         n = 200
         alt = np.empty(n)
         alt[:5] = np.linspace(33000.0, 34000.0, 5)
@@ -1194,7 +1194,7 @@ class TestNoOptimisationEdgeCases:
         cas_sel = out["fdm_cas_sel_kt"].to_numpy()
         assert np.all(np.isnan(cas_sel[:5]))
 
-    def test_no_descent_skips_optimisation(self):
+    def test_no_descent_skips_optimisation(self) -> None:
         n = 200
         alt = np.empty(n)
         alt[:50] = np.linspace(1000.0, 34000.0, 50)
@@ -1213,7 +1213,7 @@ class TestNoOptimisationEdgeCases:
 class TestBuildSelectedParamsEmpty:
     """AC1: Empty DataFrame — no error, expected columns present."""
 
-    def test_empty_dataframe(self):
+    def test_empty_dataframe(self) -> None:
         df = pl.DataFrame(
             {
                 "bds_mach_clean": pl.Series([], dtype=pl.Float64),

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import math
+from pathlib import Path
 
 import numpy as np
 import polars as pl
@@ -9,7 +10,7 @@ import pytest
 pytestmark = pytest.mark.integration
 
 
-def test_real_turn_segment_produces_progressive_heading_change(tmp_path):
+def test_real_turn_segment_produces_progressive_heading_change(tmp_path: Path) -> None:
     """AC5: bada_heading_rad evolves monotonically over a real turn segment."""
     pytest.importorskip("pyBADA")
     try:
