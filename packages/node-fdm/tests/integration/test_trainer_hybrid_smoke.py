@@ -11,12 +11,14 @@ from __future__ import annotations
 import json
 import math
 from pathlib import Path
+from typing import cast
 
 import pytest
 import torch
 
 import node_fdm.architectures.adsb_hybrid  # noqa: F401  -- self-registers hybrid arch
 from node_fdm.dataset import FlightDataset, FlightSample
+from node_fdm.layers.mass_encoder import MassEncoderLinear
 from node_fdm.trainer import ODETrainer, TrainingConfig
 from node_fdm_data.schemas.adsb_hybrid import FLIGHT_FEATURE_COLS_5 as FLIGHT_FEATURE_COLS
 
@@ -166,7 +168,9 @@ def test_effective_coefficients_callable_post_train(tmp_path: Path) -> None:
     trainer.train()
 
     assert trainer.mass_encoder is not None
-    coefs = trainer.mass_encoder.effective_coefficients()
+    # effective_coefficients()/b0 live on the concrete encoders, not on the
+    # nn.Module the trainer declares mass_encoder as.
+    coefs = trainer.mass_encoder.effective_coefficients()  # type: ignore[operator]
 
     assert "b0" in coefs
     for col in FLIGHT_FEATURE_COLS:
@@ -246,13 +250,17 @@ def test_load_model_weights_restores_mass_encoder(tmp_path: Path) -> None:
     trainer1.save_model(0)
 
     assert trainer1.mass_encoder is not None
-    saved_b0 = trainer1.mass_encoder.b0.detach().clone()
+    # b0 is declared on MassEncoderLinear, not on the nn.Module the trainer
+    # types mass_encoder as — narrow to the concrete encoder to reach it.
+    enc1 = cast(MassEncoderLinear, trainer1.mass_encoder)
+    saved_b0 = enc1.b0.detach().clone()
 
     trainer2 = _make_hybrid_trainer(tmp_path, epochs=1)
     assert trainer2.mass_encoder is not None
+    enc2 = cast(MassEncoderLinear, trainer2.mass_encoder)
     # Sanity: a fresh trainer's b0 is at the constant init, not the trained value.
-    trainer2.mass_encoder.b0.data.fill_(0.0)
+    enc2.b0.data.fill_(0.0)
 
     trainer2.load_model_weights()
 
-    assert torch.allclose(trainer2.mass_encoder.b0.detach(), saved_b0)
+    assert torch.allclose(enc2.b0.detach(), saved_b0)

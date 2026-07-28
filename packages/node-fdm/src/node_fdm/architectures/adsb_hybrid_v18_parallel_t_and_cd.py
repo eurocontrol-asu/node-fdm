@@ -42,6 +42,8 @@ Auto-registers at import time.
 
 from __future__ import annotations
 
+from typing import cast
+
 from node_fdm.architectures.adsb_hybrid_v17_psefficiency_parallel import (
     NODE_ADSB_HYBRID_V17_PSEFFICIENCY_PARALLEL,
 )
@@ -59,11 +61,17 @@ def _v18_layers() -> list[LayerSpec]:
         if layer.name == "data_ode_long":
             new_outputs = [*list(layer.output_cols), "fdm_cd_minus_d_norm_parallel"]
             new_config = dict(layer.config)
-            for key in ("denormalize_modes", "scale_overrides", "cap_overrides"):
-                new_config[key] = dict(new_config[key])
-            new_config["denormalize_modes"]["fdm_cd_minus_d_norm_parallel"] = "scaled"
-            new_config["scale_overrides"]["fdm_cd_minus_d_norm_parallel"] = 1.0
-            new_config["cap_overrides"]["fdm_cd_minus_d_norm_parallel"] = 8.0
+            # Copy the three per-column sub-dicts before mutating them, so the
+            # v17 spec this is derived from keeps its own. LayerSpec.config is
+            # dict[str, object], hence the cast on each sub-dict.
+            for key, value in (
+                ("denormalize_modes", "scaled"),
+                ("scale_overrides", 1.0),
+                ("cap_overrides", 8.0),
+            ):
+                sub = dict(cast("dict[str, object]", new_config[key]))
+                sub["fdm_cd_minus_d_norm_parallel"] = value
+                new_config[key] = sub
             layers.append(
                 LayerSpec(
                     name=layer.name,

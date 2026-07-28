@@ -264,7 +264,7 @@ class MassEncoderPSResidual(MassEncoderLinearTempered):
         is_cruise = (alt_t0 >= 9000.0) & (dh_dt.abs() <= 1.0) & in_range
         return m_ps, is_cruise
 
-    def forward(  # type: ignore[override]
+    def forward(
         self,
         flight_features: torch.Tensor,
         alt_t0: torch.Tensor | None = None,
@@ -295,7 +295,7 @@ class MassEncoderPSResidual(MassEncoderLinearTempered):
             min=self.oew_kg.float(),
             max=self.mtow_kg.float(),
         )
-        return m_pred.to(m_fallback.dtype)
+        return m_pred.to(m_fallback.dtype)  # type: ignore[no-any-return]
 
     def effective_coefficients(self) -> dict[str, float]:
         """Report the fallback's coefficients + residual head magnitude."""

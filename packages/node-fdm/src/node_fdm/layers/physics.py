@@ -583,7 +583,7 @@ class PhysicsLayer(nn.Module):
                 ) / tas_safe
                 lift = lift_residual_norm * _M_REF_KG * G + mass * G
 
-            out: dict[str, torch.Tensor] = {
+            out = {
                 "fdm_d_tas_ms2": d_tas,
                 "fdm_d_gamma_rads": d_gamma,
                 "fdm_d_mass_kgs": torch.zeros_like(mass),

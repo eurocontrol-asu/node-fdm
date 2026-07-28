@@ -160,7 +160,8 @@ def eta_o_reference(
         arg = ratio - 1.0
         h_0 = (1.0 - _H0_CURVATURE * arg * arg) * (1.0 + omega * arg * arg)
 
-    return h_0 * eta_o_b
+    # h_1 comes from `**` on an untyped parameter, so the product widens to Any.
+    return float(h_0 * eta_o_b)
 
 
 class PSEfficiencyLayer(nn.Module):

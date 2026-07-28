@@ -261,11 +261,24 @@ class ODETrainer:
                 module = importlib.import_module(module_path)
                 encoder_cls = getattr(module, class_name)
                 self.mass_encoder = encoder_cls(**common_kwargs, **encoder_kwargs).to(self.device)
+            # common_kwargs is heterogeneous (dict[str, object]), so `**` cannot
+            # be checked against these signatures — pass the arguments straight.
             elif encoder_temperature == 1.0:
-                self.mass_encoder = MassEncoderLinear(**common_kwargs).to(self.device)
+                self.mass_encoder = MassEncoderLinear(
+                    feature_stats=self.stats_dict,
+                    feature_cols=flight_feature_cols,
+                    expected_signs=flight_feature_signs,
+                    oew_kg=A320_OEW_KG,
+                    mtow_kg=A320_MTOW_KG,
+                ).to(self.device)
             else:
                 self.mass_encoder = MassEncoderLinearTempered(
-                    **common_kwargs, temperature=encoder_temperature
+                    feature_stats=self.stats_dict,
+                    feature_cols=flight_feature_cols,
+                    expected_signs=flight_feature_signs,
+                    oew_kg=A320_OEW_KG,
+                    mtow_kg=A320_MTOW_KG,
+                    temperature=encoder_temperature,
                 ).to(self.device)
             if "fdm_mass_kg" in self.spec.x_cols and (
                 config.alpha_dict is None or "fdm_mass_kg" not in config.alpha_dict
@@ -1061,8 +1074,11 @@ class ODETrainer:
             # head weight ; no-op for other layer classes / arch variants.
             if "physics" in self.model.layers_dict:
                 phys_layer = self.model.layers_dict["physics"]
-                if hasattr(phys_layer, "set_epoch"):
-                    phys_layer.set_epoch(epoch, epochs)
+                # set_epoch only exists on PhysicsLayer, not on nn.Module —
+                # this stays a duck-typed call, hence the local narrowing.
+                set_epoch = getattr(phys_layer, "set_epoch", None)
+                if set_epoch is not None:
+                    set_epoch(epoch, epochs)
 
             # --- Train ---
             self.model.train()
@@ -1142,11 +1158,10 @@ class ODETrainer:
                 )
 
             if self.mass_encoder is not None:
-                log.info(
-                    "mass_encoder_coefs",
-                    epoch=epoch,
-                    **self.mass_encoder.effective_coefficients(),
-                )
+                # effective_coefficients() is declared on the concrete encoders,
+                # not on nn.Module (self.mass_encoder's declared type).
+                coefs: dict[str, float] = self.mass_encoder.effective_coefficients()  # type: ignore[operator]
+                log.info("mass_encoder_coefs", epoch=epoch, **coefs)
 
         # Write loss CSV (no pandas)
         with loss_csv_path.open("w", newline="") as f:
