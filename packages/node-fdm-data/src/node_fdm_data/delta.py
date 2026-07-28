@@ -59,6 +59,21 @@ def _build_write_options(
     return options
 
 
+def _cast_null_columns(df: pl.DataFrame) -> pl.DataFrame:
+    """Cast all-null (``pl.Null``) columns to ``Float64`` for Delta.
+
+    A column is typed ``pl.Null`` when every value is null for the batch,
+    which happens for an EHS register (BDS field) absent from a small or
+    short sample. Delta rejects the ``Null`` type, so we cast such columns
+    to ``Float64`` (the EHS fields are numeric); no data is lost since the
+    column holds no values.
+    """
+    null_cols = [name for name, dtype in df.schema.items() if dtype == pl.Null]
+    if not null_cols:
+        return df
+    return df.with_columns(pl.col(c).cast(pl.Float64) for c in null_cols)
+
+
 def write_columns(df: pl.DataFrame, table_path: Path) -> None:
     """Write columns to a Delta table, preserving columns from previous steps.
 
@@ -76,6 +91,7 @@ def write_columns(df: pl.DataFrame, table_path: Path) -> None:
     """
     partition_by = [_BATCH_KEY] if _BATCH_KEY in df.columns else None
     df = _maybe_merge_existing(df, table_path)
+    df = _cast_null_columns(df)
     delta_write_options = _build_write_options(df, table_path, partition_by)
     df.write_delta(
         str(table_path),

@@ -294,3 +294,29 @@ class TestTimeTravel:
         # Read version 0 — should get v1 data
         result = read_delta_table(table_path, version=0)
         assert result.get_column("altitude_ft").to_list() == [35000.0]
+
+
+class TestWriteColumnsCastsAllNullColumns:
+    """An all-null column is cast to Float64 so Delta accepts the write."""
+
+    def test_write_columns_accepts_an_all_null_column(self, tmp_path: Path) -> None:
+        """Delta rejects the pl.Null dtype, which a BDS register absent from a
+        short sample produces for the whole batch."""
+        from node_fdm_data.delta import write_columns
+
+        table_path = tmp_path / "flights.delta"
+        df = pl.DataFrame(
+            {
+                "meta_batch_date": ["2025-01-01", "2025-01-01"],
+                "altitude_ft": [35000.0, 36000.0],
+                "bds_absent_register": [None, None],
+            }
+        )
+        assert df.schema["bds_absent_register"] == pl.Null
+
+        write_columns(df, table_path)
+
+        result = pl.read_delta(str(table_path))
+        assert result.schema["bds_absent_register"] == pl.Float64
+        assert result.get_column("bds_absent_register").to_list() == [None, None]
+        assert result.get_column("altitude_ft").to_list() == [35000.0, 36000.0]
