@@ -129,5 +129,11 @@ commit_parsers = [
     { message = "^refactor", group = "Refactor" },
     { message = "^style", group = "Styling" },
     { message = "^test", group = "Testing" },
-    { message = "^chore", group = "Miscellaneous" },
+    { message = "^chore", skip = true },
+    { message = "^ci", skip = true },
 ]
+# Scope the changelog to THIS package: only commits touching its files, only its
+# own tags. Without these two keys every package regenerates the same workspace-
+# wide changelog (see .github/workflows/release.yml for the tag prefixes).
+tag_pattern = "bada/v[0-9].*"
+include_path = ["packages/node-fdm-bada/**"]

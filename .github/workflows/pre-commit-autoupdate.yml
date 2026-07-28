@@ -12,12 +12,12 @@ jobs:
   autoupdate:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
       - uses: actions/setup-python@v6
         with:
           python-version: "3.12"
-      - run: pip install pre-commit
-      - run: pre-commit autoupdate
+      - run: pip install prek
+      - run: prek autoupdate
       - uses: peter-evans/create-pull-request@v6
         with:
           title: "chore: pre-commit autoupdate"

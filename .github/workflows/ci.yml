@@ -11,12 +11,12 @@ jobs:
     name: Lint & Type Check
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.12
-      - run: uv sync --all-groups
+      - run: uv sync --all-packages --all-groups
       - run: make lint
       - run: make typecheck
 
@@ -24,12 +24,12 @@ jobs:
     name: Security Audit
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
       - run: uv python install 3.12
-      - run: uv sync --all-groups
+      - run: uv sync --all-packages --all-groups
       - run: uv run pip-audit
 
   test:
@@ -38,13 +38,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        package: [node-fdm-data, node-fdm, node-fdm-bada]
+        # node-fdm-pipeline is not published to PyPI, but it is the CLI every
+        # other package is consumed through — it must still be tested.
+        package: [node-fdm-data, node-fdm, node-fdm-bada, node-fdm-pipeline]
         python-version: ["3.12", "3.13"]
     steps:
-      - uses: actions/checkout@v6
+      - uses: actions/checkout@v7
         with:
           fetch-depth: 0
       - uses: astral-sh/setup-uv@v7
       - run: uv python install ${{ matrix.python-version }}
-      - run: uv sync --all-groups
+      - run: uv sync --all-packages --all-groups
       - run: uv run --package ${{ matrix.package }} --directory packages/${{ matrix.package }} pytest --cov

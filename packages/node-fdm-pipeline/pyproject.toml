@@ -193,5 +193,12 @@ commit_parsers = [
     { message = "^refactor", group = "Refactor" },
     { message = "^style", group = "Styling" },
     { message = "^test", group = "Testing" },
-    { message = "^chore", group = "Miscellaneous" },
+    { message = "^chore", skip = true },
+    { message = "^ci", skip = true },
 ]
+# Scope the changelog to THIS package: only commits touching its files, only its
+# own tags. NOTE: this package is not published to PyPI and has no tag prefix in
+# .github/workflows/{publish,release}.yml — the pattern below is reserved so the
+# config is ready if it ever ships; add "pipeline/v*" to both workflows then.
+tag_pattern = "pipeline/v[0-9].*"
+include_path = ["packages/node-fdm-pipeline/**"]

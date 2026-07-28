@@ -1,34 +1,82 @@
 repos:
   - repo: https://github.com/pre-commit/pre-commit-hooks
-    rev: v4.6.0
+    rev: v6.0.0
     hooks:
       - id: trailing-whitespace
+        exclude: ^fixtures/
       - id: end-of-file-fixer
+        exclude: ^fixtures/
       - id: check-yaml
         args: [--unsafe]
       - id: check-toml
+      # data/ is gitignored, but fixtures/ and papers/ are not — keep .pt and
+      # parquet blobs from silently entering history.
+      - id: check-added-large-files
 
   - repo: https://github.com/astral-sh/ruff-pre-commit
-    rev: v0.15.12
+    rev: v0.15.21
     hooks:
       - id: ruff
         args: [--fix]
-        exclude: ^scripts/
       - id: ruff-format
-        exclude: ^scripts/
 
+  # MyPy — per-package type checking, SCOPED to the touched package.
+  # Each hook fires only when files under its package change (files: ^packages/<pkg>/),
+  # so committing in one package never triggers another package's mypy (decoupling).
+  # Cross-package type breakage is caught by the global pre-push hook below.
   - repo: local
     hooks:
-      - id: mypy
-        name: mypy
-        entry: uv run mypy
+      - id: mypy-data
+        name: mypy (node-fdm-data)
+        entry: uv run --package node-fdm-data --directory packages/node-fdm-data mypy
         language: system
         types: [python]
-        require_serial: true
-        exclude: ^(scripts/|tests/|packages/[^/]+/tests/)
+        files: ^packages/node-fdm-data/
+        pass_filenames: false
+        stages: [pre-commit]
+        args: [src/, tests/]
+      - id: mypy-fdm
+        name: mypy (node-fdm)
+        entry: uv run --package node-fdm --directory packages/node-fdm mypy
+        language: system
+        types: [python]
+        files: ^packages/node-fdm/
+        pass_filenames: false
+        stages: [pre-commit]
+        args: [src/, tests/]
+      - id: mypy-bada
+        name: mypy (node-fdm-bada)
+        entry: uv run --package node-fdm-bada --directory packages/node-fdm-bada mypy
+        language: system
+        types: [python]
+        files: ^packages/node-fdm-bada/
+        pass_filenames: false
+        stages: [pre-commit]
+        args: [src/, tests/]
+      - id: mypy-pipeline
+        name: mypy (node-fdm-pipeline)
+        entry: uv run --package node-fdm-pipeline --directory packages/node-fdm-pipeline mypy
+        language: system
+        types: [python]
+        files: ^packages/node-fdm-pipeline/
+        pass_filenames: false
+        stages: [pre-commit]
+        args: [src/, tests/]
+
+      # Global cross-package type check — fires on PUSH only. Catches inter-package
+      # type breakage the per-package scoped hooks cannot see (e.g. a change in
+      # node-fdm-data that breaks node-fdm-pipeline which imports it). Reuses
+      # `make typecheck` (the single source of truth for the per-package sweep).
+      - id: mypy-all
+        name: mypy (ALL packages — pre-push)
+        entry: make typecheck
+        language: system
+        pass_filenames: false
+        always_run: true
+        stages: [pre-push]
 
   - repo: https://github.com/compilerla/conventional-pre-commit
-    rev: v3.6.0
+    rev: v4.4.0
     hooks:
       - id: conventional-pre-commit
         stages: [commit-msg]

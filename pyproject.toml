@@ -20,6 +20,7 @@ dependencies = [
     "matplotlib>=3.10.8",
     "traffic>=2.10",
     "pygeomag>=1.1.0",
+    "ruptures>=1.1.10",
 ]
 
 [project.urls]
@@ -39,9 +40,10 @@ node-fdm-pipeline = { workspace = true }
 
 [dependency-groups]
 dev = [
-    "pre-commit>=4.0",
+    "prek>=0.4.9",
     "mypy>=1.13",
     "scikit-learn>=1.8.0",
+    "optuna>=4.8.0",
 ]
 
 [tool.ruff]
@@ -56,7 +58,9 @@ ignore = ["S101"]
 
 [tool.ruff.lint.per-file-ignores]
 "tests/**" = ["S101", "S105", "S106", "S108", "S603", "S607"]
-"scripts/**" = ["T201", "N999", "N806", "S110"]
+# Paper analysis drivers: CLI prints, module-alias capitals like
+# `import detectors as D`, subprocess orchestration.
+"papers/**" = ["T201", "N999", "N806", "N812", "N811", "S603"]
 
 [tool.ruff.lint.isort]
 known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada", "node_fdm_pipeline"]
@@ -76,10 +80,11 @@ fail_under = 80
 exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]
 
 # mypy is configured per-package under packages/*/pyproject.toml.
-# This root config only covers scripts/ (one-off diagnostic utilities,
-# exempted from strict typing per CLAUDE.md).
+# This root config only covers papers/ (paper analysis drivers, exempted from
+# strict typing in the same register scripts/ used to be before it moved to
+# archive/).
 [tool.mypy]
 python_version = "3.12"
-files = ["scripts"]
+files = ["papers"]
 ignore_missing_imports = true
 ignore_errors = true
