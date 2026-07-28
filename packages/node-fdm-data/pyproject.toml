@@ -21,7 +21,14 @@ dependencies = [
     "deltalake>=0.18",
     "pydantic>=2.0",
     "pygeomag>=1.1.0",
+    "structlog>=24.1",
 ]
+
+[project.optional-dependencies]
+# ``preprocessing.resample.smooth_position_subsegments`` imports
+# ``traffic.core.Flight`` lazily and degrades gracefully (returns the frame
+# unsmoothed) when it is absent, so this stays an extra rather than a hard dep.
+smoothing = ["traffic>=2.10"]
 
 [project.urls]
 Homepage = "https://github.com/eurocontrol-asu/axm-fdm-workspace"

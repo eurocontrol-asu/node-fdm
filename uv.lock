@@ -2773,6 +2773,12 @@ dependencies = [
     { name = "pydantic" },
     { name = "pygeomag" },
     { name = "scipy" },
+    { name = "structlog" },
+]
+
+[package.optional-dependencies]
+smoothing = [
+    { name = "traffic" },
 ]
 
 [package.dev-dependencies]
@@ -2801,7 +2807,10 @@ requires-dist = [
     { name = "pydantic", specifier = ">=2.0" },
     { name = "pygeomag", specifier = ">=1.1.0" },
     { name = "scipy", specifier = ">=1.13" },
+    { name = "structlog", specifier = ">=24.1" },
+    { name = "traffic", marker = "extra == 'smoothing'", specifier = ">=2.10" },
 ]
+provides-extras = ["smoothing"]
 
 [package.metadata.requires-dev]
 dev = [
