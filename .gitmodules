@@ -1,3 +1,6 @@
 [submodule "papers/paper_opensky26"]
 	path = papers/paper_opensky26
 	url = https://github.com/JarryGabriel/Opensky26-plateau.git
+[submodule "papers/paper_node_fdm_v2"]
+	path = papers/paper_node_fdm_v2
+	url = https://github.com/JarryGabriel/paper_node-fdm-v2.git
