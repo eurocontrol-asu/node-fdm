@@ -67,6 +67,7 @@ def _load_test_df(delta_table: Path) -> pl.DataFrame:
     so the predictor sees a continuous signal.  NaN gaps are filled via
     ffill/bfill, matching ``check_inference.py``.
     """
+    import polars as pl
     from node_fdm_data.delta import read_delta_table
 
     df = read_delta_table(delta_table)
@@ -527,12 +528,17 @@ def run_predict_bada(
 
     import polars as pl
     from node_fdm_data.delta import read_delta_table
-    from node_fdm_data.preprocessing.opensky import flight_processing
     from node_fdm_data.processor import FlightProcessor
 
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
+    from node_fdm_pipeline.resolver import resolve_architecture
+
+    flight_processing = resolve_architecture("adsb").preprocessing_fn
+    if flight_processing is None:
+        msg = "The 'adsb' architecture provider does not declare preprocessing."
+        raise ValueError(msg)
 
     typecodes = [typecode] if typecode else cfg.typecodes
     delta_table = cfg.paths.resolve("delta_table")

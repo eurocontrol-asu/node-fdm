@@ -15,6 +15,7 @@ classifiers = [
 dependencies = [
     "node-fdm-data",
     "node-fdm",
+    "node-fdm-models",
     "node-fdm-bada",
     "node-fdm-pipeline",
     "matplotlib>=3.10.8",
@@ -35,6 +36,7 @@ members = ["packages/*"]
 [tool.uv.sources]
 node-fdm-data = { workspace = true }
 node-fdm = { workspace = true }
+node-fdm-models = { workspace = true }
 node-fdm-bada = { workspace = true }
 node-fdm-pipeline = { workspace = true }
 
@@ -63,10 +65,10 @@ ignore = ["S101"]
 "papers/**" = ["T201", "N999", "N806", "N812", "N811", "S603"]
 
 [tool.ruff.lint.isort]
-known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_bada", "node_fdm_pipeline"]
+known-first-party = ["node_fdm_data", "node_fdm", "node_fdm_models", "node_fdm_bada", "node_fdm_pipeline"]
 
 [tool.pytest.ini_options]
-testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-bada/tests", "packages/node-fdm-pipeline/tests"]
+testpaths = ["packages/node-fdm-data/tests", "packages/node-fdm/tests", "packages/node-fdm-models/tests", "packages/node-fdm-bada/tests", "packages/node-fdm-pipeline/tests"]
 # No `pythonpath = ["."]`: it made every package's tests/ resolve to the same
 # top-level `tests` package, so the second conftest.py collected raised
 # "Plugin already registered under a different name". Each package is installed
@@ -81,7 +83,7 @@ markers = [
 ]
 
 [tool.coverage.run]
-source_pkgs = ["node_fdm_data", "node_fdm", "node_fdm_bada", "node_fdm_pipeline"]
+source_pkgs = ["node_fdm_data", "node_fdm", "node_fdm_models", "node_fdm_bada", "node_fdm_pipeline"]
 branch = true
 
 [tool.coverage.report]

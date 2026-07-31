@@ -6,160 +6,18 @@ sequences, and returns typed :class:`FlightDataset` instances.
 
 from __future__ import annotations
 
-from pathlib import Path
-
 import numpy as np
 import polars as pl
 import structlog
 import torch
 
 from node_fdm.dataset import FlightDataset, FlightSample
-from node_fdm_data.physics.isa import isa_temperature
-from node_fdm_data.schemas.adsb_hybrid import FLIGHT_FEATURE_COLS_6 as FLIGHT_FEATURE_COLS
-
-# Phase 10 — path to the static aircraft registry used by the Seymour
-# age correction. Resolved relative to the repo root via the package
-# location. CSV schema : icao24, registration, typecode, model, built,
-# age_years, ... (12 columns, 150 A320s as of 2026-05). When the dataset
-# delta lacks a 1:1 hit, the loader falls back to the fleet median age.
-_AIRCRAFT_DB_PATH: Path = Path(__file__).resolve().parents[4] / "data" / "aircraft_db.csv"
-# Fleet median age from data/aircraft_db.csv at the 2026-05 snapshot.
-# Used as fallback for ICAOs not in the registry. Kept conservative —
-# the registry covers ~95 % of the test set, so the fallback is rare.
-_AIRCRAFT_AGE_FALLBACK_YR: float = 17.7
-
-# Physical clamp range for ``fdm_mach_sel`` when building the flight-level
-# aggregate ``mach_cruise_planned``. A320 cruise Mach is typically 0.78-0.80;
-# values outside [0.4, 0.85] are spurious plateau detections (climb residue,
-# noise on bds_mach decoded outliers).
-_MACH_CRUISE_MIN: float = 0.4
-_MACH_CRUISE_MAX: float = 0.85
-# Fallback used when no usable Mach selection exists in the flight. Set to
-# the empirical A320 mean from the dataset audit (~0.78).
-_MACH_CRUISE_FALLBACK: float = 0.78
 
 __all__ = [
-    "FLIGHT_FEATURE_COLS",
     "get_train_val_data",
 ]
 
 log = structlog.get_logger("node_fdm.loader")
-
-
-_CLIMB_BAND_LOW_M: float = 1500.0
-_CLIMB_BAND_HIGH_M: float = 4500.0
-_FL240_M: float = 7300.0
-_GROUND_OFFSET_M: float = 1000.0
-_NOMINAL_DT_S: float = 4.0
-
-
-def _dynamic_mass_aggregates(df: pl.DataFrame, alt_arr: np.ndarray) -> dict[str, float]:
-    """Compute the three Experiment-01 dynamic mass-signature aggregates.
-
-    All three are robust to missing data and constrained to physically
-    plausible bands so noise in the early ground roll or top-of-climb
-    transition does not dominate the mean. ``time_to_fl240_s`` is derived
-    from ``raw_timestamp`` when available, falling back to a row-count x
-    nominal-step approximation.
-    """
-    band_mask = (
-        np.isfinite(alt_arr) & (alt_arr >= _CLIMB_BAND_LOW_M) & (alt_arr <= _CLIMB_BAND_HIGH_M)
-    )
-
-    def _band_mean(col_name: str) -> float:
-        if col_name not in df.columns:
-            return 0.0
-        arr = df.get_column(col_name).to_numpy().astype(np.float32)
-        mask = band_mask & np.isfinite(arr)
-        if not mask.any():
-            return 0.0
-        return float(np.nanmean(arr[mask]))
-
-    climb_rate = _band_mean("fdm_d_alt_ms")
-    accel = _band_mean("fdm_d_tas_ms2")
-
-    # time_to_fl240: time delta between the first row above _GROUND_OFFSET_M
-    # and the first row above _FL240_M. Falls back to row-count x dt when
-    # raw_timestamp is missing or non-monotone.
-    above_ground = np.isfinite(alt_arr) & (alt_arr >= _GROUND_OFFSET_M)
-    above_fl240 = np.isfinite(alt_arr) & (alt_arr >= _FL240_M)
-    if above_ground.any() and above_fl240.any():
-        idx_start = int(np.argmax(above_ground))
-        idx_top = int(np.argmax(above_fl240))
-        if idx_top > idx_start and "raw_timestamp" in df.columns:
-            try:
-                ts = df.get_column("raw_timestamp").to_numpy()
-                dt = float((ts[idx_top] - ts[idx_start]).astype("timedelta64[s]").astype(np.int64))
-                if dt <= 0 or not np.isfinite(dt):
-                    raise ValueError
-            except (AttributeError, ValueError, TypeError):
-                dt = float(idx_top - idx_start) * _NOMINAL_DT_S
-        else:
-            dt = float(max(idx_top - idx_start, 0)) * _NOMINAL_DT_S
-    else:
-        dt = 0.0
-
-    return {
-        "climb_rate_mean_climb": climb_rate,
-        "accel_mean_climb": accel,
-        "time_to_fl240_s": dt,
-    }
-
-
-def _attach_age_years(flights_df: pl.DataFrame) -> pl.DataFrame:
-    """Phase 10 — join aircraft age (years) to the flights frame.
-
-    Reads ``data/aircraft_db.csv`` and joins on ``raw_icao24`` so every
-    timestep of every flight carries the age of its aircraft (broadcast
-    per flight). Missing matches (ICAO not in registry) fall back to the
-    fleet median ``_AIRCRAFT_AGE_FALLBACK_YR`` and are logged.
-
-    The aircraft registry is the public OpenSky / FAA dump checked into
-    ``data/`` — not derived from QAR. Joining it preserves R1 (no
-    validation-side data leaks into training).
-    """
-    if "raw_icao24" not in flights_df.columns:
-        log.warning(
-            "age_join_no_icao24",
-            message=(
-                "raw_icao24 column missing from flights_df — Seymour age "
-                "feature will fall back to fleet median for all rows."
-            ),
-        )
-        return flights_df.with_columns(
-            pl.lit(_AIRCRAFT_AGE_FALLBACK_YR, dtype=pl.Float32).alias("raw_age_years"),
-        )
-    if not _AIRCRAFT_DB_PATH.exists():
-        log.warning(
-            "age_join_no_registry",
-            path=str(_AIRCRAFT_DB_PATH),
-            message="aircraft_db.csv not found — using fleet median fallback.",
-        )
-        return flights_df.with_columns(
-            pl.lit(_AIRCRAFT_AGE_FALLBACK_YR, dtype=pl.Float32).alias("raw_age_years"),
-        )
-    registry = (
-        pl.read_csv(_AIRCRAFT_DB_PATH)
-        .select(
-            pl.col("icao24").cast(pl.Utf8).str.to_lowercase().alias("raw_icao24"),
-            pl.col("age_years").cast(pl.Float32).alias("raw_age_years"),
-        )
-        .unique(subset=["raw_icao24"], keep="first")
-    )
-    joined = flights_df.join(registry, on="raw_icao24", how="left")
-    n_total = joined.height
-    n_matched = joined.filter(pl.col("raw_age_years").is_not_null()).height
-    if n_total > 0:
-        log.info(
-            "age_join_coverage",
-            n_matched=n_matched,
-            n_total=n_total,
-            pct=round(100.0 * n_matched / n_total, 2),
-            fallback_yr=_AIRCRAFT_AGE_FALLBACK_YR,
-        )
-    return joined.with_columns(
-        pl.col("raw_age_years").fill_null(_AIRCRAFT_AGE_FALLBACK_YR),
-    )
 
 
 def _fill_nan_sel(df: pl.DataFrame) -> pl.DataFrame:
@@ -190,8 +48,6 @@ def _load_and_window(
     *,
     flight_limit: int | None = None,
     e1_cols: list[str] | None = None,
-    flight_feature_cols: list[str] | None = None,
-    require_routing: bool = False,
 ) -> list[FlightSample]:
     """Group flights and slice into fixed-length windows.
 
@@ -206,52 +62,12 @@ def _load_and_window(
         shift: Step between windows.
         flight_limit: Max number of flights to process.
         e1_cols: Optional extra environment column names.
-        flight_feature_cols: Optional flight-level feature names to attach.
-        require_routing: Whether to drop flights with no routing data.
 
     Returns:
         List of windowed :class:`FlightSample` instances.
     """
     samples: list[FlightSample] = []
-    requested_flight_feature_cols = flight_feature_cols or []
-    has_flight_features = bool(requested_flight_feature_cols)
-    _require_routing = require_routing or has_flight_features
-    routing_cols = ["fdm_adep_dist_m", "fdm_ades_dist_m"]
-    aggregate_source_cols = ["raw_alt_m", "fdm_long_wind_ms", "era_temp_K"]
-    # Dynamic mass-signature aggregates (Experiment 01, FLIGHT_FEATURE_COLS_9).
-    # Read source columns only when at least one dynamic feature is requested
-    # so older 5/6-feature archs keep their loader contract unchanged.
-    _dynamic_feature_names = {
-        "climb_rate_mean_climb",
-        "accel_mean_climb",
-        "time_to_fl240_s",
-    }
-    has_dynamic_features = bool(_dynamic_feature_names.intersection(requested_flight_feature_cols))
-    dynamic_source_cols = (
-        ["fdm_d_alt_ms", "fdm_d_tas_ms2", "raw_timestamp"] if has_dynamic_features else []
-    )
-    feature_source_cols = (
-        routing_cols + aggregate_source_cols + dynamic_source_cols if has_flight_features else []
-    )
-
-    # Synthetic state/derivative columns are emitted at runtime (by the
-    # MassEncoder, not observed in the delta). Skip them from the existence
-    # check and zero-pad their slot when assembling the per-window tensors.
-    synthetic_cols: set[str] = {"fdm_mass_kg", "fdm_d_mass_kgs"}
-    real_x_cols = [c for c in x_cols if c not in synthetic_cols]
-    real_dx_cols = [c for c in dx_cols if c not in synthetic_cols]
-    synthetic_x_idx = [i for i, c in enumerate(x_cols) if c in synthetic_cols]
-    synthetic_dx_idx = [i for i, c in enumerate(dx_cols) if c in synthetic_cols]
-
-    all_cols = real_x_cols + u_cols + e_cols + real_dx_cols + feature_source_cols
-
-    # Phase 10 — Seymour age feature : if any architecture column requests
-    # ``raw_age_years`` and the source delta doesn't already carry it,
-    # enrich the dataframe from the static aircraft_db.csv registry
-    # (join on raw_icao24). Backward-compat : archs not requesting the
-    # column are unaffected.
-    if "raw_age_years" in all_cols and "raw_age_years" not in flights_df.columns:
-        flights_df = _attach_age_years(flights_df)
+    all_cols = x_cols + u_cols + e_cols + dx_cols
 
     # Verify all columns exist
     missing = [c for c in all_cols if c not in flights_df.columns]
@@ -270,8 +86,6 @@ def _load_and_window(
 
     has_distance_flag = "fdm_flag_distance_ok" in flights_df.columns
     has_weight_col = "fdm_train_weight" in flights_df.columns
-    flights_dropped_no_routing = 0
-    flight_aggregates: dict[object, dict[str, float]] = {}
 
     flight_ids = flights_df.get_column("meta_flight_id").unique().sort().to_list()
     if flight_limit is not None:
@@ -279,82 +93,19 @@ def _load_and_window(
 
     for fid in flight_ids:
         df = flights_df.filter(pl.col("meta_flight_id") == fid)
-        if _require_routing:
-            routing_presence = df.select(
-                [
-                    pl.col("fdm_adep_dist_m").is_not_null().any().alias("has_adep"),
-                    pl.col("fdm_ades_dist_m").is_not_null().any().alias("has_ades"),
-                ]
-            ).row(0, named=True)
-            if not routing_presence["has_adep"] and not routing_presence["has_ades"]:
-                flights_dropped_no_routing += 1
-                continue
-
         n_rows = len(df)
         if n_rows < seq_len:
             continue
 
-        if has_flight_features:
-            alt_arr = df.get_column("raw_alt_m").to_numpy().astype(np.float32)
-            temp_arr = df.get_column("era_temp_K").to_numpy().astype(np.float32)
-            wind_arr = df.get_column("fdm_long_wind_ms").to_numpy().astype(np.float32)
-            temp_isa_dev = temp_arr - isa_temperature(alt_arr)
-            # Mach cruise planned: highest FMS-selected Mach observed during
-            # the flight, clamped to physically plausible cruise range to
-            # discard spurious plateau detections. Falls back to the typical
-            # A320 cruise Mach when no usable selection exists.
-            mach_cruise_planned = _MACH_CRUISE_FALLBACK
-            if "fdm_mach_sel" in df.columns:
-                mach_arr = df.get_column("fdm_mach_sel").to_numpy()
-                in_range = np.isfinite(mach_arr) & (
-                    (mach_arr >= _MACH_CRUISE_MIN) & (mach_arr <= _MACH_CRUISE_MAX)
-                )
-                if in_range.any():
-                    mach_cruise_planned = float(np.max(mach_arr[in_range]))
-            aggregates = {
-                "cruise_alt_max_flight": float(np.nanmax(alt_arr)),
-                "wind_long_mean_flight": float(np.nanmean(wind_arr)),
-                "temp_isa_dev_mean_flight": float(np.nanmean(temp_isa_dev)),
-                "mach_cruise_planned": mach_cruise_planned,
-            }
-            if has_dynamic_features:
-                aggregates.update(_dynamic_mass_aggregates(df, alt_arr))
-            flight_aggregates[fid] = aggregates
-
-        # Extract arrays (empty col lists → zero-width arrays).
-        # Synthetic columns (e.g. fdm_mass_kg) are filled by the runtime
-        # encoder, not observed; we zero-pad the slot so the tensor shape
-        # matches len(x_cols).
-        x_arr_real = (
-            df.select(real_x_cols).to_numpy().astype(np.float32)
-            if real_x_cols
-            else np.empty((n_rows, 0), dtype=np.float32)
-        )
-        if synthetic_x_idx:
-            x_arr = np.zeros((n_rows, len(x_cols)), dtype=np.float32)
-            real_idx = [i for i in range(len(x_cols)) if i not in synthetic_x_idx]
-            x_arr[:, real_idx] = x_arr_real
-        else:
-            x_arr = x_arr_real
-
+        # Extract arrays (empty col lists → zero-width arrays)
+        x_arr = df.select(x_cols).to_numpy().astype(np.float32)
         u_arr = (
             df.select(u_cols).to_numpy().astype(np.float32)
             if u_cols
             else np.empty((n_rows, 0), dtype=np.float32)
         )
         e_arr = df.select(e_cols).to_numpy().astype(np.float32)
-
-        dx_arr_real = (
-            df.select(real_dx_cols).to_numpy().astype(np.float32)
-            if real_dx_cols
-            else np.empty((n_rows, 0), dtype=np.float32)
-        )
-        if synthetic_dx_idx:
-            dx_arr = np.zeros((n_rows, len(dx_cols)), dtype=np.float32)
-            real_idx = [i for i in range(len(dx_cols)) if i not in synthetic_dx_idx]
-            dx_arr[:, real_idx] = dx_arr_real
-        else:
-            dx_arr = dx_arr_real
+        dx_arr = df.select(dx_cols).to_numpy().astype(np.float32)
 
         e1_arr: np.ndarray | None = None
         if valid_e1_cols:
@@ -368,22 +119,6 @@ def _load_and_window(
         w_arr: np.ndarray | None = None
         if has_weight_col:
             w_arr = df.get_column("fdm_train_weight").to_numpy().astype(np.float32)
-
-        adep_arr: np.ndarray | None = None
-        ades_arr: np.ndarray | None = None
-        # Read routing arrays as soon as either:
-        #   - flight features are requested (segment-level features need them), or
-        #   - require_routing is set (we filter windows on t_0 presence so the
-        #     baseline and hybrid runs end up on the *same* sample set — fair
-        #     comparison requires apples-to-apples window selection, not just
-        #     apples-to-apples flight selection).
-        if (
-            _require_routing
-            and "fdm_adep_dist_m" in df.columns
-            and "fdm_ades_dist_m" in df.columns
-        ):
-            adep_arr = df.get_column("fdm_adep_dist_m").to_numpy().astype(np.float32)
-            ades_arr = df.get_column("fdm_ades_dist_m").to_numpy().astype(np.float32)
 
         for start in range(0, n_rows - seq_len + 1, shift):
             end = start + seq_len
@@ -413,20 +148,6 @@ def _load_and_window(
             if dist_ok is not None and not dist_ok[start:end].all():
                 continue
 
-            # Window-level routing guard: drop windows whose t_0 row lacks
-            # ADEP / ADES distance. Applied whenever require_routing is on
-            # (regardless of flight_feature_cols) so baseline and hybrid
-            # share the same sample set for fair comparison (§9.1).
-            adep_at_t0: float | None = None
-            ades_at_t0: float | None = None
-            if _require_routing:
-                if adep_arr is None or ades_arr is None:
-                    continue
-                adep_at_t0 = float(adep_arr[start])
-                ades_at_t0 = float(ades_arr[start])
-                if not np.isfinite(adep_at_t0) or not np.isfinite(ades_at_t0):
-                    continue
-
             e1_tensor: torch.Tensor | None = None
             if e1_arr is not None:
                 e1_tensor = torch.from_numpy(e1_arr[start:end].copy())
@@ -434,22 +155,6 @@ def _load_and_window(
             w_tensor: torch.Tensor | None = None
             if w_arr is not None:
                 w_tensor = torch.from_numpy(w_arr[start:end].copy())
-
-            flight_features_tensor: torch.Tensor | None = None
-            if has_flight_features:
-                # adep_at_t0 / ades_at_t0 are already validated by the
-                # require_routing guard above (has_flight_features auto-
-                # promotes _require_routing).
-                assert adep_at_t0 is not None and ades_at_t0 is not None
-                feature_values = {
-                    "dist_total_flight": adep_at_t0 + ades_at_t0,
-                    "dist_adep_at_t0": adep_at_t0,
-                    **flight_aggregates[fid],
-                }
-                feature_row = [feature_values[col] for col in requested_flight_feature_cols]
-                flight_features_tensor = (
-                    torch.tensor(feature_row, dtype=torch.float32).unsqueeze(0).expand(seq_len, -1)
-                )
 
             samples.append(
                 FlightSample(
@@ -459,12 +164,8 @@ def _load_and_window(
                     dx=torch.from_numpy(dx_arr[start:end].copy()),
                     e1=e1_tensor,
                     w=w_tensor,
-                    flight_features=flight_features_tensor,
                 )
             )
-
-    if _require_routing:
-        log.info("flights_dropped_no_routing", count=flights_dropped_no_routing)
 
     return samples
 
@@ -481,8 +182,6 @@ def get_train_val_data(
     train_limit: int | None = None,
     val_limit: int | None = None,
     e1_cols: list[str] | None = None,
-    flight_feature_cols: list[str] | None = None,
-    require_routing: bool = False,
 ) -> tuple[FlightDataset, FlightDataset]:
     """Create training and validation datasets from Delta Table data.
 
@@ -503,8 +202,6 @@ def get_train_val_data(
         shift: Step between consecutive windows.
         train_limit: Max number of training flights to load.
         val_limit: Max number of validation flights to load.
-        flight_feature_cols: Optional flight-level feature names to attach.
-        require_routing: Whether to drop flights with no routing data.
 
     Returns:
         Tuple of ``(train_dataset, val_dataset)``.
@@ -530,8 +227,6 @@ def get_train_val_data(
         shift=shift,
         flight_limit=train_limit,
         e1_cols=e1_cols,
-        flight_feature_cols=flight_feature_cols,
-        require_routing=require_routing,
     )
     val_samples = _load_and_window(
         val_df,
@@ -543,37 +238,7 @@ def get_train_val_data(
         shift=shift,
         flight_limit=val_limit,
         e1_cols=e1_cols,
-        flight_feature_cols=flight_feature_cols,
-        require_routing=require_routing,
     )
-
-    if flight_feature_cols or require_routing:
-        routing_df = data_df.select(
-            [
-                pl.col("meta_flight_id"),
-                pl.col("fdm_adep_dist_m").is_not_null().over("meta_flight_id").alias("has_adep"),
-                pl.col("fdm_ades_dist_m").is_not_null().over("meta_flight_id").alias("has_ades"),
-            ]
-        )
-        routing_summary = routing_df.group_by("meta_flight_id").agg(
-            [
-                pl.col("has_adep").any(),
-                pl.col("has_ades").any(),
-            ]
-        )
-        n_flights_with_routing = routing_summary.filter(
-            pl.col("has_adep") | pl.col("has_ades")
-        ).height
-        n_flights_dropped = routing_summary.height - n_flights_with_routing
-        n_samples_with_features = sum(
-            sample.flight_features is not None for sample in train_samples + val_samples
-        )
-        log.info(
-            "flight_features_loaded",
-            n_flights_with_routing=n_flights_with_routing,
-            n_flights_dropped=n_flights_dropped,
-            n_samples_with_features=n_samples_with_features,
-        )
 
     log.info(
         "data_loaded",

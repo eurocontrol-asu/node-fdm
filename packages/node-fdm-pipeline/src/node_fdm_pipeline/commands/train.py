@@ -6,7 +6,6 @@ and trains Neural ODE models per aircraft typecode.
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -33,7 +32,6 @@ class _TrainOverrides:
     shift: int | None
     model_name: str | None
     lambda_tracking: float | None
-    lambda_aux_ps: float | None
     use_mode_weights: bool | None
     train_limit: int | None
     activation: str | None = None
@@ -42,7 +40,6 @@ class _TrainOverrides:
     backbone_depth: int | None = None
     head_depth: int | None = None
     hidden_width: int | None = None
-    require_routing: bool = False
 
 
 @dataclass(frozen=True)
@@ -106,7 +103,6 @@ def _build_training_config(ctx: _TrainContext, acft: str) -> Any:
         method=ov.method,
         num_workers=4,
         lambda_tracking=ov.lambda_tracking or 0.0,
-        lambda_aux_ps=ov.lambda_aux_ps or 0.0,
         grad_clip_norm=10.0,
         alpha_dict={"fdm_heading_rad": 1.0},
         huber_beta_per_col={
@@ -169,35 +165,17 @@ def _train_one_typecode(ctx: _TrainContext, acft: str) -> None:
     if training_config.use_mode_weights:
         data_df = boot_mode_weights(data_df, alpha=training_config.mode_weight_alpha)
 
-    # Pull flight_feature_cols from the registered ArchitectureSpec when the
-    # architecture declares them (hybrid). The resolver doesn't carry that
-    # field, so we read it from the registry directly.
-    from node_fdm.architectures.registry import get as get_arch_spec
-
-    arch_spec = get_arch_spec(ctx.info.name)
-    flight_feature_cols = list(getattr(arch_spec, "flight_feature_cols", []) or [])
-
-    # Phase 10 fix : pull e0_cols from the registered ArchitectureSpec
-    # instead of the resolver's ArchitectureInfo. The resolver hard-codes
-    # the schema-level E0_COLS, which doesn't see arch-level extensions
-    # like Phase 10's ``raw_age_years``. compute_stats downstream reads
-    # ``spec.e0_cols`` directly, so this keeps the loader and the trainer
-    # in sync. Backward-compat : v14/v17/v19 all keep the schema E0_COLS
-    # verbatim in their specs, so this widening has zero effect on them.
-    spec_e0_cols = list(arch_spec.e0_cols)
     train_ds, val_ds = get_train_val_data(
         data_df=data_df,
         x_cols=ctx.info.x_cols,
         u_cols=ctx.info.u_cols,
-        e_cols=spec_e0_cols,
+        e_cols=ctx.info.e0_cols,
         e1_cols=ctx.info.e1_cols,
         dx_cols=ctx.dx_col_names,
         seq_len=training_config.seq_len,
         shift=training_config.shift,
         train_limit=ctx.overrides.train_limit or 5000,
         val_limit=min(ctx.overrides.train_limit or 5000, 5000),
-        flight_feature_cols=flight_feature_cols or None,
-        require_routing=ctx.overrides.require_routing,
     )
 
     training_config = _maybe_adjust_epochs(training_config, train_ds, acft, ctx.overrides.epochs)
@@ -227,7 +205,6 @@ def run_training(
     device: str = "cpu",
     model_name: str | None = None,
     lambda_tracking: float | None = None,
-    lambda_aux_ps: float | None = None,
     use_mode_weights: bool | None = None,
     train_limit: int | None = None,
     activation: str | None = None,
@@ -236,7 +213,6 @@ def run_training(
     backbone_depth: int | None = None,
     head_depth: int | None = None,
     hidden_width: int | None = None,
-    require_routing: bool = False,
 ) -> None:
     """Train Neural ODE models for one or all typecodes.
 
@@ -262,7 +238,6 @@ def run_training(
 
     cfg = PipelineConfig.from_yaml(config)
     info = resolve_architecture(arch)
-    importlib.import_module(info.architecture_import)
 
     typecodes = [typecode] if typecode else cfg.typecodes
     full_df, models_dir = _load_delta_df(cfg)
@@ -282,7 +257,6 @@ def run_training(
             shift=shift,
             model_name=model_name,
             lambda_tracking=lambda_tracking,
-            lambda_aux_ps=lambda_aux_ps,
             use_mode_weights=use_mode_weights,
             train_limit=train_limit,
             activation=activation,
@@ -291,7 +265,6 @@ def run_training(
             backbone_depth=backbone_depth,
             head_depth=head_depth,
             hidden_width=hidden_width,
-            require_routing=require_routing,
         ),
         cfg_use_mode_weights=cfg.training.use_mode_weights,
         cfg_mode_weight_alpha=cfg.training.mode_weight_alpha,

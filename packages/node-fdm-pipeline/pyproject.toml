@@ -16,6 +16,7 @@ classifiers = [
 dependencies = [
     "node-fdm-data",
     "node-fdm",
+    "node-fdm-models",
     "node-fdm-bada",
     "cyclopts>=4.5",
     "deltalake>=0.18",
@@ -64,6 +65,7 @@ packages = ["src/node_fdm_pipeline"]
 [tool.uv.sources]
 node-fdm-data = { workspace = true }
 node-fdm = { workspace = true }
+node-fdm-models = { workspace = true }
 node-fdm-bada = { workspace = true }
 
 [dependency-groups]

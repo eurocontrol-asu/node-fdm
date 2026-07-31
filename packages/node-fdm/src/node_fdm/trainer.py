@@ -8,13 +8,12 @@ and ``print()`` statements with a typed :class:`TrainingConfig` and
 from __future__ import annotations
 
 import csv
-import importlib
 import json
 import math
 import random
-from collections.abc import Iterable, Sequence
+from collections.abc import Sequence
 from pathlib import Path
-from typing import Any, cast
+from typing import Any
 
 import numpy as np
 import structlog
@@ -27,7 +26,6 @@ from torchdiffeq import odeint
 from node_fdm.architectures.registry import ArchitectureSpec, get
 from node_fdm.callbacks import ConsoleCallback, TrainingCallback
 from node_fdm.dataset import FlightDataset, FlightSample, compute_stats
-from node_fdm.layers.mass_encoder import MassEncoderLinear, MassEncoderLinearTempered
 from node_fdm.losses import get_loss
 from node_fdm.models.batch_neural_ode import BatchNeuralODE
 from node_fdm.models.fdm import FlightDynamicsModel
@@ -37,10 +35,6 @@ from node_fdm.models.projected_integrator import (
     _clamp_columns,
 )
 from node_fdm.training.weighting import compute_segment_weights
-from node_fdm_data.schemas.adsb_hybrid import (
-    A320_MTOW_KG,
-    A320_OEW_KG,
-)
 
 __all__ = [
     "ODETrainer",
@@ -102,7 +96,6 @@ class TrainingConfig(BaseModel):
     grad_clip_norm: float = Field(default=10.0, gt=0)
     alpha_dict: dict[str, float] | None = None
     lambda_tracking: float = Field(default=0.0, ge=0)
-    lambda_aux_ps: float = Field(default=0.0, ge=0)
     huber_beta_per_col: dict[str, float] | None = None
     eta_min: float | None = None
     schedule: str = Field(default="linear", pattern="^(linear|cosine)$")
@@ -134,9 +127,6 @@ def _collate_flight_samples(
     if batch[0].w is not None:
         w_stack = torch.stack([s.w for s in batch if s.w is not None])
         base = (*base, w_stack)
-    if batch[0].flight_features is not None:
-        ff_stack = torch.stack([s.flight_features for s in batch if s.flight_features is not None])
-        base = (*base, ff_stack)
     return base
 
 
@@ -204,8 +194,6 @@ class ODETrainer:
         dx_col_names = [col for _, col in self.spec.dx_cols]
         e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
         derived_output_cols = list(getattr(self.spec, "derived_output_cols", []) or [])
-        flight_feature_cols = list(getattr(self.spec, "flight_feature_cols", []) or [])
-        flight_feature_signs = list(getattr(self.spec, "flight_feature_signs", []) or [])
         _samples = list(train_dataset)  # type: ignore[call-overload]
         _stats_args = {
             "x_cols": self.spec.x_cols,
@@ -218,7 +206,6 @@ class ODETrainer:
             _samples,
             **_stats_args,
             e1_cols=e1_cols,
-            flight_feature_cols=flight_feature_cols,
             derived_cols=derived_output_cols,
             derived_scale_floor_ratio=scale_floor,
         )
@@ -230,7 +217,6 @@ class ODETrainer:
             _samples,
             **_stats_args,
             e1_cols=e1_cols,
-            flight_feature_cols=flight_feature_cols,
             derived_cols=derived_output_cols,
             derived_scale_floor_ratio=scale_floor,
         )
@@ -242,69 +228,15 @@ class ODETrainer:
             activation=config.activation,
         ).to(self.device)
         if self.device.type == "cuda":
+            from typing import cast
+
             self.model = cast(FlightDynamicsModel, torch.compile(self.model))
 
-        self.mass_encoder: nn.Module | None = None
-        if flight_feature_cols:
-            encoder_temperature = float(getattr(self.spec, "mass_encoder_temperature", 1.0) or 1.0)
-            encoder_class_path = getattr(self.spec, "mass_encoder_class_path", None)
-            encoder_kwargs = dict(getattr(self.spec, "mass_encoder_kwargs", {}) or {})
-            common_kwargs = {
-                "feature_stats": self.stats_dict,
-                "feature_cols": flight_feature_cols,
-                "expected_signs": flight_feature_signs,
-                "oew_kg": A320_OEW_KG,
-                "mtow_kg": A320_MTOW_KG,
-            }
-            if encoder_class_path:
-                module_path, class_name = encoder_class_path.rsplit(".", 1)
-                module = importlib.import_module(module_path)
-                encoder_cls = getattr(module, class_name)
-                self.mass_encoder = encoder_cls(**common_kwargs, **encoder_kwargs).to(self.device)
-            # common_kwargs is heterogeneous (dict[str, object]), so `**` cannot
-            # be checked against these signatures — pass the arguments straight.
-            elif encoder_temperature == 1.0:
-                self.mass_encoder = MassEncoderLinear(
-                    feature_stats=self.stats_dict,
-                    feature_cols=flight_feature_cols,
-                    expected_signs=flight_feature_signs,
-                    oew_kg=A320_OEW_KG,
-                    mtow_kg=A320_MTOW_KG,
-                ).to(self.device)
-            else:
-                self.mass_encoder = MassEncoderLinearTempered(
-                    feature_stats=self.stats_dict,
-                    feature_cols=flight_feature_cols,
-                    expected_signs=flight_feature_signs,
-                    oew_kg=A320_OEW_KG,
-                    mtow_kg=A320_MTOW_KG,
-                    temperature=encoder_temperature,
-                ).to(self.device)
-            if "fdm_mass_kg" in self.spec.x_cols and (
-                config.alpha_dict is None or "fdm_mass_kg" not in config.alpha_dict
-            ):
-                log.warning(
-                    "mass_dim_unweighted",
-                    message=(
-                        "fdm_mass_kg is in spec.x_cols but missing from "
-                        "alpha_dict; set alpha_dict['fdm_mass_kg']=0.0 to "
-                        "silence the residual on the mass dim."
-                    ),
-                )
-
-        if self.mass_encoder is not None:
-            self.optimizer = torch.optim.AdamW(
-                list(self.model.parameters()) + list(self.mass_encoder.parameters()),
-                lr=config.lr,
-                weight_decay=config.weight_decay,
-            )
-        else:
-            self.optimizer = torch.optim.AdamW(
-                self.model.parameters(),
-                lr=config.lr,
-                weight_decay=config.weight_decay,
-            )
-        self._override_m0_factor: float | None = None
+        self.optimizer = torch.optim.AdamW(
+            self.model.parameters(),
+            lr=config.lr,
+            weight_decay=config.weight_decay,
+        )
         # Scheduler is built in ``train()`` once we know the number of
         # batches per epoch (step-wise scheduling).
         self.scheduler: torch.optim.lr_scheduler.LRScheduler | None = None
@@ -322,16 +254,6 @@ class ODETrainer:
         self._heading_idx: int | None = None
         if "fdm_heading_rad" in self.spec.x_cols:
             self._heading_idx = self.spec.x_cols.index("fdm_heading_rad")
-
-        # Poll-Schumann Eq 100 auxiliary-loss inversion table.
-        # Built lazily when ``config.lambda_aux_ps > 0`` from the A320 psi-set
-        # tabulated in poll_schumann_lib. Kept as plain tensors on the
-        # trainer's device so the step path is GPU/MPS-clean.
-        self._aux_ps_fl_grid: torch.Tensor | None = None
-        self._aux_ps_mass_ratio_grid: torch.Tensor | None = None
-        self._aux_ps_alt_idx: int | None = None
-        if config.lambda_aux_ps > 0 and self.mass_encoder is not None:
-            self._init_ps_eq100_table()
 
         self.save_meta()
 
@@ -365,10 +287,15 @@ class ODETrainer:
 
     def save_meta(self) -> None:
         """Persist training metadata compatible with :class:`ModelMeta`."""
+        from node_fdm.architectures import architecture_digest, get_origin
+
         optimizer_path = self.model_dir / "optimizer.pt"
-        has_mass_encoder = getattr(self, "mass_encoder", None) is not None
+        origin = get_origin(self.config.architecture_name)
         meta: dict[str, Any] = {
             "architecture_name": self.config.architecture_name,
+            "architecture_spec": self.spec.model_dump(mode="json"),
+            "architecture_digest": architecture_digest(self.spec),
+            "architecture_provider": origin.model_dump(mode="json") if origin else None,
             "model_params": list(self.config.model_params),
             "step": self.config.step,
             "shift": self.config.shift,
@@ -383,10 +310,6 @@ class ODETrainer:
             "epochs": self.config.epochs,
             "use_mode_weights": self.config.use_mode_weights,
             "mode_weight_alpha": self.config.mode_weight_alpha,
-            "mass_encoder": has_mass_encoder,
-            "mass_encoder_temperature": float(
-                getattr(self.spec, "mass_encoder_temperature", 1.0) or 1.0
-            ),
         }
         meta_path = self.model_dir / "meta.json"
         with meta_path.open("w") as f:
@@ -400,9 +323,12 @@ class ODETrainer:
             layer_name: Layer identifier.
             epoch: Current epoch number.
         """
+        from node_fdm.architectures import architecture_digest
+
         layer = self.model.layers_dict[layer_name]
         save_dict = {
             "layer_state": layer.state_dict(),
+            "architecture_digest": architecture_digest(self.spec),
             "optimizer_state": self.optimizer.state_dict(),
             "best_val_loss": self.best_val_loss,
             "epoch": epoch,
@@ -418,11 +344,6 @@ class ODETrainer:
         for name in self.model.layers_name:
             self.save_layer_checkpoint(name, epoch)
         torch.save(self.optimizer.state_dict(), self.model_dir / "optimizer.pt")
-        if self.mass_encoder is not None:
-            torch.save(
-                self.mass_encoder.state_dict(),
-                self.model_dir / "mass_encoder.pt",
-            )
         self.save_meta()
         log.debug("model_saved", epoch=epoch)
 
@@ -448,14 +369,20 @@ class ODETrainer:
                 msg = f"Layer checkpoint not found: {ckpt_path}"
                 raise FileNotFoundError(msg)
             ckpt = torch.load(ckpt_path, weights_only=True)
+            saved_digest = ckpt.get("architecture_digest")
+            if saved_digest is not None:
+                from node_fdm.architectures import architecture_digest
+
+                current_digest = architecture_digest(self.spec)
+                if saved_digest != current_digest:
+                    msg = (
+                        f"Layer checkpoint {ckpt_path} was built for architecture "
+                        f"digest {saved_digest}, not {current_digest}."
+                    )
+                    raise ValueError(msg)
             self.model.layers_dict[name].load_state_dict(ckpt["layer_state"])
             if not reset_loss:
                 self.best_val_loss = ckpt.get("best_val_loss", self.best_val_loss)
-        if self.mass_encoder is not None:
-            mass_ckpt = self.model_dir / "mass_encoder.pt"
-            if mass_ckpt.exists():
-                state = torch.load(mass_ckpt, weights_only=True)
-                self.mass_encoder.load_state_dict(state)
         log.debug(
             "model_weights_loaded",
             layers=list(self.model.layers_name),
@@ -476,108 +403,6 @@ class ODETrainer:
         self.optimizer.load_state_dict(state)
         log.debug("optimizer_state_loaded", path=str(optimizer_path))
 
-    def _init_ps_eq100_table(self) -> None:
-        """Pre-compute the Poll-Schumann Eq 100 mass-ratio ↔ FL_o lookup.
-
-        Built once at trainer init when ``config.lambda_aux_ps > 0``. The
-        ``ps_core`` library is pure-python and lives outside the
-        node-fdm-v2 repo, so we import it via an explicit sys.path
-        injection. The table is stored as ascending-FL tensors so
-        ``torch.searchsorted`` + linear interpolation can recover
-        ``mass_ratio`` from any ``FL_obs`` in the invertible range.
-
-        A320 psi-set (Poll-Schumann 2020 Part 2, Table 2).
-        """
-        import sys as _sys
-
-        ps_core_src = (
-            "/Users/gabriel/axm/04-papers/PS_MODEL/poll_schumann_lib/packages/ps-core/src"
-        )
-        if ps_core_src not in _sys.path:
-            _sys.path.insert(0, ps_core_src)
-        from ps_core._types import AircraftPsi  # type: ignore[import-not-found]
-        from ps_core.optimum import optimum_in_isa  # type: ignore[import-not-found]
-
-        a320_psi = AircraftPsi(
-            psi_1=0.156,
-            psi_2=8.05,
-            psi_4=0.753,
-            psi_5=6.29e7,
-            psi_6=0.656,
-            tau=0.162,
-        )
-        n_grid = 1001
-        mr = np.linspace(0.5, 1.0, n_grid, dtype=np.float64)
-        fl = np.array(
-            [optimum_in_isa(a320_psi, float(m)).fl_o for m in mr],
-            dtype=np.float64,
-        )
-        # fl(mr) is monotone-decreasing — flip to ascending-FL for searchsorted.
-        order = np.argsort(fl)
-        self._aux_ps_fl_grid = torch.tensor(fl[order], dtype=torch.float32, device=self.device)
-        self._aux_ps_mass_ratio_grid = torch.tensor(
-            mr[order], dtype=torch.float32, device=self.device
-        )
-        # ``raw_alt_m`` is X_COLS[0] in the adsb_hybrid schema. Resolve the
-        # index dynamically so the spec can evolve without breaking this.
-        if "raw_alt_m" in self.spec.x_cols:
-            self._aux_ps_alt_idx = self.spec.x_cols.index("raw_alt_m")
-        else:
-            self._aux_ps_alt_idx = 0  # fallback: first column is altitude.
-        log.info(
-            "ps_aux_loss_initialized",
-            lambda_aux_ps=self.config.lambda_aux_ps,
-            fl_min=float(self._aux_ps_fl_grid[0].item()),
-            fl_max=float(self._aux_ps_fl_grid[-1].item()),
-            alt_idx=self._aux_ps_alt_idx,
-        )
-
-    def _ps_eq100_aux_loss(self, x_seq: torch.Tensor, m_predicted: torch.Tensor) -> torch.Tensor:
-        """Auxiliary loss MSE(m_pred, m_PS_eq100) on cruise-stable segments.
-
-        Returns a dimensionless scalar normalised by ``(MTOW - OEW)**2`` so
-        it lives on the same order as the rollout MSE (z-scored). When no
-        segment qualifies (mask empty), returns zero gracefully.
-
-        R5 : ``m_PS`` is computed *purely from observed altitude* (already
-        in ``x_seq``) — no ground-truth mass leaked.
-        """
-        assert self._aux_ps_fl_grid is not None
-        assert self._aux_ps_mass_ratio_grid is not None
-        alt_idx = self._aux_ps_alt_idx
-        assert alt_idx is not None
-        # alt at t=0 and t=1 step apart by self.config.step seconds.
-        alt_t0 = x_seq[:, 0, alt_idx]
-        alt_t1 = x_seq[:, 1, alt_idx]
-        dh_dt = (alt_t1 - alt_t0) / max(self.config.step, 1.0)
-        fl_obs = alt_t0 * (1.0 / 0.3048) / 100.0
-
-        fl_grid = self._aux_ps_fl_grid
-        mr_grid = self._aux_ps_mass_ratio_grid
-        fl_min, fl_max = float(fl_grid[0].item()), float(fl_grid[-1].item())
-        in_range = (fl_obs >= fl_min) & (fl_obs <= fl_max)
-        is_cruise = (alt_t0 >= 9000.0) & (dh_dt.abs() <= 1.0)
-        mask = in_range & is_cruise
-        if not bool(mask.any()):
-            return torch.zeros((), device=x_seq.device, dtype=m_predicted.dtype)
-
-        # Clamp fl_obs into the invertible band for the interp; values
-        # outside are zeroed out by ``mask`` anyway.
-        fl_clamped = fl_obs.clamp(min=fl_min, max=fl_max)
-        idx = torch.searchsorted(fl_grid, fl_clamped).clamp(min=1, max=len(fl_grid) - 1)
-        fl_lo = fl_grid[idx - 1]
-        fl_hi = fl_grid[idx]
-        mr_lo = mr_grid[idx - 1]
-        mr_hi = mr_grid[idx]
-        t = (fl_clamped - fl_lo) / (fl_hi - fl_lo).clamp(min=1e-9)
-        mass_ratio = mr_lo + t * (mr_hi - mr_lo)
-        m_ps = mass_ratio * 77_000.0  # MTOM A320.
-
-        # Normalise so the aux term lives on the rollout loss scale.
-        denom = (77_000.0 - 42_600.0) ** 2  # (MTOW - OEW)²
-        diff = (m_predicted - m_ps) * mask.to(m_predicted.dtype)
-        return (diff * diff).sum() / mask.sum().clamp(min=1).to(diff.dtype) / denom
-
     def _build_norm_vectors(self) -> tuple[torch.Tensor, torch.Tensor]:
         """Build normalization mean/std tensors for ``x_cols``.
 
@@ -588,16 +413,6 @@ class ODETrainer:
         means: list[float] = []
         stds: list[float] = []
         for col in self.spec.x_cols:
-            # Synthetic state dims (e.g. fdm_mass_kg) are not observed in the
-            # dataset — their data-driven stats collapse to ~0 and divide-by-
-            # zero would blow up the rollout loss. Derive (mean, std) from the
-            # spec's x_bounds when available: midpoint and half-range as a
-            # reasonable scale.
-            if col == "fdm_mass_kg" and col in self.spec.x_bounds:
-                lo, hi = self.spec.x_bounds[col]
-                means.append(0.5 * (lo + hi))
-                stds.append(max((hi - lo) / 2.0, 1e-6))
-                continue
             stats = self.stats_dict.get(col, {"mean": 0.0, "std": 1.0, "iqr": 1.0})
             means.append(stats["mean"])
             # Use IQR 0.5-99.5 for loss normalization when available.
@@ -622,14 +437,6 @@ class ODETrainer:
             for i, col in enumerate(self.spec.x_cols):
                 if col in self.config.alpha_dict:
                     weights[i] = self.config.alpha_dict[col]
-        # The mass state dim is constant per segment by construction
-        # (dm/dt = 0). Auto-zero its loss weight unless the user explicitly
-        # overrides it via alpha_dict.
-        if "fdm_mass_kg" in self.spec.x_cols and (
-            self.config.alpha_dict is None or "fdm_mass_kg" not in self.config.alpha_dict
-        ):
-            mass_idx = self.spec.x_cols.index("fdm_mass_kg")
-            weights[mass_idx] = 0.0
         return weights
 
     def _build_huber_betas(self) -> torch.Tensor | None:
@@ -726,37 +533,18 @@ class ODETrainer:
         else:
             tensors = tuple(t.to(self.device, non_blocking=True) for t in batch)
         x_seq, u_seq, e_seq = tensors[0], tensors[1], tensors[2]
-        # The collate output may carry e1, w and/or flight_features in trailing
-        # slots. ``w`` has shape (batch, seq_len) → ndim==2. ``e1`` and
-        # ``flight_features`` both have ndim==3; we identify ``flight_features``
-        # by its trailing-dim against ``spec.flight_feature_cols``.
+        # The collate output may carry e1 and/or w in trailing slots. The
+        # last tensor whose last dim equals seq_len is treated as ``w``
+        # (per-sample weights, shape (batch, seq_len)). e1 has shape
+        # (batch, seq_len, n_e1) so its ndim is 3.
         w_tensor: torch.Tensor | None = None
-        flight_features: torch.Tensor | None = None
-        n_features = len(getattr(self.spec, "flight_feature_cols", []) or [])
         for t in tensors[4:]:
             if t.ndim == 2:
                 w_tensor = t
-            elif n_features > 0 and t.shape[-1] == n_features:
-                flight_features = t
+                break
 
         seq_len = x_seq.shape[1]
         x0 = x_seq[:, 0, :]
-        m_0: torch.Tensor | None = None
-        if self.mass_encoder is not None and flight_features is not None:
-            if hasattr(self.mass_encoder, "ps_fl_grid"):
-                # MassEncoderPSResidual (v11) consumes extra state at t0.
-                alt_idx_v11 = (
-                    self.spec.x_cols.index("raw_alt_m") if "raw_alt_m" in self.spec.x_cols else 0
-                )
-                alt_t0 = x_seq[:, 0, alt_idx_v11]
-                alt_t1 = x_seq[:, 1, alt_idx_v11]
-                dh_dt_t0 = (alt_t1 - alt_t0) / max(self.config.step, 1.0)
-                m_0 = self.mass_encoder(flight_features[:, 0, :], alt_t0, dh_dt_t0)
-            else:
-                m_0 = self.mass_encoder(flight_features[:, 0, :])
-            if self._override_m0_factor is not None:
-                m_0 = m_0 * self._override_m0_factor
-            x0 = torch.cat([x0[:, :4], m_0.to(x0.dtype).unsqueeze(-1)], dim=-1)
 
         t_grid = torch.arange(
             0,
@@ -918,17 +706,6 @@ class ODETrainer:
 
             loss = loss + self.config.lambda_tracking * tracking_loss
 
-        # --- Poll-Schumann Eq 100 auxiliary loss on cruise-stable rows ---
-        # Pulls the MassEncoder toward the algebraic P&S mass estimate
-        # computed from observed altitude alone (R5 preserved). Eq 100
-        # has corr 0.449 vs SYS__GW on QAR cruise (Exp 07) and a +14.5 %
-        # bias — the bias is left uncorrected so the aux loss does not
-        # leak any QAR statistic. The trajectory loss is expected to
-        # dominate the absolute level; the aux loss adds discrimination.
-        if self.config.lambda_aux_ps > 0 and m_0 is not None and self._aux_ps_fl_grid is not None:
-            aux_loss_ps = self._ps_eq100_aux_loss(x_seq, m_0)
-            loss = loss + self.config.lambda_aux_ps * aux_loss_ps
-
         if torch.isnan(loss) or torch.isinf(loss):
             log.warning("nan_or_inf_loss", loss=loss.item())
 
@@ -1026,6 +803,8 @@ class ODETrainer:
         Returns:
             List of per-epoch loss records.
         """
+        from typing import cast
+
         use_cuda = self.device.type == "cuda"
 
         if use_cuda:
@@ -1059,42 +838,27 @@ class ODETrainer:
         records: list[dict[str, float]] = []
         loss_csv_path = self.model_dir / "training_losses.csv"
 
-        if use_cuda:
-            steps_per_epoch = n_train_batches
-        else:
-            steps_per_epoch = max(len(train_loader), 1)
+        steps_per_epoch = n_train_batches if use_cuda else max(len(train_loader), 1)
         self.scheduler = self._build_scheduler(steps_per_epoch=steps_per_epoch)
 
         for epoch in range(1, epochs + 1):
             for cb in self.callbacks:
                 cb.on_epoch_start(epoch, epochs)
 
-            # Strategy W annealed-λ hook (v13f, Exp 21). PhysicsLayer
-            # uses (epoch, total_epochs) to compute the per-epoch parallel
-            # head weight ; no-op for other layer classes / arch variants.
-            if "physics" in self.model.layers_dict:
-                phys_layer = self.model.layers_dict["physics"]
-                # set_epoch only exists on PhysicsLayer, not on nn.Module —
-                # this stays a duck-typed call, hence the local narrowing.
-                set_epoch = getattr(phys_layer, "set_epoch", None)
-                if set_epoch is not None:
-                    set_epoch(epoch, epochs)
-
             # --- Train ---
             self.model.train()
             total_loss = 0.0
             n_batches = 0
 
-            train_batches: Iterable[tuple[torch.Tensor, ...]]
-            if use_cuda:
-                assert train_stacked is not None
-                train_batches = self._iter_preloaded(
-                    train_stacked,
+            train_batches = (
+                self._iter_preloaded(
+                    cast("tuple[torch.Tensor, ...]", train_stacked),
                     self.config.batch_size,
                     shuffle=True,
                 )
-            else:
-                train_batches = cast(Iterable[tuple[torch.Tensor, ...]], train_loader)
+                if use_cuda
+                else train_loader
+            )
             for batch in train_batches:
                 loss = self._compute_batch_loss(batch)
                 self.optimizer.zero_grad()
@@ -1117,16 +881,15 @@ class ODETrainer:
             self.model.eval()
             val_total = 0.0
             val_batches = 0
-            val_iter: Iterable[tuple[torch.Tensor, ...]]
-            if use_cuda:
-                assert val_stacked is not None
-                val_iter = self._iter_preloaded(
-                    val_stacked,
+            val_iter = (
+                self._iter_preloaded(
+                    cast("tuple[torch.Tensor, ...]", val_stacked),
                     self.config.val_batch_size,
                     shuffle=False,
                 )
-            else:
-                val_iter = cast(Iterable[tuple[torch.Tensor, ...]], val_loader)
+                if use_cuda
+                else val_loader
+            )
             with torch.no_grad():
                 for batch in val_iter:
                     loss = self._compute_batch_loss(batch)
@@ -1157,12 +920,6 @@ class ODETrainer:
                     lr=current_lr,
                 )
 
-            if self.mass_encoder is not None:
-                # effective_coefficients() is declared on the concrete encoders,
-                # not on nn.Module (self.mass_encoder's declared type).
-                coefs: dict[str, float] = self.mass_encoder.effective_coefficients()  # type: ignore[operator]
-                log.info("mass_encoder_coefs", epoch=epoch, **coefs)
-
         # Write loss CSV (no pandas)
         with loss_csv_path.open("w", newline="") as f:
             writer = csv.DictWriter(f, fieldnames=["epoch", "train_loss", "val_loss"])
@@ -1174,155 +931,3 @@ class ODETrainer:
             cb.on_train_end(self.best_val_loss)
 
         return records
-
-    def identifiability_test(self, factor: float = 1.3) -> dict[str, float]:
-        """Run the §11.1 identifiability gate.
-
-        Computes baseline val MSE, then re-runs the validation rollout with
-        ``m_0`` scaled by *factor* (no gradient) and reports the ratio. When
-        ``self.mass_encoder is None``, both MSEs equal 1.0 (the perturbation
-        has no effect because mass is taken from the data).
-
-        Args:
-            factor: Multiplicative perturbation applied to the predicted
-                initial mass on the validation pass.
-
-        Returns:
-            ``{"baseline_mse": ..., "perturbed_mse": ..., "ratio": ...}``.
-        """
-        if self.mass_encoder is None:
-            return {"baseline_mse": 1.0, "perturbed_mse": 1.0, "ratio": 1.0}
-
-        val_loader = DataLoader(
-            self.val_dataset,
-            batch_size=self.config.val_batch_size,
-            shuffle=False,
-            num_workers=self.config.num_workers,
-            collate_fn=_collate_flight_samples,
-        )
-
-        def _mean_loss(override: float | None) -> float:
-            self._override_m0_factor = override
-            total = 0.0
-            n = 0
-            try:
-                with torch.no_grad():
-                    for batch in val_loader:
-                        loss = self._compute_batch_loss(batch)
-                        total += float(loss.item())
-                        n += 1
-            finally:
-                self._override_m0_factor = None
-            return total / max(n, 1)
-
-        self.model.eval()
-        baseline_mse = _mean_loss(None)
-        perturbed_mse = _mean_loss(factor)
-        ratio = perturbed_mse / baseline_mse if baseline_mse > 0 else float("inf")
-        return {
-            "baseline_mse": baseline_mse,
-            "perturbed_mse": perturbed_mse,
-            "ratio": ratio,
-        }
-
-    def identifiability_test_absolute(
-        self,
-        factor: float = 1.3,
-        sigma_obs: float | None = None,
-        k_min: float | None = None,
-    ) -> dict[str, float | bool]:
-        """Run the AXM-1740 absolute-score identifiability gate.
-
-        Sibling of :meth:`identifiability_test` that reports an absolute
-        score ``(perturbed_mse - baseline_mse) / sigma_obs_sq`` instead of
-        the relative ratio. Robust to strong-baseline formulations
-        (e.g. CL mass-aware) where the baseline MSE is small enough that
-        a numerically faithful perturbation degrades the ratio without
-        signalling a real loss of identifiability.
-
-        Args:
-            factor: Multiplicative perturbation applied to the predicted
-                initial mass on the validation pass.
-            sigma_obs: Optional explicit observation variance (``sigma**2``
-                already squared). When ``None`` (default), the variance is
-                computed empirically as the alpha-weighted sum of
-                ``var(dx_i)`` over the val set ``dx`` tensors, aligning
-                with the loss-MSE normalisation.
-            k_min: Optional absolute-score floor. When provided,
-                ``passed_absolute`` is ``True`` iff ``absolute_score >=
-                k_min``. When ``None``, ``passed_absolute`` stays ``False``
-                (calibration mode).
-
-        Returns:
-            ``{"baseline_mse": ..., "perturbed_mse": ..., "delta_abs": ...,
-            "sigma_obs_sq": ..., "absolute_score": ...,
-            "passed_absolute": ...}``. When ``self.mass_encoder is None``,
-            ``delta_abs``, ``absolute_score`` are ``0.0`` and
-            ``passed_absolute`` is ``False``.
-        """
-        sigma_obs_sq = self._resolve_sigma_obs_sq(sigma_obs)
-
-        if self.mass_encoder is None:
-            return {
-                "baseline_mse": 1.0,
-                "perturbed_mse": 1.0,
-                "delta_abs": 0.0,
-                "sigma_obs_sq": sigma_obs_sq,
-                "absolute_score": 0.0,
-                "passed_absolute": False,
-            }
-
-        val_loader = DataLoader(
-            self.val_dataset,
-            batch_size=self.config.val_batch_size,
-            shuffle=False,
-            num_workers=self.config.num_workers,
-            collate_fn=_collate_flight_samples,
-        )
-
-        def _mean_loss(override: float | None) -> float:
-            self._override_m0_factor = override
-            total = 0.0
-            n = 0
-            try:
-                with torch.no_grad():
-                    for batch in val_loader:
-                        loss = self._compute_batch_loss(batch)
-                        total += float(loss.item())
-                        n += 1
-            finally:
-                self._override_m0_factor = None
-            return total / max(n, 1)
-
-        self.model.eval()
-        baseline_mse = _mean_loss(None)
-        perturbed_mse = _mean_loss(factor)
-        delta_abs = perturbed_mse - baseline_mse
-        absolute_score = delta_abs / sigma_obs_sq if sigma_obs_sq > 0 else float("inf")
-        passed_absolute = bool(k_min is not None and absolute_score >= k_min)
-        return {
-            "baseline_mse": baseline_mse,
-            "perturbed_mse": perturbed_mse,
-            "delta_abs": delta_abs,
-            "sigma_obs_sq": sigma_obs_sq,
-            "absolute_score": absolute_score,
-            "passed_absolute": passed_absolute,
-        }
-
-    def _resolve_sigma_obs_sq(self, sigma_obs: float | None) -> float:
-        """Return ``sigma_obs**2`` for the absolute-score denominator.
-
-        Uses the explicit value when provided (no squaring — the argument is
-        treated as already-squared, consistent with the loss-MSE units).
-        Otherwise computes ``Σ alpha_i · var(dx_i)`` empirically over the
-        val dataset's ``dx`` tensors, matching the alpha-weighted MSE the
-        trainer optimises.
-        """
-        if sigma_obs is not None:
-            return float(sigma_obs)
-        dx_stack = torch.stack([self.val_dataset[i].dx for i in range(len(self.val_dataset))]).to(
-            self.device
-        )
-        dx_flat = dx_stack.reshape(-1, dx_stack.shape[-1])
-        per_col_var = dx_flat.var(dim=0, unbiased=False)
-        return float((self._alpha_weights * per_col_var).sum().item())

@@ -100,46 +100,6 @@ class ArchitectureSpec(BaseModel, frozen=True):
     straight-flight for ``phi_bank``) and yields a scale that reflects the
     natural unit of the *active* signal.
     """
-    flight_feature_cols: list[str] = Field(default_factory=list)
-    """Per-flight feature columns consumed by the MassEncoder (upstream).
-
-    These columns drive the MassEncoder, which runs *outside*
-    ``FlightDynamicsModel`` (encoder-decoder pattern) and feeds an estimated
-    mass into the projected integrator. The listed columns must be present
-    in the dataset via the loader's ``flight_feature_cols`` kwarg. Empty for
-    architectures without a mass-encoder branch (e.g. ``NODE_ADSB_V1``).
-    """
-    flight_feature_signs: list[float] = Field(default_factory=list)
-    """Expected monotonic sign per ``flight_feature_cols`` entry (+1 / -1).
-
-    Drives the sign constraint baked into ``MassEncoderLinear`` so each
-    feature contributes monotonically to the predicted mass. Must have the
-    same length as ``flight_feature_cols``. Empty for architectures without
-    a mass-encoder branch.
-    """
-    mass_encoder_temperature: float = 1.0
-    """Pre-sigmoid temperature for the MassEncoder (Strategy C).
-
-    ``T == 1.0`` (default) reproduces the original ``MassEncoderLinear``
-    response. ``T > 1`` activates :class:`MassEncoderLinearTempered` with a
-    broadened sigmoid: ``alpha = sigmoid(z / T)``. Used to diagnose / suppress
-    the bimodal OEW/MTOW saturation flagged in Experiment 01.
-    """
-    mass_encoder_class_path: str | None = None
-    """Optional dotted path to a custom MassEncoder class.
-
-    When ``None`` the trainer picks between :class:`MassEncoderLinear`
-    (T=1) and :class:`MassEncoderLinearTempered` (T>1) based on
-    ``mass_encoder_temperature``. Setting a class path activates a custom
-    encoder — e.g. ``"node_fdm.layers.mass_encoder.MassEncoderMLPMonotone"``
-    for Strategy B. The constructor receives ``feature_stats``,
-    ``feature_cols``, ``expected_signs``, ``oew_kg``, ``mtow_kg``,
-    plus any keyword arguments declared in ``mass_encoder_kwargs``.
-    """
-    mass_encoder_kwargs: dict[str, Any] = Field(default_factory=dict)
-    """Extra kwargs passed to the custom encoder class declared via
-    ``mass_encoder_class_path``. Ignored when ``mass_encoder_class_path``
-    is ``None``."""
 
 
 def register(spec: ArchitectureSpec) -> None:
@@ -172,8 +132,9 @@ def get(name: str) -> ArchitectureSpec:
     Raises:
         ValueError: If no architecture with that name is registered.
     """
+    discover_architectures()
     if name not in REGISTRY:
-        available = list(REGISTRY.keys())
+        available = sorted(REGISTRY)
         msg = f"Unknown architecture '{name}'. Available: {available}"
         raise ValueError(msg)
     return REGISTRY[name]
@@ -196,3 +157,129 @@ def resolve_layer_class(dotted_path: str) -> type[nn.Module]:
     module = importlib.import_module(module_path)
     cls: Any = getattr(module, class_name)
     return cls  # type: ignore[no-any-return]
+
+
+ARCHITECTURE_ENTRY_POINT_GROUP = "node_fdm.architectures"
+"""Python entry-point group used by architecture provider packages."""
+
+
+class ArchitectureOrigin(BaseModel, frozen=True):
+    """Distribution metadata identifying an architecture provider."""
+
+    provider: str
+    distribution: str | None = None
+    version: str | None = None
+    entry_point: str | None = None
+
+
+ORIGINS: dict[str, ArchitectureOrigin] = {}
+_DISCOVERY_COMPLETE = False
+
+
+def _provider_entries(payload: object) -> dict[str, ArchitectureSpec]:
+    """Normalize a provider payload to an alias-to-spec mapping."""
+    from collections.abc import Iterable, Mapping
+
+    if isinstance(payload, Mapping):
+        entries = dict(payload)
+    elif isinstance(payload, Iterable) and not isinstance(payload, (str, bytes)):
+        specs = list(payload)
+        entries = {spec.name: spec for spec in specs if isinstance(spec, ArchitectureSpec)}
+        if len(entries) != len(specs):
+            msg = "Architecture providers must return ArchitectureSpec values."
+            raise TypeError(msg)
+    else:
+        msg = "Architecture providers must return a mapping or iterable of ArchitectureSpec."
+        raise TypeError(msg)
+
+    normalized: dict[str, ArchitectureSpec] = {}
+    for alias, spec in entries.items():
+        if not isinstance(alias, str) or not alias:
+            msg = "Architecture aliases must be non-empty strings."
+            raise TypeError(msg)
+        if not isinstance(spec, ArchitectureSpec):
+            msg = f"Architecture alias {alias!r} does not reference an ArchitectureSpec."
+            raise TypeError(msg)
+        existing = normalized.get(alias)
+        if existing is not None and existing != spec:
+            msg = f"Provider defines conflicting architecture alias {alias!r}."
+            raise ValueError(msg)
+        normalized[alias] = spec
+        canonical = normalized.get(spec.name)
+        if canonical is not None and canonical != spec:
+            msg = f"Provider defines conflicting architecture name {spec.name!r}."
+            raise ValueError(msg)
+        normalized[spec.name] = spec
+    return normalized
+
+
+def discover_architectures() -> None:
+    """Load architecture catalogs declared through Python entry points once."""
+    global _DISCOVERY_COMPLETE
+
+    if _DISCOVERY_COMPLETE:
+        return
+
+    from importlib import metadata
+
+    discovered: list[
+        tuple[metadata.EntryPoint, dict[str, ArchitectureSpec], ArchitectureOrigin]
+    ] = []
+    entry_points = sorted(
+        metadata.entry_points(group=ARCHITECTURE_ENTRY_POINT_GROUP),
+        key=lambda item: (item.name, item.value),
+    )
+    for entry_point in entry_points:
+        provider = entry_point.load()
+        if not callable(provider):
+            msg = f"Architecture entry point {entry_point.name!r} is not callable."
+            raise TypeError(msg)
+        entries = _provider_entries(provider())
+        distribution = getattr(entry_point, "dist", None)
+        origin = ArchitectureOrigin(
+            provider=entry_point.name,
+            distribution=getattr(distribution, "name", None),
+            version=getattr(distribution, "version", None),
+            entry_point=entry_point.value,
+        )
+        discovered.append((entry_point, entries, origin))
+
+    pending_names: set[str] = set()
+    for entry_point, entries, _origin in discovered:
+        collisions = (set(entries) & set(REGISTRY)) | (set(entries) & pending_names)
+        if collisions:
+            names = ", ".join(sorted(collisions))
+            msg = f"Architecture provider {entry_point.name!r} collides on: {names}."
+            raise ValueError(msg)
+        pending_names.update(entries)
+
+    for _entry_point, entries, origin in discovered:
+        for name, spec in entries.items():
+            REGISTRY[name] = spec
+            ORIGINS[name] = origin
+    _DISCOVERY_COMPLETE = True
+
+
+def available() -> tuple[str, ...]:
+    """Return all registered canonical names and aliases in stable order."""
+    discover_architectures()
+    return tuple(sorted(REGISTRY))
+
+
+def get_origin(name: str) -> ArchitectureOrigin | None:
+    """Return provider metadata for an architecture alias, when discoverable."""
+    discover_architectures()
+    return ORIGINS.get(name)
+
+
+def architecture_digest(spec: ArchitectureSpec) -> str:
+    """Return a deterministic SHA-256 digest of a normalized specification."""
+    import hashlib
+    import json
+
+    payload = json.dumps(
+        spec.model_dump(mode="json"),
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode()
+    return hashlib.sha256(payload).hexdigest()

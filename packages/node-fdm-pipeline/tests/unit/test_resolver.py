@@ -17,8 +17,7 @@ class TestResolveArchitecture:
         assert info.name == "qar"
         assert len(info.x_cols) > 0
         assert info.segment_filter_fn is None
-        assert info.preprocessing_fn is None
-        assert info.architecture_import == "node_fdm.architectures.qar"
+        assert info.preprocessing_fn.__module__ == "node_fdm_models.preprocessing.qar"
 
     @pytest.mark.parametrize(
         "match",
@@ -38,10 +37,11 @@ class TestResolveArchitecture:
         with pytest.raises(AttributeError):
             info.name = "modified"  # type: ignore[misc]
 
-    def test_qar_preprocessing_fn_none(self) -> None:
-        """QAR preprocessing function is None (v3 pipeline handles preprocessing)."""
+    def test_qar_preprocessing_fn_is_provider_owned(self) -> None:
+        """QAR preprocessing resolves from its installed model provider."""
         info = resolve_architecture("qar")
-        assert info.preprocessing_fn is None
+        assert callable(info.preprocessing_fn)
+        assert info.preprocessing_fn.__module__ == "node_fdm_models.preprocessing.qar"
 
     def test_resolve_adsb(self) -> None:
         """Resolving 'adsb' returns correct ArchitectureInfo."""
@@ -57,6 +57,6 @@ class TestResolveArchitecture:
         assert "era_temp_K" in info.e0_cols
         assert "fdm_long_wind_ms" in info.e0_cols
         assert len(info.dx_cols) > 0
-        assert info.architecture_import == "node_fdm.architectures.adsb"
         assert info.segment_filter_fn is None
-        assert info.preprocessing_fn is None
+        assert callable(info.preprocessing_fn)
+        assert info.preprocessing_fn.__module__ == "node_fdm_models.preprocessing.opensky"

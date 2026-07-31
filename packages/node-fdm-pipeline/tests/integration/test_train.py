@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from contextlib import nullcontext
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
@@ -82,7 +83,7 @@ class TestRunTraining:
         mock_trainer = MagicMock()
         mock_trainer_cls.return_value = mock_trainer
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,
@@ -117,7 +118,7 @@ class TestRunTraining:
         mock_get_data.return_value = (MagicMock(), MagicMock())
         mock_trainer_cls.return_value = MagicMock()
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,
@@ -155,7 +156,7 @@ class TestRunTraining:
         mock_get_data.return_value = (mock_train_ds, MagicMock())
         mock_trainer_cls.return_value = MagicMock()
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,
@@ -180,7 +181,7 @@ class TestRunTraining:
         mock_get_data.return_value = (MagicMock(), MagicMock())
         mock_trainer_cls.return_value = MagicMock()
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,
@@ -207,7 +208,7 @@ class TestRunTraining:
         mock_get_data.return_value = (MagicMock(), MagicMock())
         mock_trainer_cls.return_value = MagicMock()
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,
@@ -233,7 +234,7 @@ class TestRunTraining:
         mock_get_data.return_value = (MagicMock(), MagicMock())
         mock_trainer_cls.return_value = MagicMock()
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,
@@ -255,14 +256,14 @@ class TestRunTraining:
         tmp_path: Path,
     ) -> None:
         """run_training forwards the architecture's E1_COLS (incl. diff features) to the loader."""
-        from node_fdm_data.schemas.adsb import E1_COLS
+        from node_fdm_models.schemas.adsb import E1_COLS
 
         config = _make_config(tmp_path)
 
         mock_get_data.return_value = (MagicMock(), MagicMock())
         mock_trainer_cls.return_value = MagicMock()
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,
@@ -296,7 +297,6 @@ typecodes:
         )
 
         with (
-            patch("node_fdm_pipeline.commands.train.importlib.import_module"),
             pytest.raises(SystemExit),
         ):
             run_training(arch="adsb", config=config, device="cpu")
@@ -312,7 +312,7 @@ typecodes:
         """Empty dataset for typecode → warning, skip, no crash."""
         config = _make_config(tmp_path)
 
-        with patch("node_fdm_pipeline.commands.train.importlib.import_module"):
+        with nullcontext():
             run_training(
                 arch="adsb",
                 config=config,

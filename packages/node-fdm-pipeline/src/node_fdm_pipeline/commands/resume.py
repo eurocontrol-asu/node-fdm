@@ -2,14 +2,13 @@
 
 from __future__ import annotations
 
-import importlib
 from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from node_fdm_pipeline.resolver import ARCH_BY_NAME, resolve_architecture
+from node_fdm_pipeline.resolver import resolve_architecture
 
 if TYPE_CHECKING:
     import polars as pl
@@ -47,17 +46,12 @@ def _load_meta(model: Path) -> Any:
 
 
 def _resolve_arch_info(architecture_name: str) -> Any:
-    """Map a meta.json architecture_name to its ArchitectureInfo and import its module."""
-    arch_key = ARCH_BY_NAME.get(architecture_name)
-    if arch_key is None:
-        msg = (
-            f"Unknown architecture_name in meta.json: {architecture_name!r}. "
-            f"Known: {', '.join(sorted(ARCH_BY_NAME))}"
-        )
-        raise SystemExit(msg)
-    info = resolve_architecture(arch_key)
-    importlib.import_module(info.architecture_import)
-    return info
+    """Resolve a checkpoint architecture through installed providers."""
+    try:
+        return resolve_architecture(architecture_name)
+    except ValueError as exc:
+        msg = f"Unknown architecture_name in meta.json: {architecture_name!r}."
+        raise SystemExit(msg) from exc
 
 
 def _load_data(delta_table: Path, typecode_suffix: str) -> pl.DataFrame:

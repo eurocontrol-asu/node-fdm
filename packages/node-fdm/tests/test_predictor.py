@@ -114,6 +114,36 @@ class TestModelMeta:
         meta = ModelMeta.from_json(meta_path)
         assert meta.architecture_name == "node_adsb_v1"
         assert "col1" in meta.stats_dict
+        assert meta.architecture_spec is None
+        assert meta.architecture_digest is None
+        assert meta.architecture_provider is None
+
+    def test_architecture_manifest_roundtrip(self) -> None:
+        """Provider identity and normalized spec metadata survive serialization."""
+        meta = ModelMeta(
+            architecture_name="external_arch",
+            architecture_spec={"name": "external_arch", "layers": []},
+            architecture_digest="a" * 64,
+            architecture_provider={
+                "provider": "external",
+                "distribution": "external-models",
+                "version": "2.0.0",
+                "entry_point": "external_models:architectures",
+            },
+            model_params=(1, 1, 8),
+            step=1.0,
+            shift=10,
+            lr=1e-3,
+            seq_len=10,
+            batch_size=4,
+            stats_dict={},
+        )
+
+        restored = ModelMeta.model_validate_json(meta.model_dump_json())
+
+        assert restored.architecture_digest == "a" * 64
+        assert restored.architecture_provider is not None
+        assert restored.architecture_provider["version"] == "2.0.0"
 
 
 class TestNodeFDMPredictor:

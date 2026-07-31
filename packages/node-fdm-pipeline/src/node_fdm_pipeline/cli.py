@@ -43,7 +43,7 @@ def train(
     *,
     arch: Annotated[
         str,
-        cyclopts.Parameter(help="Architecture: opensky or qar"),
+        cyclopts.Parameter(help="Installed architecture alias or canonical name"),
     ],
     config: Annotated[
         Path,
@@ -93,18 +93,6 @@ def train(
         cyclopts.Parameter(
             name="--lambda-tracking",
             help="Tracking loss weight on autopilot targets (0=disabled)",
-        ),
-    ] = None,
-    lambda_aux_ps: Annotated[
-        float | None,
-        cyclopts.Parameter(
-            name="--lambda-aux-ps",
-            help=(
-                "Poll-Schumann Eq 100 aux-loss weight (0=disabled). Pulls "
-                "the MassEncoder toward the algebraic P&S mass estimate "
-                "on cruise-stable segments. R5 compliant (uses only "
-                "observed altitude)."
-            ),
         ),
     ] = None,
     use_mode_weights: Annotated[
@@ -168,17 +156,6 @@ def train(
             help="Hidden-layer width (neurons) for backbone and heads (default: 48)",
         ),
     ] = None,
-    require_routing: Annotated[
-        bool,
-        cyclopts.Parameter(
-            name="--require-routing",
-            help=(
-                "Drop flights without ADEP/ADES routing data (filters the dataset "
-                "to the ~55% subset with airport routing). Auto-enabled by the hybrid "
-                "architecture; pass explicitly on the baseline for fair comparison."
-            ),
-        ),
-    ] = False,
 ) -> None:
     """Train Neural ODE models for aircraft flight dynamics."""
     from node_fdm_pipeline.commands.train import run_training
@@ -196,7 +173,6 @@ def train(
         device=device,
         model_name=model_name,
         lambda_tracking=lambda_tracking,
-        lambda_aux_ps=lambda_aux_ps,
         use_mode_weights=use_mode_weights,
         train_limit=train_limit,
         activation=activation,
@@ -205,7 +181,6 @@ def train(
         backbone_depth=backbone_depth,
         head_depth=head_depth,
         hidden_width=hidden_width,
-        require_routing=require_routing,
     )
 
 
@@ -319,7 +294,7 @@ def predict(
     *,
     arch: Annotated[
         str,
-        cyclopts.Parameter(help="Architecture: opensky or qar"),
+        cyclopts.Parameter(help="Installed architecture alias or canonical name"),
     ],
     config: Annotated[
         Path,

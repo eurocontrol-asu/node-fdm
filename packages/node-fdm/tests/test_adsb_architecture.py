@@ -10,7 +10,7 @@ class TestNodeAdsbV1Architecture:
 
     def test_node_adsb_v1_registered(self) -> None:
         """'node_adsb_v1' is registered and resolvable."""
-        import node_fdm.architectures.adsb  # noqa: F401
+        import node_fdm_models.architectures.adsb  # noqa: F401
 
         spec = get("node_adsb_v1")
         assert spec.name == "node_adsb_v1"

@@ -14,10 +14,8 @@ import numpy as np
 import torch
 from torch.utils.data import Dataset
 
-from node_fdm.layers.physics import S_REF_A320_M2, cl_baseline_np
 from node_fdm_data.physics.constants import G, R
 from node_fdm_data.physics.isa import isa_pressure, isa_temperature
-from node_fdm_data.schemas.adsb_hybrid import A320_MTOW_KG, A320_OEW_KG
 
 __all__ = [
     "DERIVED_FEATURES",
@@ -40,7 +38,6 @@ __all__ = [
 # Must match ``layers.physics.V_MIN_CLAMP`` so derived stats reflect the
 # exact algebraic inverse of what the PhysicsLayer applies at runtime.
 _V_MIN_CLAMP: float = 50.0
-_M_REF_KG: float = (A320_OEW_KG + A320_MTOW_KG) / 2.0
 
 
 def _compute_g_sin_gamma(
@@ -148,96 +145,6 @@ def _compute_n_z_residual(
     return np.asarray((v_safe / G) * d_gamma + np.cos(gamma) - 1.0, dtype=np.float64)
 
 
-def _compute_t_minus_d_norm(
-    x_arr: np.ndarray,
-    e_arr: np.ndarray,
-    dx_arr: np.ndarray,
-    x_cols: list[str],
-    e_cols: list[str],
-    dx_cols: list[str],
-) -> np.ndarray:
-    """Inverse PhysicsLayer for the hybrid adim output.
-
-    PhysicsLayer reconstructs ``T-D = t_minus_d_norm * m_ref`` then applies
-    ``d_TAS = (T-D)/m - g*sin(gamma)``. Solving for the NN target under the
-    convention that the MassEncoder absorbs the per-flight residue via the
-    division by ``m`` at runtime:
-
-        t_minus_d_norm = (d_TAS + g*sin(gamma)) * m / m_ref
-
-    For statistics we use ``m = m_ref`` (the dataset has no observed mass)
-    so the computer collapses to ``d_TAS + g*sin(gamma)`` — i.e. the same
-    target as the legacy ``a_spec``. The scale comes out comparable to the
-    baseline p99.9 ≈ 1 m/s².
-    """
-    gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
-    d_tas = dx_arr[:, dx_cols.index("fdm_d_tas_ms2")].astype(np.float64)
-    return np.asarray(d_tas + G * np.sin(gamma), dtype=np.float64)
-
-
-def _compute_lift_residual_norm(
-    x_arr: np.ndarray,
-    e_arr: np.ndarray,
-    dx_arr: np.ndarray,
-    x_cols: list[str],
-    e_cols: list[str],
-    dx_cols: list[str],
-) -> np.ndarray:
-    """Inverse PhysicsLayer for the hybrid adim lift residual.
-
-    PhysicsLayer reconstructs ``L = lift_residual_norm * m_ref*g + m*g``
-    then applies ``d_gamma = (L/m - g*cos gamma) / V``. Solving and using
-    ``m = m_ref`` for statistics yields the same target as the legacy
-    ``n_z_residual = (V/g)*d_gamma + cos(gamma) - 1``.
-    """
-    gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
-    tas = x_arr[:, x_cols.index("era_tas_ms")].astype(np.float64)
-    d_gamma = dx_arr[:, dx_cols.index("fdm_d_gamma_rads")].astype(np.float64)
-    v_safe = np.maximum(tas, _V_MIN_CLAMP)
-    return np.asarray((v_safe / G) * d_gamma + np.cos(gamma) - 1.0, dtype=np.float64)
-
-
-def _compute_cl_residual(
-    x_arr: np.ndarray,
-    e_arr: np.ndarray,
-    dx_arr: np.ndarray,
-    x_cols: list[str],
-    e_cols: list[str],
-    dx_cols: list[str],
-) -> np.ndarray:
-    """Inverse PhysicsLayer for the CL-mode lift residual.
-
-    At runtime, PhysicsLayer reconstructs
-    ``L = q · S · (CL_baseline(q, m) + cl_residual)`` with the **runtime**
-    mass from the state vector. Here in the dataset stats pipeline,
-    ``fdm_mass_kg`` is a synthetic, zero-padded column (the MassEncoder
-    fills it at runtime, it is not observed). So both sides of the
-    inverse use the constant ``m_ref`` -- the statistics convention is
-    "as if every flight had m = m_ref":
-
-        cl_residual = ((V_safe/G · d_gamma + cos gamma) · m_ref · G)
-                      / (q · S_REF_A320_M2)
-                      - m_ref · G / (q · S_REF_A320_M2)
-
-    At runtime the PhysicsLayer uses the real ``m`` (state), so the
-    target residual the NN sees during training is centered on a slightly
-    different operating point than this stats baseline -- but the stats
-    only drive the normalizer (mean/std/p999), not the target itself.
-
-    ``q`` is the dynamic pressure already computed by ``_compute_q``
-    (ERA5 temperature when available, ISA fallback).
-    """
-    gamma = x_arr[:, x_cols.index("fdm_gamma_rad")].astype(np.float64)
-    tas = x_arr[:, x_cols.index("era_tas_ms")].astype(np.float64)
-    d_gamma = dx_arr[:, dx_cols.index("fdm_d_gamma_rads")].astype(np.float64)
-    v_safe = np.maximum(tas, _V_MIN_CLAMP)
-    q_pa = _compute_q(x_arr, e_arr, dx_arr, x_cols, e_cols, dx_cols)
-    lhs = ((v_safe / G) * d_gamma + np.cos(gamma)) * _M_REF_KG * G
-    m_ref_arr = np.full_like(q_pa, _M_REF_KG, dtype=np.float64)
-    cl_base = cl_baseline_np(q_pa, m_ref_arr)
-    return np.asarray(lhs / (q_pa * S_REF_A320_M2) - cl_base, dtype=np.float64)
-
-
 def _compute_phi_bank(
     x_arr: np.ndarray,
     e_arr: np.ndarray,
@@ -269,10 +176,6 @@ DERIVED_FEATURES: dict[str, _DerivedFn] = {
     # Inverse PhysicsLayer (NN-output targets — used to derive p999 caps).
     "fdm_a_spec_ms2": _compute_a_spec,
     "fdm_n_z_residual": _compute_n_z_residual,
-    # Hybrid arch: adim outputs reconstructed with mass in PhysicsLayer.
-    "fdm_t_minus_d_norm": _compute_t_minus_d_norm,
-    "fdm_lift_residual_norm": _compute_lift_residual_norm,
-    "fdm_cl_residual": _compute_cl_residual,
     "fdm_phi_bank_rad": _compute_phi_bank,
 }
 
@@ -289,8 +192,6 @@ class FlightSample:
         e1: Optional extra environment tensor of shape ``(seq_len, n_e1)``.
         w: Optional per-sample training weight of shape ``(seq_len,)``
             populated when mode-balanced loss weighting is enabled.
-        flight_features: Optional flight-level feature tensor of shape
-            ``(seq_len, n_features)``.
     """
 
     x: torch.Tensor
@@ -299,7 +200,6 @@ class FlightSample:
     dx: torch.Tensor
     e1: torch.Tensor | None = field(default=None)
     w: torch.Tensor | None = field(default=None)
-    flight_features: torch.Tensor | None = field(default=None)
 
 
 class FlightDataset(Dataset[FlightSample]):
@@ -338,7 +238,6 @@ def compute_stats(
     dx_cols: list[str],
     *,
     e1_cols: list[str] | None = None,
-    flight_feature_cols: list[str] | None = None,
     derived_cols: list[str] | None = None,
     derived_scale_floor_ratio: float = 0.0,
 ) -> dict[str, dict[str, float]]:
@@ -356,9 +255,6 @@ def compute_stats(
         e1_cols: Optional extra environment column names. When provided, each
             column is sourced from ``s.e1`` (positional) when available, else
             falls back to a ``DERIVED_FEATURES`` analytic computer.
-        flight_feature_cols: Optional flight-level feature column names. When
-            provided, each column is sourced positionally from
-            ``s.flight_features`` when available.
         derived_cols: Optional list of NN-output / derived columns to compute
             purely from ``DERIVED_FEATURES``. Used for stats on quantities
             that the trainable layer emits (e.g. ``fdm_a_spec_ms2``) but that
@@ -431,26 +327,6 @@ def compute_stats(
             if col not in DERIVED_FEATURES:
                 continue
             stats[col] = _compute_derived_stats(samples, col, x_cols, e_cols, dx_cols)
-
-    if flight_feature_cols:
-        flight_feature_tensors = [
-            s.flight_features for s in samples if s.flight_features is not None
-        ]
-        if flight_feature_tensors:
-            flight_features_all = torch.cat(flight_feature_tensors, dim=0)
-            n_flight_features = flight_features_all.shape[1]
-            for i, col in enumerate(flight_feature_cols[:n_flight_features]):
-                vals = flight_features_all[:, i]
-                abs_vals = vals.abs()
-                stats[col] = {
-                    "mean": vals.mean().item(),
-                    "std": vals.std().item() + 1e-6,
-                    "max": abs_vals.max().item(),
-                    "p999": torch.quantile(abs_vals, 0.999).item(),
-                }
-        else:
-            for col in flight_feature_cols:
-                stats[col] = {"mean": 0.0, "std": 1e-6, "max": 0.0, "p999": 0.0}
 
     # Pure NN-output derived columns (never present in any tensor; fed to
     # _create_structured_layer for OutputDenormalizer scale via p999).

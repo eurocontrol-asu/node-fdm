@@ -155,11 +155,9 @@ class TestResumeUnit:
             patch("node_fdm_pipeline.commands.resume.resolve_architecture") as mock_resolve,
             patch("node_fdm.loader.get_train_val_data") as mock_get_data,
             patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
                 name="node_adsb_v1",
-                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -174,8 +172,8 @@ class TestResumeUnit:
                 device="cpu",
             )
 
-            # resolve_architecture called with "adsb" (reverse-mapped from "node_adsb_v1")
-            mock_resolve.assert_called_once_with("adsb")
+            # Canonical checkpoint names are resolved directly through providers.
+            mock_resolve.assert_called_once_with("node_adsb_v1")
 
     def test_resume_missing_meta_json(self, tmp_path: Path) -> None:
         """Point --model to empty dir → SystemExit with clear error message."""
@@ -265,11 +263,9 @@ class TestResumeFunctional:
             patch("node_fdm_pipeline.commands.resume.resolve_architecture") as mock_resolve,
             patch("node_fdm.loader.get_train_val_data") as mock_get_data,
             patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
                 name="node_adsb_v1",
-                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -311,11 +307,9 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.resolve_architecture") as mock_resolve,
             patch("node_fdm.loader.get_train_val_data") as mock_get_data,
             patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
                 name="node_adsb_v1",
-                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -346,11 +340,9 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.resolve_architecture") as mock_resolve,
             patch("node_fdm.loader.get_train_val_data") as mock_get_data,
             patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
                 name="node_adsb_v1",
-                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -383,11 +375,9 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.resolve_architecture") as mock_resolve,
             patch("node_fdm.loader.get_train_val_data") as mock_get_data,
             patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
                 name="node_adsb_v1",
-                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -427,11 +417,9 @@ class TestResumeEdgeCases:
             patch("node_fdm_pipeline.commands.resume.resolve_architecture") as mock_resolve,
             patch("node_fdm.loader.get_train_val_data") as mock_get_data,
             patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_resolve.return_value = MagicMock(
                 name="node_adsb_v1",
-                architecture_import="node_fdm.architectures.adsb",
                 x_cols=["a"],
                 u_cols=["b"],
                 e0_cols=["c"],
@@ -485,7 +473,6 @@ typecodes:
         )
 
         with (
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
             pytest.raises(SystemExit, match="Delta table not found"),
         ):
             run_resume(model=model_dir, config=config, device="cpu")
@@ -500,7 +487,6 @@ typecodes:
         config = _make_config(tmp_path)  # creates delta with A320 only
 
         with (
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
             pytest.raises(SystemExit, match="No data for typecode"),
         ):
             run_resume(model=model_dir, config=config, device="cpu")
@@ -516,7 +502,6 @@ typecodes:
         with (
             patch("node_fdm.loader.get_train_val_data") as mock_get_data,
             patch("node_fdm.trainer.ODETrainer") as mock_trainer_cls,
-            patch("node_fdm_pipeline.commands.resume.importlib.import_module"),
         ):
             mock_get_data.return_value = (MagicMock(), MagicMock())
             mock_trainer_cls.return_value = MagicMock()

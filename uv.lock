@@ -21,6 +21,7 @@ members = [
     "node-fdm",
     "node-fdm-bada",
     "node-fdm-data",
+    "node-fdm-models",
     "node-fdm-pipeline",
     "node-fdm-workspace",
 ]
@@ -2831,6 +2832,40 @@ docs = [
 ]
 
 [[package]]
+name = "node-fdm-models"
+source = { editable = "packages/node-fdm-models" }
+dependencies = [
+    { name = "node-fdm" },
+    { name = "node-fdm-data" },
+    { name = "numpy" },
+    { name = "polars" },
+    { name = "scipy" },
+]
+
+[package.dev-dependencies]
+dev = [
+    { name = "pytest" },
+    { name = "pytest-cov" },
+    { name = "pytest-mock" },
+]
+
+[package.metadata]
+requires-dist = [
+    { name = "node-fdm", editable = "packages/node-fdm" },
+    { name = "node-fdm-data", editable = "packages/node-fdm-data" },
+    { name = "numpy", specifier = ">=1.26" },
+    { name = "polars", specifier = ">=1.0" },
+    { name = "scipy", specifier = ">=1.13" },
+]
+
+[package.metadata.requires-dev]
+dev = [
+    { name = "pytest", specifier = ">=8.0" },
+    { name = "pytest-cov", specifier = ">=4.0" },
+    { name = "pytest-mock", specifier = ">=3.0" },
+]
+
+[[package]]
 name = "node-fdm-pipeline"
 source = { editable = "packages/node-fdm-pipeline" }
 dependencies = [
@@ -2841,6 +2876,7 @@ dependencies = [
     { name = "node-fdm" },
     { name = "node-fdm-bada" },
     { name = "node-fdm-data" },
+    { name = "node-fdm-models" },
     { name = "numpy" },
     { name = "pandas" },
     { name = "polars" },
@@ -2882,6 +2918,7 @@ requires-dist = [
     { name = "node-fdm", editable = "packages/node-fdm" },
     { name = "node-fdm-bada", editable = "packages/node-fdm-bada" },
     { name = "node-fdm-data", editable = "packages/node-fdm-data" },
+    { name = "node-fdm-models", editable = "packages/node-fdm-models" },
     { name = "numpy", specifier = ">=2.0" },
     { name = "pandas", specifier = "<3.0" },
     { name = "pandas", marker = "extra == 'traffic'", specifier = "<3.0" },
@@ -2914,6 +2951,7 @@ dependencies = [
     { name = "node-fdm" },
     { name = "node-fdm-bada" },
     { name = "node-fdm-data" },
+    { name = "node-fdm-models" },
     { name = "node-fdm-pipeline" },
     { name = "pygeomag" },
     { name = "ruptures" },
@@ -2934,6 +2972,7 @@ requires-dist = [
     { name = "node-fdm", editable = "packages/node-fdm" },
     { name = "node-fdm-bada", editable = "packages/node-fdm-bada" },
     { name = "node-fdm-data", editable = "packages/node-fdm-data" },
+    { name = "node-fdm-models", editable = "packages/node-fdm-models" },
     { name = "node-fdm-pipeline", editable = "packages/node-fdm-pipeline" },
     { name = "pygeomag", specifier = ">=1.1.0" },
     { name = "ruptures", specifier = ">=1.1.10" },

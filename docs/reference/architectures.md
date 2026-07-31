@@ -1,14 +1,19 @@
 # 🏗️ Architectures API
 
-The `node_fdm.architectures` namespace contains the typed specifications for flight dynamics problems.
+The `node_fdm.architectures` namespace contains the generic contracts and
+entry-point discovery mechanism for flight-dynamics architectures.
 
-It serves two main purposes: **Registration** (mapping string names to `ArchitectureSpec` objects) and **Implementation** (defining the column groups, preprocessing logic, and layer stacks).
+Concrete validated specifications are distributed by `node-fdm-models`.
+Research and third-party packages use the same `node_fdm.architectures` entry
+point and do not modify the core library.
 
 ---
 
 ## 🧩 Registry
 
-The registry module provides `register()` and `get()` for architecture discovery.
+The registry provides direct registration for backward compatibility plus
+`discover_architectures()`, `available()`, `get_origin()`, and deterministic
+spec digests for installed providers.
 
 ::: node_fdm.architectures.registry
     options:
@@ -18,12 +23,5 @@ The registry module provides `register()` and `get()` for architecture discovery
 
 ---
 
-## 📡 OpenSky 2025
-
-The reference implementation for public ADS-B data. Defines a physics-informed architecture for noisy surveillance data.
-
-::: node_fdm.architectures.adsb_2025
-    options:
-      show_root_heading: true
-      show_root_full_path: false
-      show_source: true
+See [Create an Architecture](../howto/create_architecture/) for the provider
+package contract and the paper tutorial for an executable external example.

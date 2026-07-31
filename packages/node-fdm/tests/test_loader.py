@@ -198,7 +198,7 @@ class TestGetTrainValData:
                 )
         data_df = pl.DataFrame(rows)
 
-        from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, U_COLS, X_COLS
+        from node_fdm_models.schemas.adsb import DX_COLS, E0_COLS, U_COLS, X_COLS
 
         dx_col_names = [col for _, col in DX_COLS]
         train_ds, val_ds = get_train_val_data(

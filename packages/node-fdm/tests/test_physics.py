@@ -175,8 +175,8 @@ class TestPhysicsLayerInitBias:
 
     def test_fresh_adsb_model_is_at_cruise_equilibrium(self) -> None:
         """A freshly-built NODE_ADSB_V1 produces d_tas≈0 and d_gamma≈0 at gamma=0."""
-        from node_fdm.architectures.adsb import NODE_ADSB_V1
         from node_fdm.models.fdm import FlightDynamicsModel
+        from node_fdm_models.architectures.adsb import NODE_ADSB_V1
 
         all_cols = (
             NODE_ADSB_V1.x_cols

@@ -111,7 +111,6 @@ typecodes:
             dx_cols=[(1, "gs_ms")],
             preprocessing_fn=None,
             segment_filter_fn=None,
-            architecture_import="node_fdm.architectures.adsb",
         )
 
         mock_predictor = MagicMock()
@@ -386,7 +385,6 @@ typecodes:
             dx_cols=[(1, "vertical_rate")],
             preprocessing_fn=identity_preprocess,
             segment_filter_fn=None,
-            architecture_import="node_fdm.architectures.adsb",
         )
 
     @pytest.mark.parametrize(
@@ -521,7 +519,6 @@ typecodes:
             dx_cols=[(1, "gs_ms")],
             preprocessing_fn=mock_preprocessing,
             segment_filter_fn=None,
-            architecture_import="node_fdm.architectures.adsb",
         )
 
         mock_predictor = MagicMock()

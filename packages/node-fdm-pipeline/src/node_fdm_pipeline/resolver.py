@@ -2,11 +2,11 @@
 
 from __future__ import annotations
 
+import importlib
 from dataclasses import dataclass, field
 from typing import Any
 
 __all__ = [
-    "ARCH_BY_NAME",
     "ArchitectureInfo",
     "resolve_architecture",
 ]
@@ -25,7 +25,6 @@ class ArchitectureInfo:
         dx_cols: Derivative column specs ``(sign, col_name)``.
         preprocessing_fn: Flight preprocessing function (used by predict/stats).
         segment_filter_fn: Optional segment filter function (used by predict/stats).
-        architecture_import: Dotted import path to trigger auto-registration.
     """
 
     name: str
@@ -35,284 +34,43 @@ class ArchitectureInfo:
     dx_cols: list[tuple[int, str]]
     preprocessing_fn: Any
     segment_filter_fn: Any
-    architecture_import: str
     e1_cols: list[str] = field(default_factory=list)
 
 
 #: Reverse mapping from architecture registry name to CLI arch key.
-ARCH_BY_NAME: dict[str, str] = {
-    "qar": "qar",
-    "node_adsb_v1": "adsb",
-    "node_adsb_hybrid_v1": "adsb_hybrid",
-    "node_adsb_hybrid_v2": "adsb_hybrid_v2",
-    "node_adsb_hybrid_v3": "adsb_hybrid_v3",
-    "node_adsb_hybrid_v4_mass_features": "adsb_hybrid_v4",
-    "node_adsb_hybrid_v5_tempered_t3": "adsb_hybrid_v5_tempered",
-    "node_adsb_hybrid_v6_mlp_monotone": "adsb_hybrid_v6_mlp",
-    "node_adsb_hybrid_v7_lean_2features": "adsb_hybrid_v7_lean",
-    "node_adsb_hybrid_v8_lean_t15": "adsb_hybrid_v8_lean_t15",
-    "node_adsb_hybrid_v9_causal_3features": "adsb_hybrid_v9_causal",
-    "node_adsb_hybrid_v10_ps_auxloss": "adsb_hybrid_v10_ps_auxloss",
-    "node_adsb_hybrid_v11_ps_residual": "adsb_hybrid_v11_ps_residual",
-    "node_adsb_hybrid_v12_psdrag": "adsb_hybrid_v12_psdrag",
-    "node_adsb_hybrid_v13_psthrust": "adsb_hybrid_v13_psthrust",
-    "node_adsb_hybrid_v13b_psthrust_w10": "adsb_hybrid_v13b_psthrust_w10",
-    "node_adsb_hybrid_v13c_psthrust_tet": "adsb_hybrid_v13c_psthrust_tet",
-    "node_adsb_hybrid_v13d_psthrust_parallel": "adsb_hybrid_v13d_psthrust_parallel",
-    "node_adsb_hybrid_v13e_psthrust_parallel_l025": "adsb_hybrid_v13e_psthrust_parallel_l025",
-    "node_adsb_hybrid_v13f_psthrust_parallel_anneal": "adsb_hybrid_v13f_psthrust_parallel_anneal",
-    "node_adsb_hybrid_v13g_psthrust_tet_parallel": "adsb_hybrid_v13g_psthrust_tet_parallel",
-    "node_adsb_hybrid_v14_psefficiency": "adsb_hybrid_v14_psefficiency",
-    "node_adsb_hybrid_v15_throttle_clamp": "adsb_hybrid_v15_throttle_clamp",
-    "node_adsb_hybrid_v15_throttle_tanh": "adsb_hybrid_v15_throttle_tanh",
-    "node_adsb_hybrid_v16_no_dmass": "adsb_hybrid_v16_no_dmass",
-    "node_adsb_hybrid_v17_psefficiency_parallel": "adsb_hybrid_v17_psefficiency_parallel",
-    "node_adsb_hybrid_v18_parallel_t_and_cd": "adsb_hybrid_v18_parallel_t_and_cd",
-    "node_adsb_hybrid_v19_psefficiency_parallel_l025": (
-        "adsb_hybrid_v19_psefficiency_parallel_l025"
-    ),
-    "node_adsb_hybrid_v20_seymour_age": "adsb_hybrid_v20_seymour_age",
-}
 
-_SUPPORTED_ARCHS: tuple[str, ...] = (
-    "qar",
-    "adsb",
-    "adsb_hybrid",
-    "adsb_hybrid_v2",
-    "adsb_hybrid_v3",
-    "adsb_hybrid_v4",
-    "adsb_hybrid_v5_tempered",
-    "adsb_hybrid_v6_mlp",
-    "adsb_hybrid_v7_lean",
-    "adsb_hybrid_v8_lean_t15",
-    "adsb_hybrid_v9_causal",
-    "adsb_hybrid_v10_ps_auxloss",
-    "adsb_hybrid_v11_ps_residual",
-    "adsb_hybrid_v12_psdrag",
-    "adsb_hybrid_v13_psthrust",
-    "adsb_hybrid_v13b_psthrust_w10",
-    "adsb_hybrid_v13c_psthrust_tet",
-    "adsb_hybrid_v13d_psthrust_parallel",
-    "adsb_hybrid_v13e_psthrust_parallel_l025",
-    "adsb_hybrid_v13f_psthrust_parallel_anneal",
-    "adsb_hybrid_v13g_psthrust_tet_parallel",
-    "adsb_hybrid_v14_psefficiency",
-    "adsb_hybrid_v15_throttle_clamp",
-    "adsb_hybrid_v15_throttle_tanh",
-    "adsb_hybrid_v16_no_dmass",
-    "adsb_hybrid_v17_psefficiency_parallel",
-    "adsb_hybrid_v18_parallel_t_and_cd",
-    "adsb_hybrid_v19_psefficiency_parallel_l025",
-    "adsb_hybrid_v20_seymour_age",
-)
+
+def _resolve_optional_callable(dotted_path: str | None) -> Any:
+    """Resolve an optional dotted callable path declared by an architecture."""
+    if dotted_path is None:
+        return None
+    module_path, attribute = dotted_path.rsplit(".", 1)
+    module = importlib.import_module(module_path)
+    resolved = getattr(module, attribute)
+    if not callable(resolved):
+        msg = f"Architecture hook {dotted_path!r} is not callable."
+        raise TypeError(msg)
+    return resolved
 
 
 def resolve_architecture(arch: str) -> ArchitectureInfo:
-    """Resolve an architecture name to its schema and preprocessing components.
+    """Resolve any installed architecture provider alias."""
+    from node_fdm.architectures import available, get
 
-    Args:
-        arch: Architecture identifier — one of ``"qar"``, ``"adsb"``,
-            ``"adsb_hybrid"`` (v1, Newton 5 features),
-            ``"adsb_hybrid_v2"`` (Newton 6 features, Phase 1 baseline),
-            ``"adsb_hybrid_v3"`` (CL-mode, Phase 1.5).
+    try:
+        spec = get(arch)
+    except ValueError as exc:
+        supported = ", ".join(available()) or "none installed"
+        msg = f"Unknown architecture {arch!r}. Available: {supported}."
+        raise ValueError(msg) from exc
 
-    Returns:
-        Fully resolved ``ArchitectureInfo``.
-
-    Raises:
-        ValueError: If *arch* is not a supported architecture.
-    """
-    match arch:
-        case "qar":
-            from node_fdm_data.schemas.qar import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
-
-            return ArchitectureInfo(
-                name="qar",
-                x_cols=X_COLS,
-                u_cols=U_COLS,
-                e0_cols=E0_COLS,
-                e1_cols=E1_COLS,
-                dx_cols=DX_COLS,
-                preprocessing_fn=None,
-                segment_filter_fn=None,
-                architecture_import="node_fdm.architectures.qar",
-            )
-        case "adsb":
-            from node_fdm_data.schemas.adsb import DX_COLS, E0_COLS, E1_COLS, U_COLS, X_COLS
-
-            return ArchitectureInfo(
-                name="node_adsb_v1",
-                x_cols=X_COLS,
-                u_cols=U_COLS,
-                e0_cols=E0_COLS,
-                e1_cols=E1_COLS,
-                dx_cols=DX_COLS,
-                preprocessing_fn=None,
-                segment_filter_fn=None,
-                architecture_import="node_fdm.architectures.adsb",
-            )
-        case (
-            "adsb_hybrid"
-            | "adsb_hybrid_v2"
-            | "adsb_hybrid_v3"
-            | "adsb_hybrid_v4"
-            | "adsb_hybrid_v5_tempered"
-            | "adsb_hybrid_v6_mlp"
-            | "adsb_hybrid_v7_lean"
-            | "adsb_hybrid_v8_lean_t15"
-            | "adsb_hybrid_v9_causal"
-            | "adsb_hybrid_v10_ps_auxloss"
-            | "adsb_hybrid_v11_ps_residual"
-            | "adsb_hybrid_v12_psdrag"
-            | "adsb_hybrid_v13_psthrust"
-            | "adsb_hybrid_v13b_psthrust_w10"
-            | "adsb_hybrid_v13c_psthrust_tet"
-            | "adsb_hybrid_v13d_psthrust_parallel"
-            | "adsb_hybrid_v13e_psthrust_parallel_l025"
-            | "adsb_hybrid_v13f_psthrust_parallel_anneal"
-            | "adsb_hybrid_v13g_psthrust_tet_parallel"
-            | "adsb_hybrid_v14_psefficiency"
-            | "adsb_hybrid_v15_throttle_clamp"
-            | "adsb_hybrid_v15_throttle_tanh"
-            | "adsb_hybrid_v16_no_dmass"
-            | "adsb_hybrid_v17_psefficiency_parallel"
-            | "adsb_hybrid_v18_parallel_t_and_cd"
-            | "adsb_hybrid_v19_psefficiency_parallel_l025"
-            | "adsb_hybrid_v20_seymour_age"
-        ):
-            # All five hybrid variants share the same X/U/E/DX schema —
-            # they only differ in flight_feature_cols (5 / 6 / 6 / 9 / 9),
-            # MassEncoder sigmoid temperature (1.0 default vs 3.0 for v5),
-            # and the longitudinal head output contract (Newton
-            # lift_residual_norm vs CL residual). Schema columns come from
-            # the shared module.
-            from node_fdm_data.schemas.adsb_hybrid import (
-                DX_COLS,
-                E0_COLS,
-                E1_COLS,
-                U_COLS,
-                X_COLS,
-            )
-
-            arch_name, arch_import = {
-                "adsb_hybrid": ("node_adsb_hybrid_v1", "node_fdm.architectures.adsb_hybrid"),
-                "adsb_hybrid_v2": (
-                    "node_adsb_hybrid_v2",
-                    "node_fdm.architectures.adsb_hybrid_v2",
-                ),
-                "adsb_hybrid_v3": (
-                    "node_adsb_hybrid_v3",
-                    "node_fdm.architectures.adsb_hybrid_v3",
-                ),
-                "adsb_hybrid_v4": (
-                    "node_adsb_hybrid_v4_mass_features",
-                    "node_fdm.architectures.adsb_hybrid_v4",
-                ),
-                "adsb_hybrid_v5_tempered": (
-                    "node_adsb_hybrid_v5_tempered_t3",
-                    "node_fdm.architectures.adsb_hybrid_v5_tempered",
-                ),
-                "adsb_hybrid_v6_mlp": (
-                    "node_adsb_hybrid_v6_mlp_monotone",
-                    "node_fdm.architectures.adsb_hybrid_v6_mlp",
-                ),
-                "adsb_hybrid_v7_lean": (
-                    "node_adsb_hybrid_v7_lean_2features",
-                    "node_fdm.architectures.adsb_hybrid_v7_lean",
-                ),
-                "adsb_hybrid_v8_lean_t15": (
-                    "node_adsb_hybrid_v8_lean_t15",
-                    "node_fdm.architectures.adsb_hybrid_v8_lean_t15",
-                ),
-                "adsb_hybrid_v9_causal": (
-                    "node_adsb_hybrid_v9_causal_3features",
-                    "node_fdm.architectures.adsb_hybrid_v9_causal",
-                ),
-                "adsb_hybrid_v10_ps_auxloss": (
-                    "node_adsb_hybrid_v10_ps_auxloss",
-                    "node_fdm.architectures.adsb_hybrid_v10_ps_auxloss",
-                ),
-                "adsb_hybrid_v11_ps_residual": (
-                    "node_adsb_hybrid_v11_ps_residual",
-                    "node_fdm.architectures.adsb_hybrid_v11_ps_residual",
-                ),
-                "adsb_hybrid_v12_psdrag": (
-                    "node_adsb_hybrid_v12_psdrag",
-                    "node_fdm.architectures.adsb_hybrid_v12_psdrag",
-                ),
-                "adsb_hybrid_v13_psthrust": (
-                    "node_adsb_hybrid_v13_psthrust",
-                    "node_fdm.architectures.adsb_hybrid_v13_psthrust",
-                ),
-                "adsb_hybrid_v13b_psthrust_w10": (
-                    "node_adsb_hybrid_v13b_psthrust_w10",
-                    "node_fdm.architectures.adsb_hybrid_v13b_psthrust_w10",
-                ),
-                "adsb_hybrid_v13c_psthrust_tet": (
-                    "node_adsb_hybrid_v13c_psthrust_tet",
-                    "node_fdm.architectures.adsb_hybrid_v13c_psthrust_tet",
-                ),
-                "adsb_hybrid_v13d_psthrust_parallel": (
-                    "node_adsb_hybrid_v13d_psthrust_parallel",
-                    "node_fdm.architectures.adsb_hybrid_v13d_psthrust_parallel",
-                ),
-                "adsb_hybrid_v13e_psthrust_parallel_l025": (
-                    "node_adsb_hybrid_v13e_psthrust_parallel_l025",
-                    "node_fdm.architectures.adsb_hybrid_v13e_psthrust_parallel_l025",
-                ),
-                "adsb_hybrid_v13f_psthrust_parallel_anneal": (
-                    "node_adsb_hybrid_v13f_psthrust_parallel_anneal",
-                    "node_fdm.architectures.adsb_hybrid_v13f_psthrust_parallel_anneal",
-                ),
-                "adsb_hybrid_v13g_psthrust_tet_parallel": (
-                    "node_adsb_hybrid_v13g_psthrust_tet_parallel",
-                    "node_fdm.architectures.adsb_hybrid_v13g_psthrust_tet_parallel",
-                ),
-                "adsb_hybrid_v14_psefficiency": (
-                    "node_adsb_hybrid_v14_psefficiency",
-                    "node_fdm.architectures.adsb_hybrid_v14_psefficiency",
-                ),
-                "adsb_hybrid_v15_throttle_clamp": (
-                    "node_adsb_hybrid_v15_throttle_clamp",
-                    "node_fdm.architectures.adsb_hybrid_v15_throttle_clamp",
-                ),
-                "adsb_hybrid_v15_throttle_tanh": (
-                    "node_adsb_hybrid_v15_throttle_tanh",
-                    "node_fdm.architectures.adsb_hybrid_v15_throttle_tanh",
-                ),
-                "adsb_hybrid_v16_no_dmass": (
-                    "node_adsb_hybrid_v16_no_dmass",
-                    "node_fdm.architectures.adsb_hybrid_v16_no_dmass",
-                ),
-                "adsb_hybrid_v17_psefficiency_parallel": (
-                    "node_adsb_hybrid_v17_psefficiency_parallel",
-                    "node_fdm.architectures.adsb_hybrid_v17_psefficiency_parallel",
-                ),
-                "adsb_hybrid_v18_parallel_t_and_cd": (
-                    "node_adsb_hybrid_v18_parallel_t_and_cd",
-                    "node_fdm.architectures.adsb_hybrid_v18_parallel_t_and_cd",
-                ),
-                "adsb_hybrid_v19_psefficiency_parallel_l025": (
-                    "node_adsb_hybrid_v19_psefficiency_parallel_l025",
-                    "node_fdm.architectures.adsb_hybrid_v19_psefficiency_parallel_l025",
-                ),
-                "adsb_hybrid_v20_seymour_age": (
-                    "node_adsb_hybrid_v20_seymour_age",
-                    "node_fdm.architectures.adsb_hybrid_v20_seymour_age",
-                ),
-            }[arch]
-            return ArchitectureInfo(
-                name=arch_name,
-                x_cols=X_COLS,
-                u_cols=U_COLS,
-                e0_cols=E0_COLS,
-                e1_cols=E1_COLS,
-                dx_cols=DX_COLS,
-                preprocessing_fn=None,
-                segment_filter_fn=None,
-                architecture_import=arch_import,
-            )
-        case _:
-            supported = ", ".join(repr(a) for a in _SUPPORTED_ARCHS)
-            msg = f"Unknown architecture: {arch!r}. Supported: {supported}."
-            raise ValueError(msg)
+    return ArchitectureInfo(
+        name=spec.name,
+        x_cols=list(spec.x_cols),
+        u_cols=list(spec.u_cols),
+        e0_cols=list(spec.e0_cols),
+        e1_cols=list(spec.e1_cols),
+        dx_cols=list(spec.dx_cols),
+        preprocessing_fn=_resolve_optional_callable(spec.preprocessing_fn),
+        segment_filter_fn=_resolve_optional_callable(spec.segment_filter_fn),
+    )

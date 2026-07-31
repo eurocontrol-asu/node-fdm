@@ -49,7 +49,7 @@ class TestAdsbArchitectureDxCols:
 
     def test_adsb_architecture_dx_cols(self) -> None:
         """DX_COLS[0] == (1, 'fdm_d_alt_ms') after rename."""
-        import node_fdm.architectures.adsb  # noqa: F401
+        import node_fdm_models.architectures.adsb  # noqa: F401
 
         spec = get("node_adsb_v1")
         assert spec.dx_cols[0] == (
@@ -59,7 +59,7 @@ class TestAdsbArchitectureDxCols:
 
     def test_adsb_e1_cols_renamed(self) -> None:
         """E1_COLS uses fdm_d_alt_ms, not fdm_d_vz_ms."""
-        from node_fdm_data.schemas.adsb import E1_COLS
+        from node_fdm_models.schemas.adsb import E1_COLS
 
         assert "fdm_d_alt_ms" in E1_COLS
         assert "fdm_d_vz_ms" not in E1_COLS

@@ -1,0 +1,116 @@
+[project]
+name = "node-fdm-models"
+dynamic = ["version"]
+description = "Official validated model specifications for node-fdm"
+readme = "README.md"
+requires-python = ">=3.12"
+license = { text = "EUPL-1.2" }
+authors = [{ name = "Gabriel Jarry", email = "gabriel.jarry@eurocontrol.int" }]
+classifiers = [
+    "Development Status :: 3 - Alpha",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13",
+    "Typing :: Typed",
+]
+dependencies = [
+    "node-fdm",
+    "node-fdm-data",
+    "numpy>=1.26",
+    "polars>=1.0",
+    "scipy>=1.13",
+]
+
+[project.entry-points."node_fdm.architectures"]
+official = "node_fdm_models.catalog:architectures"
+
+[project.urls]
+Homepage = "https://github.com/eurocontrol-asu/axm-fdm-workspace"
+Documentation = "https://eurocontrol-asu.github.io/axm-fdm-workspace/"
+Repository = "https://github.com/eurocontrol-asu/axm-fdm-workspace.git"
+Issues = "https://github.com/eurocontrol-asu/axm-fdm-workspace/issues"
+
+[build-system]
+requires = ["hatchling", "hatch-vcs"]
+build-backend = "hatchling.build"
+
+[tool.hatch.version]
+source = "vcs"
+raw-options = { root = "../.." }
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/node_fdm_models"]
+
+[tool.uv.sources]
+node-fdm = { workspace = true }
+node-fdm-data = { workspace = true }
+
+[dependency-groups]
+dev = [
+    "pytest>=8.0",
+    "pytest-cov>=4.0",
+    "pytest-mock>=3.0",
+]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["src"]
+python_files = "test_*.py"
+addopts = [
+    "-v",
+    "--strict-markers",
+    "--strict-config",
+    "--tb=short",
+    "--import-mode=importlib",
+    "--cov=src/node_fdm_models",
+    "--cov-report=term-missing",
+    "--cov-fail-under=0",
+]
+markers = [
+    "integration: integration tests with real I/O or public-API scenarios",
+    "e2e: end-to-end subprocess/CLI tests",
+]
+
+[tool.mypy]
+python_version = "3.12"
+strict = true
+pretty = true
+disallow_incomplete_defs = true
+check_untyped_defs = true
+warn_unused_configs = true
+warn_unused_ignores = true
+show_error_codes = true
+
+[[tool.mypy.overrides]]
+module = ["tests.*"]
+disallow_untyped_defs = false
+disallow_untyped_decorators = false
+
+[[tool.mypy.overrides]]
+module = ["scipy.*"]
+ignore_missing_imports = true
+disable_error_code = ["import-untyped"]
+
+[tool.ruff]
+target-version = "py312"
+line-length = 99
+src = ["src", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP", "B", "C4", "S", "T20", "RUF"]
+ignore = ["S101"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**" = ["S101"]
+
+[tool.ruff.lint.isort]
+known-first-party = ["node_fdm", "node_fdm_models"]
+
+[tool.coverage.run]
+source_pkgs = ["node_fdm_models"]
+branch = true
+relative_files = true
+
+[tool.coverage.report]
+show_missing = true
+fail_under = 80
+exclude_lines = ["pragma: no cover", "if TYPE_CHECKING:", "raise NotImplementedError"]

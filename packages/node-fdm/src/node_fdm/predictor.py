@@ -8,6 +8,7 @@ column definitions and pandas DataFrames with Pydantic-typed
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 import numpy as np
 import structlog
@@ -68,6 +69,9 @@ class ModelMeta(BaseModel):
     """
 
     architecture_name: str
+    architecture_spec: dict[str, Any] | None = None
+    architecture_digest: str | None = None
+    architecture_provider: dict[str, str | None] | None = None
     model_params: tuple[int, int, int]
     step: float
     shift: int
@@ -117,6 +121,7 @@ class NodeFDMPredictor:
 
         self.meta = ModelMeta.from_json(meta_path)
         self.spec = get(self.meta.architecture_name)
+        self._validate_architecture_manifest()
 
         # Build stats_dict in the format expected by FlightDynamicsModelProd
         stats_plain: dict[str, dict[str, float]] = {
@@ -137,6 +142,36 @@ class NodeFDMPredictor:
             architecture=self.meta.architecture_name,
             model_path=str(self.model_path),
         )
+
+    def _validate_architecture_manifest(self) -> None:
+        """Reject checkpoints resolved against a different provider or spec."""
+        from node_fdm.architectures import architecture_digest, get_origin
+
+        expected_digest = self.meta.architecture_digest
+        current_digest = architecture_digest(self.spec)
+        if expected_digest is not None and expected_digest != current_digest:
+            msg = (
+                f"Checkpoint architecture digest {expected_digest} does not match "
+                f"installed architecture digest {current_digest}."
+            )
+            raise ValueError(msg)
+
+        expected_provider = self.meta.architecture_provider
+        if expected_provider is None:
+            return
+        current_origin = get_origin(self.meta.architecture_name)
+        if current_origin is None:
+            msg = "Checkpoint requires a discoverable architecture provider."
+            raise ValueError(msg)
+        for field in ("provider", "distribution", "version", "entry_point"):
+            expected = expected_provider.get(field)
+            current = getattr(current_origin, field)
+            if expected is not None and expected != current:
+                msg = (
+                    f"Checkpoint architecture provider {field}={expected!r} does not "
+                    f"match installed {field}={current!r}."
+                )
+                raise ValueError(msg)
 
     def predict_flight(
         self,

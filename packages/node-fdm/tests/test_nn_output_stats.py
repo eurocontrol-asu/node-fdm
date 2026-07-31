@@ -22,9 +22,9 @@ import numpy as np
 import pytest
 import torch
 
-from node_fdm.architectures.adsb import NODE_ADSB_V1
 from node_fdm.dataset import DERIVED_FEATURES, FlightSample, compute_stats
 from node_fdm.layers.physics import V_MIN_CLAMP, G
+from node_fdm_models.architectures.adsb import NODE_ADSB_V1
 
 # ── synthetic-sample columns matching the inverse-PhysicsLayer inputs ──────
 _X_COLS = ["raw_alt_m", "fdm_gamma_rad", "era_tas_ms"]
@@ -204,8 +204,8 @@ class TestArchitectureSpecExtension:
         """Specs that omit the new fields get empty defaults (backward compat)."""
         # qar arch (loaded for side effect of registry import) is the
         # canonical "no overrides" baseline.
-        from node_fdm.architectures import qar as _qar  # noqa: F401
         from node_fdm.architectures.registry import REGISTRY
+        from node_fdm_models.architectures import qar as _qar  # noqa: F401
 
         spec = REGISTRY["qar"]
         assert spec.derived_output_cols == []

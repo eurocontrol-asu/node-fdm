@@ -1,94 +1,31 @@
-"""Architecture registry and specs (ADS-B v1, QAR)."""
+"""Architecture contracts and provider discovery for node-fdm."""
 
 from __future__ import annotations
 
-from node_fdm.architectures import adsb as adsb
-from node_fdm.architectures import adsb_hybrid as adsb_hybrid
-from node_fdm.architectures import adsb_hybrid_v2 as adsb_hybrid_v2
-from node_fdm.architectures import adsb_hybrid_v3 as adsb_hybrid_v3
-from node_fdm.architectures import adsb_hybrid_v4 as adsb_hybrid_v4
-from node_fdm.architectures import adsb_hybrid_v5_tempered as adsb_hybrid_v5_tempered
-from node_fdm.architectures import adsb_hybrid_v6_mlp as adsb_hybrid_v6_mlp
-from node_fdm.architectures import adsb_hybrid_v7_lean as adsb_hybrid_v7_lean
-from node_fdm.architectures import adsb_hybrid_v8_lean_t15 as adsb_hybrid_v8_lean_t15
-from node_fdm.architectures import adsb_hybrid_v9_causal as adsb_hybrid_v9_causal
-from node_fdm.architectures import adsb_hybrid_v10_ps_auxloss as adsb_hybrid_v10_ps_auxloss
-from node_fdm.architectures import adsb_hybrid_v11_ps_residual as adsb_hybrid_v11_ps_residual
-from node_fdm.architectures import adsb_hybrid_v12_psdrag as adsb_hybrid_v12_psdrag
-from node_fdm.architectures import adsb_hybrid_v13_psthrust as adsb_hybrid_v13_psthrust
-from node_fdm.architectures import (
-    adsb_hybrid_v13b_psthrust_w10 as adsb_hybrid_v13b_psthrust_w10,
+from node_fdm.architectures.registry import (
+    ARCHITECTURE_ENTRY_POINT_GROUP,
+    ArchitectureOrigin,
+    ArchitectureSpec,
+    LayerSpec,
+    architecture_digest,
+    available,
+    discover_architectures,
+    get,
+    get_origin,
+    register,
+    resolve_layer_class,
 )
-from node_fdm.architectures import (
-    adsb_hybrid_v13c_psthrust_tet as adsb_hybrid_v13c_psthrust_tet,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v13d_psthrust_parallel as adsb_hybrid_v13d_psthrust_parallel,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v13e_psthrust_parallel_l025 as adsb_hybrid_v13e_psthrust_parallel_l025,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v13f_psthrust_parallel_anneal as adsb_hybrid_v13f_psthrust_parallel_anneal,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v13g_psthrust_tet_parallel as adsb_hybrid_v13g_psthrust_tet_parallel,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v14_psefficiency as adsb_hybrid_v14_psefficiency,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v15_throttle_clamp as adsb_hybrid_v15_throttle_clamp,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v15_throttle_tanh as adsb_hybrid_v15_throttle_tanh,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v16_no_dmass as adsb_hybrid_v16_no_dmass,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v17_psefficiency_parallel as adsb_hybrid_v17_psefficiency_parallel,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v18_parallel_t_and_cd as adsb_hybrid_v18_parallel_t_and_cd,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v19_psefficiency_parallel_l025 as adsb_hybrid_v19_psefficiency_parallel_l025,
-)
-from node_fdm.architectures import (
-    adsb_hybrid_v20_seymour_age as adsb_hybrid_v20_seymour_age,
-)
-from node_fdm.architectures import qar as qar
 
 __all__ = [
-    "adsb",
-    "adsb_hybrid",
-    "adsb_hybrid_v2",
-    "adsb_hybrid_v3",
-    "adsb_hybrid_v4",
-    "adsb_hybrid_v5_tempered",
-    "adsb_hybrid_v6_mlp",
-    "adsb_hybrid_v7_lean",
-    "adsb_hybrid_v8_lean_t15",
-    "adsb_hybrid_v9_causal",
-    "adsb_hybrid_v10_ps_auxloss",
-    "adsb_hybrid_v11_ps_residual",
-    "adsb_hybrid_v12_psdrag",
-    "adsb_hybrid_v13_psthrust",
-    "adsb_hybrid_v13b_psthrust_w10",
-    "adsb_hybrid_v13c_psthrust_tet",
-    "adsb_hybrid_v13d_psthrust_parallel",
-    "adsb_hybrid_v13e_psthrust_parallel_l025",
-    "adsb_hybrid_v13f_psthrust_parallel_anneal",
-    "adsb_hybrid_v13g_psthrust_tet_parallel",
-    "adsb_hybrid_v14_psefficiency",
-    "adsb_hybrid_v15_throttle_clamp",
-    "adsb_hybrid_v15_throttle_tanh",
-    "adsb_hybrid_v16_no_dmass",
-    "adsb_hybrid_v17_psefficiency_parallel",
-    "adsb_hybrid_v18_parallel_t_and_cd",
-    "adsb_hybrid_v19_psefficiency_parallel_l025",
-    "adsb_hybrid_v20_seymour_age",
-    "qar",
-    "registry",
+    "ARCHITECTURE_ENTRY_POINT_GROUP",
+    "ArchitectureOrigin",
+    "ArchitectureSpec",
+    "LayerSpec",
+    "architecture_digest",
+    "available",
+    "discover_architectures",
+    "get",
+    "get_origin",
+    "register",
+    "resolve_layer_class",
 ]

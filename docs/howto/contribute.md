@@ -53,14 +53,20 @@ make test
 
 ## 🏗️ Contributing New Architectures
 
-The most common way to extend **node-fdm** is by adding a new architecture. See the [Create an Architecture](../create_architecture/) guide for the full walkthrough.
+New architectures are developed as provider packages, not as changes to the
+generic core. See [Create an Architecture](../create_architecture/) for the full
+walkthrough.
 
 **Quick steps:**
 
-1.  Define column schemas in `node_fdm_data/schemas/`
-2.  Implement preprocessing in `node_fdm_data/preprocessing/`
-3.  Create and register an `ArchitectureSpec` in `node_fdm/architectures/`
-4.  Add custom layers in `node_fdm/layers/` if needed
+1. Define schemas and preprocessing in the provider package.
+2. Define its `ArchitectureSpec` and any model-specific layers there.
+3. Publish a `node_fdm.architectures` entry point.
+4. Validate experiments in the paper repository.
+5. Promote stable reference models to `node-fdm-models`.
+
+Only submit architecture-related code to `node-fdm` when it is demonstrably
+generic across model families.
 
 ---
 

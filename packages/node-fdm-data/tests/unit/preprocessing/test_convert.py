@@ -465,44 +465,6 @@ class TestDerivativeColumnUnitSuffix:
         assert "fdm_d_tas_ms2" in DERIVATIVE_BOUNDS
         assert "fdm_d_tas_ms" not in DERIVATIVE_BOUNDS
 
-    def test_dx_cols_suffix_matches_unit(self) -> None:
-        """Every DX_COLS entry has a suffix that matches its actual SI unit."""
-        from node_fdm_data.schemas.adsb import DX_COLS
-
-        dx_names = [name for _, name in DX_COLS]
-        for name in dx_names:
-            matched = False
-            for expected_name, suffix in EXPECTED_SUFFIXES.items():
-                if name == expected_name:
-                    assert name.endswith(suffix), f"{name} should end with {suffix}"
-                    matched = True
-                    break
-            assert matched, f"Unexpected derivative column {name} — update EXPECTED_SUFFIXES"
-
-
-class TestAdsbDxColsNaming:
-    """node_adsb_v1 spec uses correctly-suffixed DX_COL names."""
-
-    def test_adsb_dx_cols_naming(self) -> None:
-        """All DX_COL names in adsb schema have correct unit suffix."""
-        from node_fdm_data.schemas.adsb import DX_COLS
-
-        dx_names = [name for _, name in DX_COLS]
-        assert "fdm_d_tas_ms2" in dx_names
-        assert "fdm_d_tas_ms" not in dx_names
-        assert "fdm_d_alt_ms" in dx_names
-        assert "fdm_d_gamma_rads" in dx_names
-
-    def test_node_adsb_v1_dx_cols(self) -> None:
-        """NODE_ADSB_V1 architecture spec picks up the renamed DX_COLS."""
-        import node_fdm.architectures.adsb  # noqa: F401
-        from node_fdm.architectures.registry import get
-
-        spec = get("node_adsb_v1")
-        dx_names = [name for _, name in spec.dx_cols]
-        assert "fdm_d_tas_ms2" in dx_names
-        assert "fdm_d_tas_ms" not in dx_names
-
 
 class TestOldDeltaTableCompat:
     """Edge case: data with old fdm_d_tas_ms column name."""
