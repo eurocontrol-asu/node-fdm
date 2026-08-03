@@ -326,3 +326,45 @@ def test_detect_cas_savgol_backcompat() -> None:
     out = build_selected_params(df, cfg)
     cas_sel = out["fdm_cas_sel_kt"].to_numpy()
     assert np.isfinite(cas_sel).sum() > 0
+
+
+def test_mach_detector_emits_no_nan_set_point() -> None:
+    """No Mach plateau carries a non-finite ``var_mean``.
+
+    Measured on the frozen paper_opensky26 cohort, 85 of 6,868 plateaus (1.2%)
+    were emitted with ``var_mean = nan`` before the finite-mean guard, each one
+    a set-point that existed but had no value.
+
+    ``detect_cas_plateaus_bilat`` carries the same guard and is deliberately
+    left uncovered here: on that same cohort it produced no such plateau, and
+    no CAS signal shaped to force one resembles a flight. A test that has to
+    invent its input to reach the branch would assert about the fixture rather
+    than about the detector.
+    """
+    # Reproduces flight 020113_RAM831F_s0 of the paper_opensky26 cohort: BDS
+    # Mach is NaN for its first 131 samples, because the register only starts
+    # reporting once the aircraft is high enough. ``interpolate_nans``
+    # back-fills that head with the first valid sample, making the smoothed
+    # signal perfectly flat there — so a plateau is detected over a window
+    # whose raw samples are every one of them NaN.
+    #
+    # The climb after the gap matters: a *constant* Mach would merge the head
+    # into one run spanning the whole flight, and the run would then contain
+    # finite samples. It is the varying signal that severs the flat head into
+    # a run of its own.
+    n = 600
+    raw = np.full(n, np.nan)
+    raw[131:300] = np.linspace(0.60, 0.78, 169)
+    raw[300:] = 0.78
+
+    segments = detect_mach_plateaus_bilat(
+        raw,
+        np.ones(n, dtype=bool),
+        sigma_s=8.0,
+        sigma_r=0.01,
+        slope_tol=3e-4,
+        flat_tol=5e-2,
+        min_len=15,
+    )
+    assert segments, "the flat interpolated signal should still yield plateaus"
+    assert all(np.isfinite(s["var_mean"]) for s in segments)
