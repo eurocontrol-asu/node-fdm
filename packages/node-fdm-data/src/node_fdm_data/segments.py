@@ -985,15 +985,31 @@ def _detect_alt_sel(
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     """Detect altitude-hold segments, dispatching on ``alt_cfg['mode']``.
 
+    - ``"bilateral_alt"`` — run :func:`detect_vz_plateaus_from_bilat` **on the
+      altitude signal itself**, keeping a run where the altitude's own slope is
+      flat. Needs no ``vz_col``.
     - ``"bilateral_vz"`` — derive alt-hold from vertical speed via
       :func:`detect_alt_hold_from_vz` (requires ``vz_col``).
     - ``"savgol_alt"`` (default) — legacy :func:`detect_constant_segments`
       on the altitude column with bilateral-only keys stripped.
+
+    **The first two are different algorithms, not two tunings of one.** One
+    asks whether the altitude is flat; the other asks whether the vertical
+    speed is near zero. ``bilateral_alt`` exists because it is what
+    paper_opensky26 calibrated: its Pareto sweep ran the vz detector over the
+    altitude channel and retained sigma_r = 20, slope-tol = 6, scoring 60.1%
+    coverage at 99.9% reconstruction fidelity — its strongest channel. That
+    tuning has no meaning under ``bilateral_vz``, which takes ``tol_ftmin``
+    rather than a slope tolerance and was never swept.
     """
     if alt_cfg is None or alt_col not in df.columns:
         return df, []
     cfg = _normalize_cfg(alt_cfg)
     mode = cfg.pop("mode", "savgol_alt")
+    if mode == "bilateral_alt":
+        kwargs = {k: cfg[k] for k in _VZ_BILATERAL_KEYS if k in cfg}
+        segs = detect_vz_plateaus_from_bilat(alt_arr, np.zeros(len(alt_arr), dtype=bool), **kwargs)
+        return add_segment_column(df, segs, "fdm_alt_sel_ft"), segs
     if mode == "bilateral_vz":
         if vz_col is None or vz_col not in df.columns:
             return df, []

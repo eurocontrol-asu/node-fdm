@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from typing import Any
+
 import numpy as np
 import polars as pl
 
@@ -254,3 +256,99 @@ def test_vz_branch_savgol_backcompat() -> None:
     out = build_selected_params(df, cfg)
     assert "fdm_vz_sel_ftmin" in out.columns
     assert out["fdm_vz_sel_ftmin"].dtype == pl.Float64
+
+
+def test_bilateral_alt_runs_the_vz_detector_on_altitude() -> None:
+    """``bilateral_alt`` asks whether the ALTITUDE is flat, not the vz.
+
+    The two bilateral alt modes are different algorithms. This one feeds the
+    altitude channel to ``detect_vz_plateaus_from_bilat``, which is what
+    paper_opensky26 swept and calibrated (sigma_r 20, slope-tol 6). Checked
+    against the paper's own frozen detector over 178 flights of its cohort:
+    identical segments, identical values.
+    """
+    from node_fdm_data.segments import _detect_alt_sel, detect_vz_plateaus_from_bilat
+
+    n = 400
+    alt = np.concatenate(
+        [
+            np.linspace(1000.0, 30000.0, 150),  # climb
+            np.full(120, 30000.0),  # level
+            np.linspace(30000.0, 36000.0, 60),  # step climb
+            np.full(70, 36000.0),  # level
+        ]
+    )
+    df = pl.DataFrame({"raw_alt_ft": alt})
+    tuning: dict[str, Any] = {
+        "sigma_s": 6.0,
+        "sigma_r": 20.0,
+        "slope_tol": 6.0,
+        "flat_tol": 100.0,
+        "min_len": 6,
+    }
+
+    _, via_mode = _detect_alt_sel(df, {"mode": "bilateral_alt", **tuning}, "raw_alt_ft", alt)
+    direct = detect_vz_plateaus_from_bilat(
+        alt,
+        np.zeros(n, dtype=bool),
+        sigma_s=tuning["sigma_s"],
+        sigma_r=tuning["sigma_r"],
+        slope_tol=tuning["slope_tol"],
+        flat_tol=tuning["flat_tol"],
+        min_len=tuning["min_len"],
+    )
+
+    assert via_mode, "a level-off should be detected"
+    assert [(s["start_idx"], s["end_idx"], s["var_mean"]) for s in via_mode] == [
+        (s["start_idx"], s["end_idx"], s["var_mean"]) for s in direct
+    ]
+
+
+def test_bilateral_alt_and_bilateral_vz_are_not_the_same_detector() -> None:
+    """The two alt modes disagree on real signals, which is why the mode is a
+    choice of algorithm and the validator will not let one run on the other's
+    tuning.
+
+    They agree on an idealised step — a clean level-off is flat by either
+    measure — so the divergence has to be shown on a noisy climb, which is
+    what line flights look like. Measured on 137 flights of the
+    paper_opensky26 cohort: 129 of them, 94%, get different segments.
+    """
+    from node_fdm_data.segments import _detect_alt_sel
+
+    rng = np.random.default_rng(7)
+    n = 300
+    alt = np.concatenate([np.linspace(1000.0, 30000.0, 150), np.full(150, 30000.0)])
+    # Barometric altitude is quantised and noisy; vz derived from it more so.
+    alt = alt + rng.normal(0.0, 25.0, n)
+    vz = np.concatenate([np.full(150, 2000.0), np.zeros(150)]) + rng.normal(0.0, 120.0, n)
+    df = pl.DataFrame({"raw_alt_ft": alt, "raw_vz_ftmin": vz})
+
+    _, by_alt = _detect_alt_sel(
+        df,
+        {
+            "mode": "bilateral_alt",
+            "sigma_s": 6.0,
+            "sigma_r": 20.0,
+            "slope_tol": 6.0,
+            "flat_tol": 100.0,
+            "min_len": 6,
+        },
+        "raw_alt_ft",
+        alt,
+    )
+    _, by_vz = _detect_alt_sel(
+        df,
+        {
+            "mode": "bilateral_vz",
+            "sigma_s": 6.0,
+            "sigma_r": 350.0,
+            "n_passes": 2,
+            "tol_ftmin": 150.0,
+            "min_len": 6,
+        },
+        "raw_alt_ft",
+        alt,
+        vz_col="raw_vz_ftmin",
+    )
+    assert by_alt != by_vz, "the two modes are different algorithms"

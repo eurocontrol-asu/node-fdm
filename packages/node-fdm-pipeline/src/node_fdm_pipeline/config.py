@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal, Self
 
 from node_fdm_data.preprocessing.derive import LateralDetectionParams
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 __all__ = [
     "AltFilterConfig",
@@ -178,24 +178,66 @@ class VzFilterConfig(BaseModel, frozen=True):
 class AltFilterConfig(BaseModel, frozen=True):
     """Altitude selected-parameter filter.
 
-    Two modes:
-    - ``"bilateral_vz"`` (default) — detect plateaus where vertical
-      speed is locally near zero after a bilateral smoothing of vz.
+    Three modes, and the first two are **different algorithms** rather than
+    two tunings of one — they ask different questions of the data:
+
+    - ``"bilateral_alt"`` — a run is a plateau when the **altitude's own
+      slope** is flat. Takes ``slope_tol`` and ``flat_tol``; ignores
+      ``tol_ftmin``. This is what paper_opensky26 calibrated (sigma_r = 20,
+      slope-tol = 6; 60.1% coverage at 99.9% fidelity, its strongest channel),
+      so it is the mode to select when reproducing that work.
+    - ``"bilateral_vz"`` (default) — a run is a plateau when the **vertical
+      speed** is locally near zero. Takes ``tol_ftmin``; ignores
+      ``slope_tol``. Never swept, so its tuning is inherited rather than
+      measured.
     - ``"savgol_alt"`` — legacy detector running on a savgol-smoothed
       altitude signal.
+
+    ``slope_tol`` and ``flat_tol`` are optional because ``bilateral_vz`` has
+    no use for them, and ``tol_ftmin`` likewise for ``bilateral_alt``; the
+    validator below requires whichever pair the selected mode consumes. What
+    is never optional is the tuning the chosen algorithm actually reads.
     """
 
-    mode: Literal["bilateral_vz", "savgol_alt"] = "bilateral_vz"
+    mode: Literal["bilateral_alt", "bilateral_vz", "savgol_alt"] = "bilateral_vz"
     sigma_s: float
     sigma_r: float
-    n_passes: int
-    tol_ftmin: float
+    n_passes: int = 2
+    tol_ftmin: float | None = None
+    slope_tol: float | None = None
+    flat_tol: float | None = None
     min_len: int
     tol: float = 25
     use_alt: bool = False
     min_abs_value: float = 25
     smooth_window: int = 5
     smooth_method: str = "savgol"
+
+    @model_validator(mode="after")
+    def _require_the_selected_mode_s_tuning(self) -> Self:
+        """Demand the knobs the chosen algorithm reads, and only those.
+
+        Optional fields would otherwise let a ``bilateral_alt`` config omit
+        ``slope_tol`` and run on nothing — the silent-default failure the
+        required fields exist to prevent, reintroduced through a type. Naming
+        the mode in the error matters too: the two modes ignore each other's
+        knobs, so "slope_tol is missing" alone would read as a typo rather
+        than as a choice of detector.
+        """
+        needed = {
+            "bilateral_alt": ("slope_tol", "flat_tol"),
+            "bilateral_vz": ("tol_ftmin",),
+            "savgol_alt": (),
+        }[self.mode]
+        missing = [name for name in needed if getattr(self, name) is None]
+        if missing:
+            msg = (
+                f"alt mode {self.mode!r} reads {', '.join(needed)}; "
+                f"missing {', '.join(missing)}. These are calibration results, "
+                f"so the config has to state them."
+            )
+            raise ValueError(msg)
+        return self
 
 
 class GammaFilterConfig(BaseModel, frozen=True):
