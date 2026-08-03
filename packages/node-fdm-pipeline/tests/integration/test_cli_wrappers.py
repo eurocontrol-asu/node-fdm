@@ -4,6 +4,8 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from _config_fixtures import SELECTED_PARAMS_YAML
+
 
 class TestCLIDirectInvoke:
     """Direct invocation of CLI wrappers for in-process coverage."""
@@ -16,7 +18,9 @@ class TestCLIDirectInvoke:
             "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
         )
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
         return config
 
     def test_download_wrapper(self, tmp_path: Path) -> None:

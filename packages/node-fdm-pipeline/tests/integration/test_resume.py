@@ -86,6 +86,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
     )
 
@@ -469,6 +504,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
 

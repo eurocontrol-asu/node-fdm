@@ -11,6 +11,8 @@ from typing import TYPE_CHECKING, Any
 
 import pytest
 
+from _config_fixtures import selected_param_config
+
 if TYPE_CHECKING:
     from pathlib import Path
 
@@ -31,6 +33,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
     )
     return PipelineConfig.from_yaml(cfg_path)
@@ -211,10 +248,9 @@ def test_build_selected_params_with_valid_filter_preserves_row_count() -> None:
     import numpy as np
 
     from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
-    from node_fdm_pipeline.config import SelectedParamConfig
 
     flight_df, valid = _make_synthetic_flight([5, 12, 25, 60, 130, 145, 170, 240, 260, 295])
-    out = _build_selected_params_with_valid_filter(flight_df, SelectedParamConfig().model_dump())
+    out = _build_selected_params_with_valid_filter(flight_df, selected_param_config().model_dump())
 
     assert len(out) == len(flight_df)
     invalid_pos = ~valid
@@ -240,10 +276,9 @@ def test_build_selected_params_with_valid_filter_idempotent() -> None:
     import numpy as np
 
     from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
-    from node_fdm_pipeline.config import SelectedParamConfig
 
     flight_df, _ = _make_synthetic_flight([5, 12, 25, 60, 130, 145, 170, 240, 260, 295])
-    cfg = SelectedParamConfig().model_dump()
+    cfg = selected_param_config().model_dump()
     out1 = _build_selected_params_with_valid_filter(flight_df, cfg)
     out2 = _build_selected_params_with_valid_filter(out1, cfg)
     for col in ("fdm_alt_sel_ft", "fdm_mach_sel", "fdm_cas_sel_kt", "fdm_tas_sel_kt"):
@@ -260,7 +295,6 @@ def test_build_selected_params_with_valid_filter_no_flag_column_passthrough() ->
     import polars as pl
 
     from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
-    from node_fdm_pipeline.config import SelectedParamConfig
 
     n = 60
     flight_df = pl.DataFrame(
@@ -273,7 +307,7 @@ def test_build_selected_params_with_valid_filter_no_flag_column_passthrough() ->
             "fdm_tas_from_cas_kt": np.full(n, 300.0),
         }
     )
-    out = _build_selected_params_with_valid_filter(flight_df, SelectedParamConfig().model_dump())
+    out = _build_selected_params_with_valid_filter(flight_df, selected_param_config().model_dump())
     assert len(out) == n
     # Detector must have produced at least one new fdm_*_sel* column.
     new_cols = [c for c in out.columns if c.startswith("fdm_") and "_sel" in c]

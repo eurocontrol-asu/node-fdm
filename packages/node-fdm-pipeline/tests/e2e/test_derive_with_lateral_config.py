@@ -17,6 +17,8 @@ import numpy as np
 import polars as pl
 import pytest
 
+from _config_fixtures import SELECTED_PARAMS_YAML
+
 pytestmark = pytest.mark.e2e
 
 
@@ -62,6 +64,7 @@ def test_derive_honours_yaml_lateral_block(tmp_path: Path) -> None:
               rate_threshold: 10.0
             """
         )
+        + SELECTED_PARAMS_YAML
     )
 
     result = subprocess.run(

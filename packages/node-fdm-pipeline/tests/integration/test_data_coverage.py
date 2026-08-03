@@ -8,6 +8,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from _config_fixtures import SELECTED_PARAMS_YAML
+
 
 class TestAircraftListMissingTraffic:
     def test_aircraft_list_exits_when_traffic_missing(
@@ -19,7 +21,9 @@ class TestAircraftListMissingTraffic:
         data_dir = tmp_path / "data"
         data_dir.mkdir()
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
 
         real_import = builtins.__import__
 
@@ -53,7 +57,9 @@ class TestSplitCommand:
         df.write_delta(str(delta_table), mode="overwrite")
 
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
 
         split(config=config, ratios=(0.7, 0.15, 0.15), seed=42)
 

@@ -45,46 +45,116 @@ class TestPathsConfig:
 class TestGammaFilterConfigUnit:
     """Unit tests for GammaFilterConfig — pure model behaviour."""
 
-    def test_default_fields(self) -> None:
-        """GammaFilterConfig exposes all expected fields with correct types."""
-        cfg = GammaFilterConfig()
-        assert isinstance(cfg.tol, float)
-        assert isinstance(cfg.min_len, int)
-        assert isinstance(cfg.use_alt, bool)
-        assert isinstance(cfg.smooth_window, int)
-        assert isinstance(cfg.smooth_method, str)
+    def test_calibrated_fields_are_required(self) -> None:
+        """Constructing without the calibrated hyper-parameters fails, naming each.
+
+        Replaces ``test_default_fields``, which asserted on defaults these
+        fields no longer carry.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            GammaFilterConfig()  # type: ignore[call-arg]
+        message = str(exc_info.value)
+        for field in ("sigma_s", "sigma_r", "slope_tol", "flat_tol", "abs_min", "min_len"):
+            assert field in message
+
+    def test_declared_fields_round_trip_and_legacy_fields_default(self) -> None:
+        """Supplied values round-trip; ``mode`` and savgol fields keep defaults."""
+        cfg = GammaFilterConfig(
+            sigma_s=6.0,
+            sigma_r=0.002,
+            slope_tol=1.2e-3,
+            flat_tol=2.0e-3,
+            abs_min=5.0e-3,
+            min_len=10,
+        )
+        assert cfg.sigma_r == 0.002
+        assert cfg.slope_tol == 1.2e-3
+        assert cfg.abs_min == 5.0e-3
+        assert cfg.min_len == 10
+        # Not part of the calibration — still defaulted.
+        assert cfg.mode == "bilateral_gamma"
+        assert cfg.tol == 0.002
+        assert cfg.use_alt is False
+        assert cfg.smooth_window == 5
+        assert cfg.smooth_method == "savgol"
 
     def test_frozen(self) -> None:
         """GammaFilterConfig is immutable (frozen=True)."""
-        cfg = GammaFilterConfig()
+        cfg = GammaFilterConfig(
+            sigma_s=6.0,
+            sigma_r=0.002,
+            slope_tol=1.2e-3,
+            flat_tol=2.0e-3,
+            abs_min=5.0e-3,
+            min_len=10,
+        )
         with pytest.raises(ValidationError):
             cfg.tol = 0.5  # type: ignore[misc]
 
     def test_custom_values(self) -> None:
-        """GammaFilterConfig accepts custom values."""
-        cfg = GammaFilterConfig(tol=0.01, min_len=30, use_alt=True)
+        """GammaFilterConfig accepts custom values for its legacy fields."""
+        cfg = GammaFilterConfig(
+            sigma_s=6.0,
+            sigma_r=0.002,
+            slope_tol=1.2e-3,
+            flat_tol=2.0e-3,
+            abs_min=5.0e-3,
+            min_len=30,
+            tol=0.01,
+            use_alt=True,
+        )
         assert cfg.tol == 0.01
         assert cfg.min_len == 30
         assert cfg.use_alt is True
 
 
 class TestSelectedParamConfigUnit:
-    """Unit tests for SelectedParamConfig — pure default values."""
+    """Unit tests for SelectedParamConfig — the required/defaulted split."""
 
-    def test_default_values(self) -> None:
-        """All v2 defaults populated correctly."""
-        cfg = SelectedParamConfig()
+    def test_detector_channels_are_required(self) -> None:
+        """Every bilateral channel must be declared; the error names each one.
+
+        Replaces ``test_default_values``, which asserted on the defaults this
+        change removed. ``tas`` is deliberately absent from the expected
+        errors — it has no bilateral detector and keeps its default.
+        """
+        with pytest.raises(ValidationError) as exc_info:
+            SelectedParamConfig()  # type: ignore[call-arg]
+        message = str(exc_info.value)
+        for channel in ("mach", "cas", "vz", "alt", "gamma"):
+            assert channel in message
+        assert "\ntas\n" not in message
+
+    def test_declared_channels_round_trip(
+        self, selected_params: dict[str, dict[str, float | int]]
+    ) -> None:
+        """Declared calibration round-trips; legacy savgol fields keep defaults."""
+        cfg = SelectedParamConfig(**selected_params)  # type: ignore[arg-type]
+        # The calibrated values are exactly what was declared.
+        assert cfg.mach.sigma_r == 0.01
+        assert cfg.cas.slope_tol == 0.09
+        assert cfg.vz.sigma_r == 100.0
+        assert cfg.alt.tol_ftmin == 150.0
+        assert cfg.gamma.abs_min == 5.0e-3
+        # Legacy savgol fields still default.
         assert cfg.mach.tol == 0.0005
-        assert cfg.mach.min_len == 15
         assert cfg.mach.alt_threshold == 15000
         assert cfg.mach.use_alt is True
         assert cfg.cas.tol == 0.75
         assert cfg.cas.smooth_method == "savgol"
         assert cfg.vz.min_abs_value == 75
         assert cfg.alt.tol == 25
-        assert cfg.alt.min_len == 6
         assert cfg.gamma.tol == 0.002
         assert cfg.gamma.smooth_window == 5
+
+    def test_tas_keeps_its_default(
+        self, selected_params: dict[str, dict[str, float | int]]
+    ) -> None:
+        """``tas`` has no bilateral detector, so it stays optional."""
+        cfg = SelectedParamConfig(**selected_params)  # type: ignore[arg-type]
+        assert cfg.tas.tol == 0.75
+        assert cfg.tas.min_len == 20
+        assert cfg.mach_min_value == 0.5
 
 
 class TestLateralDetectionConfigUnit:
@@ -119,27 +189,37 @@ class TestPipelineConfigLateralBlock:
     """Round-trip: PipelineConfig with / without lateral_detection block."""
 
     @staticmethod
-    def _minimal_yaml(extra: dict[str, object] | None = None) -> dict[str, object]:
+    def _minimal_yaml(
+        selected_params: dict[str, dict[str, float | int]],
+        extra: dict[str, object] | None = None,
+    ) -> dict[str, object]:
         data: dict[str, object] = {
             "paths": {"data_dir": "/tmp/data"},
             "typecodes": ["A320"],
+            "selected_params": selected_params,
         }
         if extra:
             data.update(extra)
         return data
 
-    def test_pipeline_config_block_optional(self) -> None:
+    def test_pipeline_config_block_optional(
+        self, selected_params: dict[str, dict[str, float | int]]
+    ) -> None:
         """AC7: omitting lateral_detection yields the documented defaults."""
-        raw = yaml.safe_dump(self._minimal_yaml())
+        raw = yaml.safe_dump(self._minimal_yaml(selected_params))
         cfg = PipelineConfig.model_validate(yaml.safe_load(raw))
         assert cfg.lateral_detection.rate_threshold == 0.05
         assert cfg.lateral_detection.bilateral_sigma_s == 8.0
         assert cfg.lateral_detection.bilateral_sigma_r == 0.01
         assert cfg.lateral_detection.bilateral_passes == 2
 
-    def test_pipeline_config_block_overrides(self) -> None:
+    def test_pipeline_config_block_overrides(
+        self, selected_params: dict[str, dict[str, float | int]]
+    ) -> None:
         """AC7: overriding rate_threshold preserves other defaults."""
-        raw = yaml.safe_dump(self._minimal_yaml({"lateral_detection": {"rate_threshold": 0.10}}))
+        raw = yaml.safe_dump(
+            self._minimal_yaml(selected_params, {"lateral_detection": {"rate_threshold": 0.10}})
+        )
         cfg = PipelineConfig.model_validate(yaml.safe_load(raw))
         assert cfg.lateral_detection.rate_threshold == 0.10
         assert cfg.lateral_detection.bilateral_sigma_s == 8.0

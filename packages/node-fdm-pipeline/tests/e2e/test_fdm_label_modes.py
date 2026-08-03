@@ -6,6 +6,8 @@ from pathlib import Path
 import polars as pl
 import pytest
 
+from _config_fixtures import SELECTED_PARAMS_YAML
+
 NAN: float = float("nan")
 
 
@@ -33,7 +35,9 @@ def _seed_delta(path: Path) -> None:
 
 
 def _write_config(config_path: Path, data_dir: Path) -> None:
-    config_path.write_text(f"paths:\n  data_dir: {data_dir}\ntypecodes:\n  - A320\n")
+    config_path.write_text(
+        f"paths:\n  data_dir: {data_dir}\ntypecodes:\n  - A320\n" + SELECTED_PARAMS_YAML
+    )
 
 
 @pytest.mark.e2e

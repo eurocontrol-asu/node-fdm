@@ -2,6 +2,12 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
+from typing import TYPE_CHECKING
+
+if TYPE_CHECKING:
+    from node_fdm_pipeline.config import SelectedParamConfig
+
 from itertools import pairwise
 from typing import Any
 
@@ -1239,9 +1245,9 @@ class TestPropagatedTasSelNotOverwritten:
     populated pointwise by :func:`_propagate_speed_plateaus` within
     Mach/CAS plateau spans."""
 
-    def test_propagated_tas_sel_not_overwritten_by_legacy_detector(self) -> None:
-        from node_fdm_pipeline.config import SelectedParamConfig
-
+    def test_propagated_tas_sel_not_overwritten_by_legacy_detector(
+        self, selected_param_config_factory: Callable[[], SelectedParamConfig]
+    ) -> None:
         from node_fdm_data.physics.isa import isa_temperature
         from node_fdm_data.physics.speed import mach_to_tas_real
 
@@ -1277,11 +1283,10 @@ class TestPropagatedTasSelNotOverwritten:
             era_temp_K=temp_k,
         )
 
-        # SelectedParamConfig() carries the same defaults as
-        # PipelineConfig().selected_params (including TasFilterConfig()), so
-        # ``cfg["tas"]`` is a non-None dict — exactly the production path
-        # that triggered the bug (commands/data.py:1158).
-        cfg = SelectedParamConfig().model_dump()
+        # A fully-declared SelectedParamConfig still carries the TasFilterConfig
+        # default, so ``cfg["tas"]`` is a non-None dict — exactly the production
+        # path that triggered the bug (commands/data.py:1158).
+        cfg = selected_param_config_factory().model_dump()
 
         out = build_selected_params(df, cfg)
         tas_sel = out["fdm_tas_sel_kt"].to_numpy()
@@ -2488,12 +2493,19 @@ class TestDetectAltHoldFromVz:
 class TestAltFilterConfigBilateral:
     """AXM-1687 — AltFilterConfig mode + bilateral params."""
 
-    def test_alt_filter_config_default_mode_bilateral(self) -> None:
-        """AC4 — defaults: bilateral_vz mode + script-calibrated params."""
-        cfg = AltFilterConfig()
+    def test_alt_filter_config_default_mode_bilateral(
+        self, selected_params: dict[str, dict[str, float | int]]
+    ) -> None:
+        """AC4 — bilateral_vz mode by default, tuning taken from the config.
+
+        Previously asserted the calibrated params as defaults (including
+        ``sigma_r == 350.0``, superseded by opensky26 tbl.3); they are now
+        required, so the test declares them and checks the round-trip.
+        """
+        cfg = AltFilterConfig(**selected_params["alt"])  # type: ignore[arg-type]
         assert cfg.mode == "bilateral_vz"
         assert cfg.sigma_s == 6.0
-        assert cfg.sigma_r == 350.0
+        assert cfg.sigma_r == 20.0
         assert cfg.n_passes == 2
         assert cfg.tol_ftmin == 150.0
         assert cfg.min_len == 6
@@ -2503,9 +2515,11 @@ class TestAltFilterConfigBilateral:
         assert cfg.smooth_window == 5
         assert cfg.smooth_method == "savgol"
 
-    def test_alt_filter_config_savgol_mode_legacy_defaults(self) -> None:
+    def test_alt_filter_config_savgol_mode_legacy_defaults(
+        self, selected_params: dict[str, dict[str, float | int]]
+    ) -> None:
         """AC4 — savgol_alt mode constructs and exposes legacy fields."""
-        cfg = AltFilterConfig(mode="savgol_alt")
+        cfg = AltFilterConfig(mode="savgol_alt", **selected_params["alt"])  # type: ignore[arg-type]
         assert cfg.mode == "savgol_alt"
         assert cfg.tol == 25
         assert cfg.use_alt is False

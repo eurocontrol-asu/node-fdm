@@ -5,6 +5,8 @@ from typing import Any
 
 import pytest
 
+from _config_fixtures import SELECTED_PARAMS_YAML
+
 pytestmark = pytest.mark.integration
 
 from node_fdm_pipeline.commands.train import run_training  # noqa: E402
@@ -17,7 +19,7 @@ def tmp_yaml(tmp_path: Path) -> Path:
         "paths:\n  data_dir: /tmp/data\n"
         "typecodes: [A320]\n"
         "bada:\n  bada_4_2_dir: /tmp/bada\n"
-        "training:\n  use_mode_weights: false\n"
+        "training:\n  use_mode_weights: false\n" + SELECTED_PARAMS_YAML
     )
     return p
 

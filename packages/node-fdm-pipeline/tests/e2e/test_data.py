@@ -10,6 +10,7 @@ import pandas as pd
 import polars as pl
 import pytest
 
+from _config_fixtures import SELECTED_PARAMS_YAML
 from node_fdm_pipeline.commands.data import (
     aircraft_list,
     convert,
@@ -49,7 +50,9 @@ class TestDownloadCommand:
                 "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
             )
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
 
         if expect_exit:
             with pytest.raises(SystemExit):
@@ -81,6 +84,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
 
@@ -456,6 +494,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
         return config
@@ -690,6 +763,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
         return config
@@ -794,6 +902,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
         return config
@@ -918,6 +1061,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
         return config
@@ -998,6 +1176,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
         return config
@@ -1069,6 +1282,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
         return config
@@ -1113,7 +1361,9 @@ class TestDownloadMock:
             "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
         )
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
         return config
 
     def test_download_mock(self, tmp_path: Path) -> None:
@@ -1200,7 +1450,9 @@ class TestPreprocessPipeline:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
         return config
 
     def test_preprocess_pipeline(self, tmp_path: Path) -> None:
@@ -1296,7 +1548,9 @@ class TestConvertToSI:
         data_dir = tmp_path / "data"
         data_dir.mkdir(exist_ok=True)
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
         return config
 
     def test_convert_pipeline(self, tmp_path: Path) -> None:
@@ -1436,6 +1690,41 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
 """
         )
         return config

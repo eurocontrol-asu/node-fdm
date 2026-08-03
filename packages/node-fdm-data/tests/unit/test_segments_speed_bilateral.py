@@ -128,27 +128,37 @@ def test_detect_mach_plateaus_bilat_with_alt_gate_fail() -> None:
 # ---------------------------------------------------------------------------
 
 
-def test_mach_filter_config_default_mode_bilateral() -> None:
+def test_mach_filter_config_default_mode_bilateral(
+    selected_params: dict[str, dict[str, float | int]],
+) -> None:
+    """``mode`` defaults to bilateral; the tuning is declared, not defaulted.
+
+    Previously asserted sigma_r/slope_tol as defaults; those fields are now
+    required, so the test states the opensky26 tbl.3 values and round-trips.
+    """
     from node_fdm_pipeline.config import MachFilterConfig
 
-    cfg = MachFilterConfig()
+    cfg = MachFilterConfig(**selected_params["mach"])  # type: ignore[arg-type]
     assert cfg.mode == "bilateral_mach"
     assert cfg.sigma_s == pytest.approx(8.0)
-    assert cfg.sigma_r == pytest.approx(0.08)
-    assert cfg.slope_tol == pytest.approx(6.5e-4)
+    assert cfg.sigma_r == pytest.approx(0.01)
+    assert cfg.slope_tol == pytest.approx(3.0e-4)
     assert cfg.flat_tol == pytest.approx(5e-2)
     assert cfg.min_len == 15
 
 
-def test_cas_filter_config_default_mode_bilateral() -> None:
+def test_cas_filter_config_default_mode_bilateral(
+    selected_params: dict[str, dict[str, float | int]],
+) -> None:
+    """``mode`` defaults to bilateral; the tuning is declared, not defaulted."""
     from node_fdm_pipeline.config import CasFilterConfig
 
-    cfg = CasFilterConfig()
+    cfg = CasFilterConfig(**selected_params["cas"])  # type: ignore[arg-type]
     assert cfg.mode == "bilateral_cas"
     assert cfg.cutoff_s == pytest.approx(180.0)
     assert cfg.sigma_s == pytest.approx(8.0)
-    assert cfg.sigma_r == pytest.approx(15.0)
-    assert cfg.slope_tol == pytest.approx(0.25)
+    assert cfg.sigma_r == pytest.approx(3.0)
+    assert cfg.slope_tol == pytest.approx(0.09)
     assert cfg.flat_tol == pytest.approx(20.0)
     assert cfg.min_len == 5
 

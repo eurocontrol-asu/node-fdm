@@ -25,7 +25,7 @@ if TYPE_CHECKING:
     import polars as pl
     from traffic.core import Flight
 
-    from node_fdm_pipeline.config import PipelineConfig
+    from node_fdm_pipeline.config import PipelineConfig, SelectedParamConfig
 
 
 def _clean_speeds_worker(
@@ -1429,23 +1429,30 @@ def segments(
     )
 
 
-def _segments_run(*, input_path: str, output_path: str) -> None:
+def _segments_run(
+    *,
+    input_path: str,
+    output_path: str,
+    selected_params: SelectedParamConfig,
+) -> None:
     """Run segment detection on a stand-alone Delta table I/O boundary.
 
     Reads the Delta table at *input_path*, partitions per ``flight_id`` (or
     ``meta_flight_id`` when present), runs :func:`build_selected_params` per
-    flight with the default selected-parameter config, and writes the result
-    to *output_path*.  Used by integration tests that exercise the on-disk
-    contract (e.g. ``fdm_tas_target_known`` emission, no-global-backfill
-    invariant) without needing the full pipeline config plumbing.
+    flight with *selected_params*, and writes the result to *output_path*.
+    Used by integration tests that exercise the on-disk contract (e.g.
+    ``fdm_tas_target_known`` emission, no-global-backfill invariant) without
+    needing the full pipeline config plumbing.
+
+    *selected_params* is required rather than defaulted: its detector
+    hyper-parameters are a calibration result, so the caller must state which
+    one it is running (see the note in ``node_fdm_pipeline.config``).
     """
     import deltalake
     import polars as pl
 
-    from node_fdm_pipeline.config import SelectedParamConfig
-
     df = pl.read_delta(input_path)
-    sel_config = SelectedParamConfig().model_dump()
+    sel_config = selected_params.model_dump()
 
     partition_col: str | None = None
     for candidate in ("meta_flight_id", "flight_id"):

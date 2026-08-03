@@ -130,7 +130,11 @@ warn_return_any = false
 
 [tool.pytest.ini_options]
 testpaths = ["tests"]
-pythonpath = ["src"]
+# "tests" makes the shared `_config_fixtures` helper importable by test modules;
+# `--import-mode=importlib` otherwise keeps the tests dir off sys.path. Only the
+# leaf dir is added (never "."), so no two packages' tests/ collide as a single
+# top-level `tests` package — the breakage the root config's note describes.
+pythonpath = ["src", "tests"]
 python_files = "test_*.py"
 markers = [
     "integration: tests hitting real I/O (filesystem, DB, network)",

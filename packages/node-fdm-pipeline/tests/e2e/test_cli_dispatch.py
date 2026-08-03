@@ -8,6 +8,8 @@ from pathlib import Path
 
 import pytest
 
+from _config_fixtures import SELECTED_PARAMS_YAML
+
 
 class TestCLI:
     """Tests for CLI entry point and basic commands."""
@@ -143,7 +145,9 @@ class TestCLIDataDryRun:
             "icao24,registration,typecode,age,airline\nabc123,F-WXYZ,A320,5,AFR\n"
         )
         config = tmp_path / "config.yaml"
-        config.write_text(f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n')
+        config.write_text(
+            f'paths:\n  data_dir: "{data_dir}"\n\ntypecodes:\n  - A320\n' + SELECTED_PARAMS_YAML
+        )
         return Path(config)
 
     @pytest.mark.parametrize(
