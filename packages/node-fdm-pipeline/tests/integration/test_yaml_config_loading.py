@@ -176,8 +176,16 @@ selected_params:
         # The declared calibration is what the model carries.
         assert cfg.selected_params.mach.min_len == 15
 
-    def test_partial_override(self, tmp_path: Path, make_config: Callable[..., Path]) -> None:
-        """Legacy savgol fields keep their defaults across every channel."""
+    def test_legacy_savgol_fields_keep_defaults(
+        self, tmp_path: Path, make_config: Callable[..., Path]
+    ) -> None:
+        """Legacy savgol fields keep their defaults across every channel.
+
+        They are tolerances of a superseded detector, not a calibration
+        result, so they are the one part of these models that may still
+        default. Partial override itself stays covered by
+        ``test_yaml_custom_mach_tol`` and ``test_yaml_partial_gamma_override``.
+        """
         config = make_config(tmp_path / "config.yaml", "/tmp/data")
         cfg = PipelineConfig.from_yaml(config)
         assert cfg.selected_params.mach.tol == 0.0005
