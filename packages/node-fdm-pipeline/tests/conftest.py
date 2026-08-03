@@ -9,6 +9,102 @@ from unittest.mock import MagicMock
 import pytest
 
 
+#: The detector tuning every test config needs, since ``SelectedParamConfig``
+#: makes its five channels required (see the note in ``config.py``).
+#:
+#: These are the values paper_opensky26 retained on its coverage x
+#: self-consistency Pareto front over 1,472 flights — main.tex table 3 — not
+#: arbitrary filler. That matters: a fixture holding invented numbers would be
+#: the very default the required fields exist to abolish, only hidden one level
+#: deeper. Tuning that breaks a test here breaks it against a published
+#: calibration, which is a statement worth reading.
+#:
+#: The channels quote sigma_r and slope-tol from the paper. The remaining knobs
+#: (sigma_s, n_passes, flat_tol, min_len, cutoff_s) are the pipeline's own,
+#: outside the swept grid, and are carried over from the values these models
+#: shipped with.
+SELECTED_PARAMS_YAML = """\
+selected_params:
+  mach:
+    sigma_s: 8.0
+    sigma_r: 0.01          # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 3.0e-4      # opensky26 tbl.3
+    flat_tol: 5.0e-2
+    min_len: 15
+  cas:
+    cutoff_s: 180.0
+    sigma_s: 8.0
+    sigma_r: 3.0           # opensky26 tbl.3
+    n_passes: 2
+    slope_tol: 0.09        # opensky26 tbl.3
+    flat_tol: 20.0
+    min_len: 5
+  vz:
+    sigma_s: 6.0
+    sigma_r: 100.0         # opensky26 tbl.3
+    slope_tol: 50.0        # opensky26 tbl.3
+    flat_tol: 100.0
+    min_len: 10
+  alt:
+    sigma_s: 6.0
+    sigma_r: 20.0          # opensky26 tbl.3
+    n_passes: 2
+    tol_ftmin: 150.0
+    min_len: 6
+  gamma:
+    sigma_s: 6.0
+    sigma_r: 0.002         # opensky26 tbl.3
+    slope_tol: 1.2e-3      # opensky26 tbl.3
+    flat_tol: 2.0e-3
+    abs_min: 5.0e-3
+    min_len: 10
+"""
+
+#: The same block as nested dicts, for tests building a config in Python.
+SELECTED_PARAMS: dict[str, dict[str, float | int]] = {
+    "mach": {
+        "sigma_s": 8.0,
+        "sigma_r": 0.01,
+        "n_passes": 2,
+        "slope_tol": 3.0e-4,
+        "flat_tol": 5.0e-2,
+        "min_len": 15,
+    },
+    "cas": {
+        "cutoff_s": 180.0,
+        "sigma_s": 8.0,
+        "sigma_r": 3.0,
+        "n_passes": 2,
+        "slope_tol": 0.09,
+        "flat_tol": 20.0,
+        "min_len": 5,
+    },
+    "vz": {
+        "sigma_s": 6.0,
+        "sigma_r": 100.0,
+        "slope_tol": 50.0,
+        "flat_tol": 100.0,
+        "min_len": 10,
+    },
+    "alt": {
+        "sigma_s": 6.0,
+        "sigma_r": 20.0,
+        "n_passes": 2,
+        "tol_ftmin": 150.0,
+        "min_len": 6,
+    },
+    "gamma": {
+        "sigma_s": 6.0,
+        "sigma_r": 0.002,
+        "slope_tol": 1.2e-3,
+        "flat_tol": 2.0e-3,
+        "abs_min": 5.0e-3,
+        "min_len": 10,
+    },
+}
+
+
 @pytest.fixture
 def mock_fastmeteo(monkeypatch: pytest.MonkeyPatch) -> tuple[MagicMock, MagicMock]:
     """Isolated fastmeteo sys.modules mock with strict per-test cleanup.
@@ -61,6 +157,12 @@ typecodes:
   - A319
   - A332
   - A333
+selected_params:
+  mach: {sigma_s: 8.0, sigma_r: 0.01, n_passes: 2, slope_tol: 3.0e-4, flat_tol: 5.0e-2, min_len: 15}
+  cas: {cutoff_s: 180.0, sigma_s: 8.0, sigma_r: 3.0, n_passes: 2, slope_tol: 0.09, flat_tol: 20.0, min_len: 5}
+  vz: {sigma_s: 6.0, sigma_r: 100.0, slope_tol: 50.0, flat_tol: 100.0, min_len: 10}
+  alt: {sigma_s: 6.0, sigma_r: 20.0, n_passes: 2, tol_ftmin: 150.0, min_len: 6}
+  gamma: {sigma_s: 6.0, sigma_r: 0.002, slope_tol: 1.2e-3, flat_tol: 2.0e-3, abs_min: 5.0e-3, min_len: 10}
 
 computing:
   default_cpu_count: 35
@@ -81,6 +183,12 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach: {sigma_s: 8.0, sigma_r: 0.01, n_passes: 2, slope_tol: 3.0e-4, flat_tol: 5.0e-2, min_len: 15}
+  cas: {cutoff_s: 180.0, sigma_s: 8.0, sigma_r: 3.0, n_passes: 2, slope_tol: 0.09, flat_tol: 20.0, min_len: 5}
+  vz: {sigma_s: 6.0, sigma_r: 100.0, slope_tol: 50.0, flat_tol: 100.0, min_len: 10}
+  alt: {sigma_s: 6.0, sigma_r: 20.0, n_passes: 2, tol_ftmin: 150.0, min_len: 6}
+  gamma: {sigma_s: 6.0, sigma_r: 0.002, slope_tol: 1.2e-3, flat_tol: 2.0e-3, abs_min: 5.0e-3, min_len: 10}
 """)
     return config
 
@@ -97,6 +205,12 @@ paths:
 
 typecodes:
   - A320
+selected_params:
+  mach: {sigma_s: 8.0, sigma_r: 0.01, n_passes: 2, slope_tol: 3.0e-4, flat_tol: 5.0e-2, min_len: 15}
+  cas: {cutoff_s: 180.0, sigma_s: 8.0, sigma_r: 3.0, n_passes: 2, slope_tol: 0.09, flat_tol: 20.0, min_len: 5}
+  vz: {sigma_s: 6.0, sigma_r: 100.0, slope_tol: 50.0, flat_tol: 100.0, min_len: 10}
+  alt: {sigma_s: 6.0, sigma_r: 20.0, n_passes: 2, tol_ftmin: 150.0, min_len: 6}
+  gamma: {sigma_s: 6.0, sigma_r: 0.002, slope_tol: 1.2e-3, flat_tol: 2.0e-3, abs_min: 5.0e-3, min_len: 10}
 """
     )
     return config
@@ -113,6 +227,12 @@ paths:
   data_dir: "{data_dir}"
 
 typecodes: []
+selected_params:
+  mach: {sigma_s: 8.0, sigma_r: 0.01, n_passes: 2, slope_tol: 3.0e-4, flat_tol: 5.0e-2, min_len: 15}
+  cas: {cutoff_s: 180.0, sigma_s: 8.0, sigma_r: 3.0, n_passes: 2, slope_tol: 0.09, flat_tol: 20.0, min_len: 5}
+  vz: {sigma_s: 6.0, sigma_r: 100.0, slope_tol: 50.0, flat_tol: 100.0, min_len: 10}
+  alt: {sigma_s: 6.0, sigma_r: 20.0, n_passes: 2, tol_ftmin: 150.0, min_len: 6}
+  gamma: {sigma_s: 6.0, sigma_r: 0.002, slope_tol: 1.2e-3, flat_tol: 2.0e-3, abs_min: 5.0e-3, min_len: 10}
 """
     )
     return config

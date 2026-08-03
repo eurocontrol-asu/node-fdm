@@ -72,6 +72,29 @@ class ComputingConfig(BaseModel, frozen=True):
 # ---------------------------------------------------------------------------
 # Selected-parameter filter configs (externalized from opensky_v2)
 # ---------------------------------------------------------------------------
+#
+# **The bilateral hyper-parameters are required, on purpose.** They are not
+# physical constants: each one is a calibration result, and a different study
+# calibrating on different data will land somewhere else. A default here is a
+# number nobody cites — it ends up in published results with no trace of where
+# it came from, and it silently outlives its own refutation.
+#
+# That is not hypothetical. These models carried sigma_r = 350 for vz while
+# paper_opensky26's Pareto sweep over 1,472 flights retained 100; any config
+# omitting the section ran on the superseded value and said nothing about it.
+#
+# So a config that does not declare them fails to load, naming the channel.
+# Writing them down is what makes a result reproducible, and the citation
+# belongs in the study's own YAML next to the number:
+#
+#     selected_params:
+#       vz:
+#         sigma_r: 100.0      # Poll & Schumann? no — opensky26 tbl.3, Pareto front
+#         slope_tol: 50.0
+#
+# What keeps a default: ``mode`` (which algorithm, not how it is tuned) and the
+# legacy savgol fields, which no live config selects and which exist only so an
+# old YAML still parses.
 
 
 class MachFilterConfig(BaseModel, frozen=True):
@@ -84,12 +107,12 @@ class MachFilterConfig(BaseModel, frozen=True):
     """
 
     mode: Literal["bilateral_mach", "savgol_mach"] = "bilateral_mach"
-    sigma_s: float = 8.0
-    sigma_r: float = 0.08
-    n_passes: int = 2
-    slope_tol: float = 6.5e-4
-    flat_tol: float = 5e-2
-    min_len: int = 15
+    sigma_s: float
+    sigma_r: float
+    n_passes: int
+    slope_tol: float
+    flat_tol: float
+    min_len: int
     # Legacy savgol_mach fields kept for backwards compatibility.
     tol: float = 0.0005
     alt_threshold: float = 15000
@@ -107,13 +130,13 @@ class CasFilterConfig(BaseModel, frozen=True):
     """
 
     mode: Literal["bilateral_cas", "savgol_cas"] = "bilateral_cas"
-    cutoff_s: float = 180.0
-    sigma_s: float = 8.0
-    sigma_r: float = 15.0
-    n_passes: int = 2
-    slope_tol: float = 0.25
-    flat_tol: float = 20.0
-    min_len: int = 5
+    cutoff_s: float
+    sigma_s: float
+    sigma_r: float
+    n_passes: int
+    slope_tol: float
+    flat_tol: float
+    min_len: int
     # Legacy savgol_cas fields kept for backwards compatibility.
     tol: float = 0.75
     use_alt: bool = False
@@ -140,11 +163,11 @@ class VzFilterConfig(BaseModel, frozen=True):
     """
 
     mode: Literal["bilateral_vz", "savgol_vz"] = "bilateral_vz"
-    sigma_s: float = 6.0
-    sigma_r: float = 350.0
-    slope_tol: float = 15.0
-    flat_tol: float = 100.0
-    min_len: int = 10
+    sigma_s: float
+    sigma_r: float
+    slope_tol: float
+    flat_tol: float
+    min_len: int
     tol: float = 25
     use_alt: bool = False
     min_abs_value: float = 75
@@ -163,11 +186,11 @@ class AltFilterConfig(BaseModel, frozen=True):
     """
 
     mode: Literal["bilateral_vz", "savgol_alt"] = "bilateral_vz"
-    sigma_s: float = 6.0
-    sigma_r: float = 350.0
-    n_passes: int = 2
-    tol_ftmin: float = 150.0
-    min_len: int = 6
+    sigma_s: float
+    sigma_r: float
+    n_passes: int
+    tol_ftmin: float
+    min_len: int
     tol: float = 25
     use_alt: bool = False
     min_abs_value: float = 25
@@ -185,12 +208,12 @@ class GammaFilterConfig(BaseModel, frozen=True):
     """
 
     mode: Literal["bilateral_gamma", "savgol_gamma"] = "bilateral_gamma"
-    sigma_s: float = 6.0
-    sigma_r: float = 1.2e-2
-    slope_tol: float = 3e-4
-    flat_tol: float = 2e-3
-    abs_min: float = 5e-3
-    min_len: int = 10
+    sigma_s: float
+    sigma_r: float
+    slope_tol: float
+    flat_tol: float
+    abs_min: float
+    min_len: int
     tol: float = 0.002
     use_alt: bool = False
     min_abs_value: float = 0.005
@@ -274,19 +297,24 @@ class LateralDetectionConfig(BaseModel, frozen=True):
 class SelectedParamConfig(BaseModel, frozen=True):
     """Selected-parameter filter configuration.
 
-    Groups all per-parameter filter thresholds.  Defaults match the
-    ``opensky_v2`` branch values.
+    Groups all per-parameter filter thresholds.
+
+    The five detector channels are **required**: each carries calibrated
+    hyper-parameters, and a study that does not state them cannot be
+    reproduced from its own config. ``tas`` keeps a default because it has no
+    bilateral detector — it runs the legacy savgol path, whose thresholds are
+    tolerances rather than a calibration result.
 
     .. note:: Legacy v1 values for reference:
        mach.tol=0.002, cas.tol=1.0, vz.min_abs_value=50.
     """
 
-    mach: MachFilterConfig = MachFilterConfig()
-    cas: CasFilterConfig = CasFilterConfig()
+    mach: MachFilterConfig
+    cas: CasFilterConfig
     tas: TasFilterConfig = TasFilterConfig()
-    vz: VzFilterConfig = VzFilterConfig()
-    alt: AltFilterConfig = AltFilterConfig()
-    gamma: GammaFilterConfig = GammaFilterConfig()
+    vz: VzFilterConfig
+    alt: AltFilterConfig
+    gamma: GammaFilterConfig
 
     # Mach detection knob (see node_fdm_data.segments). The Mach detector
     # discards plateaus whose mean Mach is below this threshold (low-Mach
@@ -324,7 +352,10 @@ class PipelineConfig(BaseModel, frozen=True):
     bada: BadaConfig = BadaConfig()
     preprocess: PreprocessConfig = PreprocessConfig()
     flag: FlagConfig = FlagConfig()
-    selected_params: SelectedParamConfig = SelectedParamConfig()
+    # Required: see the note above the filter models. A config silent about
+    # its detector tuning would run on whatever this file last happened to
+    # hold, and publish results nothing traces back.
+    selected_params: SelectedParamConfig
     clean_speeds: CleanSpeedsConfig = CleanSpeedsConfig()
     lateral_detection: LateralDetectionConfig = LateralDetectionConfig()
     training: TrainingPipelineConfig = TrainingPipelineConfig()
