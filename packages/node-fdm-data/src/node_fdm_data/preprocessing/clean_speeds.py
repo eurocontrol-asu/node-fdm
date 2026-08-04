@@ -9,10 +9,11 @@ columns and an optional ``fdm_tas_from_cas_kt`` derived from cleaned IAS.
 
 .. note::
 
-   ERA fill is disabled for the TAS channel: ERA TAS is derived from
-   wind + groundspeed and does not coincide point-wise with the Mode-S
-   measured TAS, so filling Mode-S blackouts from ERA would inject a
-   different physical quantity into the same column.
+   ERA fill is enabled for the Mach and CAS channels and disabled for TAS:
+   ERA TAS is derived from wind + groundspeed and does not coincide
+   point-wise with the Mode-S measured TAS, so filling Mode-S blackouts
+   from ERA would inject a different physical quantity into the same
+   column. See :data:`_BDS_SPEC` for the measurements behind that split.
 """
 
 from __future__ import annotations
@@ -31,51 +32,76 @@ _ZIGZAG_MIN_VALID: int = 4  # min non-NaN deltas in window to estimate density
 _KT_TO_MS: float = 0.5144444444444445
 _MS_TO_KT: float = 1.0 / _KT_TO_MS
 _FT_TO_M: float = 0.3048
+#: ``|vz|`` below which the aircraft counts as stabilised, so a run of identical
+#: speed samples reads as an autopilot hold rather than a stuck sensor.
+_STABLE_VZ_FTMIN: float = 300.0
 
 # (bds_col, era_col, use_era_fill, frozen_min_run_len)
 #
-# **Mach and CAS are no longer filled from ERA5**, for the reason the TAS row
-# already gave: "ERA TAS (derived from wind+GS) is not the same physical
-# quantity as Mode-S measured TAS". era_mach and era_cas_kt come from the same
-# reconstruction, so the argument covers them too.
+# Mach and CAS ARE filled from ERA5; TAS is not.
 #
-# Measured on one day of 29 CRJ-1000s with the fill still enabled on Mach:
-#   - 52% of bds_mach_clean did not come from the BDS at all
-#   - the column reached Mach 0.865, ABOVE this type's MMO of 0.85, while the
-#     raw signal peaked at 0.820
-#   - cruise median: 0.784 raw (the book figure for the type) against 0.791
-#     cleaned, with p95 at 0.851
+# The fill was briefly disabled after a measurement showing 52% of
+# bds_mach_clean not coming from the BDS and the column reaching Mach 0.865,
+# above this type's MMO. That measurement was taken on a corrupted field: two
+# bugs were making era_mach diverge from the aircraft's own Mach.
 #
-# The mechanism: era_mach agrees with the BDS to 0.0000 below 20 kt of wind and
-# sits 0.043 high above 40 kt (correlation +0.775 with wind strength), because
-# it is reconstructed from ground speed and the ERA5 wind field. Filling gaps
-# with it stamped that drift into the detector's own input and produced
-# rectangular steps between 0.78 and 0.85 that the plateau detector reads as
-# real.
+#   - rs1090 0.5.1 mis-inferred the Comm-B register, so some BDS 5,0 values were
+#     decoded from messages belonging to another register (0.6.0 rejects them).
+#   - fastmeteo 1.1.0 returned a stale zarr handle from sync_local(), so a
+#     cold-cache run interpolated against a store holding one hour instead of
+#     the whole day (fixed upstream in 1.2.0, junzis/fastmeteo#4).
 #
-# A gap in the BDS is a gap in what the aircraft reported. Leaving it NaN costs
-# coverage; filling it from a weather model costs the ability to tell a
-# measurement from a reconstruction — and the segmentation stage exists to read
-# what the crew selected, which only the measurement can show.
+# With both fixed, the two sources agree: on the points where a real BDS Mach
+# and era_mach both exist, the median gap is +1.6 kt of TAS with an
+# inter-flight sigma of 1.1 kt. At that level the fill is an interpolation
+# across a Mode-S blackout, not the substitution of a different quantity, and
+# the earlier "rectangular steps between 0.78 and 0.85" were the decoder and
+# the reanalysis bug, not the fill.
+#
+# TAS stays unfilled: era_tas_kt is reconstructed from wind + groundspeed, so it
+# does not coincide point-wise with the Mode-S measured TAS the way era_mach and
+# era_cas_kt do with theirs. Its native BDS coverage (4.8%) is also too thin for
+# a fill to mean anything.
 _BDS_SPEC: list[tuple[str, str, bool, int]] = [
-    ("bds_mach", "era_mach", False, 20),
-    ("bds_ias_kt", "era_cas_kt", False, 20),
+    ("bds_mach", "era_mach", True, 20),
+    ("bds_ias_kt", "era_cas_kt", True, 20),
     ("bds_tas_kt", "era_tas_kt", False, 6),
 ]
 
 
-def _flag_frozen_runs(x: np.ndarray, *, min_run_len: int) -> np.ndarray:
+def _flag_frozen_runs(
+    x: np.ndarray,
+    *,
+    min_run_len: int,
+    vz_ftmin: np.ndarray | None = None,
+    stable_vz_ftmin: float = _STABLE_VZ_FTMIN,
+) -> np.ndarray:
     """Replace runs of strictly identical consecutive non-NaN values with NaN.
 
     A run is a maximal sequence of indices where ``x[i] == x[i-1]``
-    (non-NaN). Runs of length ``>= min_run_len`` are flagged as
-    frozen-signal artifacts (sensor stuck on a value while the aircraft
-    state evolves). Shorter runs (legitimate quantization plateaus on
-    ``IAS HOLD`` / ``MACH HOLD``) are preserved.
+    (non-NaN). Runs of length ``>= min_run_len`` are candidates for being a
+    stuck sensor -- a value held while the aircraft state evolves.
+
+    The length alone cannot say that, because an autopilot holding MACH or IAS
+    produces exactly the same signature, and produces it for longer. Measured
+    over 27 CRJ-1000 flights, the relation runs the opposite way to the
+    assumption: runs of 2-5 samples average 1079 ft/min of vertical speed,
+    6-19 average 420, 20-49 average 67, and 50+ average 29. The longer the run,
+    the more stabilised the aircraft, and the more legitimate the constancy.
+    Deleting on length alone removed 4219 samples of which 97.6% had
+    ``|vz| < 300`` and 85.9% were cruise above 30,000 ft.
+
+    So a run is only frozen if the aircraft was *not* stabilised through it:
+    pass ``vz_ftmin`` and a run survives when its mean ``|vz|`` stays under
+    ``stable_vz_ftmin``. Without ``vz_ftmin`` the length test stands alone,
+    which is the historical behaviour.
 
     Args:
         x: 1-D NaN-aware array.
         min_run_len: minimum run length to flag as frozen.  Must be ``>= 2``.
+        vz_ftmin: vertical speed aligned with *x*, in ft/min.  When omitted,
+            no stabilisation guard is applied.
+        stable_vz_ftmin: ``|vz|`` below which the aircraft counts as stabilised.
 
     Returns:
         Copy of *x* with frozen runs replaced by NaN.
@@ -90,10 +116,26 @@ def _flag_frozen_runs(x: np.ndarray, *, min_run_len: int) -> np.ndarray:
         j = i + 1
         while j < n and not np.isnan(out[j]) and out[j] == out[i]:
             j += 1
-        if j - i >= min_run_len:
+        if j - i >= min_run_len and not _is_stabilised(vz_ftmin, i, j, stable_vz_ftmin):
             out[i:j] = np.nan
         i = j
     return out
+
+
+def _is_stabilised(
+    vz_ftmin: np.ndarray | None, start: int, stop: int, stable_vz_ftmin: float
+) -> bool:
+    """Whether the aircraft held level through ``[start, stop)``.
+
+    An all-NaN vz over the run is not evidence of anything, so it does not
+    protect the run — the length test decides, as it did before.
+    """
+    if vz_ftmin is None:
+        return False
+    window = np.abs(vz_ftmin[start:stop])
+    if not np.isfinite(window).any():
+        return False
+    return bool(np.nanmean(window) < stable_vz_ftmin)
 
 
 def _hampel_filter(x: np.ndarray, *, window: int, k: float) -> np.ndarray:
@@ -278,6 +320,7 @@ def clean_speeds(  # noqa: PLR0913 — config-style orchestrator
     n_passes: int,
     interp_max_gap: int,
     frozen_min_run_len: int | None = None,
+    vz_ftmin: np.ndarray | None = None,
     point_jump_max: float | None = None,
     zigzag_jump_min: float | None = None,
     zigzag_half_window: int = 15,
@@ -308,6 +351,10 @@ def clean_speeds(  # noqa: PLR0913 — config-style orchestrator
         interp_max_gap: max NaN run length to fill via interpolation.
         frozen_min_run_len: min length of identical-consecutive-values run
             to flag as frozen-signal artifact; ``None`` disables.
+        vz_ftmin: vertical speed aligned with *values*, in ft/min. Runs where
+            the aircraft held level are an autopilot hold, not a stuck sensor,
+            and are kept — see :func:`_flag_frozen_runs`. ``None`` disables the
+            guard, leaving the run-length test on its own.
         point_jump_max: V-shape filter threshold; ``None`` disables.
         zigzag_jump_min: large-jump threshold for the region detector;
             ``None`` disables.
@@ -320,7 +367,7 @@ def clean_speeds(  # noqa: PLR0913 — config-style orchestrator
     raw = values.astype(np.float64, copy=True)
     cleaned = raw.copy()
     if frozen_min_run_len is not None:
-        cleaned = _flag_frozen_runs(cleaned, min_run_len=frozen_min_run_len)
+        cleaned = _flag_frozen_runs(cleaned, min_run_len=frozen_min_run_len, vz_ftmin=vz_ftmin)
     for _ in range(n_passes):
         cleaned = _hampel_filter(cleaned, window=window, k=k)
     if point_jump_max is not None:
@@ -407,6 +454,11 @@ def _clean_one_column(  # noqa: PLR0913 — config-style helper
     if bds_col not in df.columns:
         return None
     values = df[bds_col].cast(pl.Float64).to_numpy()
+    # Lets the frozen-run filter tell an autopilot hold from a stuck sensor.
+    # Absent from a frame, the filter falls back to the run-length test alone.
+    vz_ftmin = (
+        df["raw_vz_ftmin"].cast(pl.Float64).to_numpy() if "raw_vz_ftmin" in df.columns else None
+    )
     cleaned = clean_speeds(
         values,
         window=bds_window,
@@ -414,6 +466,7 @@ def _clean_one_column(  # noqa: PLR0913 — config-style helper
         n_passes=n_passes,
         interp_max_gap=interp_max_gap,
         frozen_min_run_len=frozen_min_run_len,
+        vz_ftmin=vz_ftmin,
         point_jump_max=point_jump_max,
         zigzag_jump_min=zigzag_jump_min,
         zigzag_half_window=zigzag_half_window,

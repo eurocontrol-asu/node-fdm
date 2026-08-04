@@ -512,6 +512,51 @@ class TestFrozenRunFilter:
         for v in result[20:25]:
             assert v == pytest.approx(250.0)
 
+    def test_long_run_kept_when_aircraft_is_level(self) -> None:
+        """A held Mach in stabilised cruise survives, however long the run.
+
+        This is the case the length test alone gets backwards: an autopilot
+        holding MACH produces a longer identical run than any stuck sensor,
+        so length is evidence *for* the run being real once vz says the
+        aircraft is not manoeuvring.
+        """
+        n = 80
+        values = np.full(n, 0.79)
+        values[20:70] = 0.80  # 50 samples held, well over the threshold
+        vz = np.full(n, 15.0)  # level throughout
+
+        result = clean_speeds(
+            values.copy(),
+            window=7,
+            k=3.0,
+            n_passes=0,
+            interp_max_gap=0,
+            frozen_min_run_len=20,
+            vz_ftmin=vz,
+        )
+
+        for v in result[20:70]:
+            assert v == pytest.approx(0.80)
+
+    def test_long_run_deleted_when_aircraft_is_climbing(self) -> None:
+        """The same run is still deleted when the aircraft is not stabilised."""
+        n = 80
+        values = np.full(n, 0.79)
+        values[20:70] = 0.80
+        vz = np.full(n, 1500.0)  # climbing: a frozen speed here is an artefact
+
+        result = clean_speeds(
+            values.copy(),
+            window=7,
+            k=3.0,
+            n_passes=0,
+            interp_max_gap=0,
+            frozen_min_run_len=20,
+            vz_ftmin=vz,
+        )
+
+        assert all(math.isnan(v) for v in result[20:70])
+
     def test_disabled_when_none(self) -> None:
         """frozen_min_run_len=None is the no-op (backward compatibility)."""
         n = 50
