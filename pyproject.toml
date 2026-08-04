@@ -22,6 +22,7 @@ dependencies = [
     "traffic>=2.10",
     "pygeomag>=1.1.0",
     "ruptures>=1.1.10",
+    "rs1090>=0.6.0",
 ]
 
 [project.urls]

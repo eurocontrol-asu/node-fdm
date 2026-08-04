@@ -33,11 +33,33 @@ _MS_TO_KT: float = 1.0 / _KT_TO_MS
 _FT_TO_M: float = 0.3048
 
 # (bds_col, era_col, use_era_fill, frozen_min_run_len)
-# tas: ERA fill disabled — ERA TAS (derived from wind+GS) is not the same
-# physical quantity as Mode-S measured TAS.
+#
+# **Mach and CAS are no longer filled from ERA5**, for the reason the TAS row
+# already gave: "ERA TAS (derived from wind+GS) is not the same physical
+# quantity as Mode-S measured TAS". era_mach and era_cas_kt come from the same
+# reconstruction, so the argument covers them too.
+#
+# Measured on one day of 29 CRJ-1000s with the fill still enabled on Mach:
+#   - 52% of bds_mach_clean did not come from the BDS at all
+#   - the column reached Mach 0.865, ABOVE this type's MMO of 0.85, while the
+#     raw signal peaked at 0.820
+#   - cruise median: 0.784 raw (the book figure for the type) against 0.791
+#     cleaned, with p95 at 0.851
+#
+# The mechanism: era_mach agrees with the BDS to 0.0000 below 20 kt of wind and
+# sits 0.043 high above 40 kt (correlation +0.775 with wind strength), because
+# it is reconstructed from ground speed and the ERA5 wind field. Filling gaps
+# with it stamped that drift into the detector's own input and produced
+# rectangular steps between 0.78 and 0.85 that the plateau detector reads as
+# real.
+#
+# A gap in the BDS is a gap in what the aircraft reported. Leaving it NaN costs
+# coverage; filling it from a weather model costs the ability to tell a
+# measurement from a reconstruction — and the segmentation stage exists to read
+# what the crew selected, which only the measurement can show.
 _BDS_SPEC: list[tuple[str, str, bool, int]] = [
-    ("bds_mach", "era_mach", True, 20),
-    ("bds_ias_kt", "era_cas_kt", True, 20),
+    ("bds_mach", "era_mach", False, 20),
+    ("bds_ias_kt", "era_cas_kt", False, 20),
     ("bds_tas_kt", "era_tas_kt", False, 6),
 ]
 

@@ -150,9 +150,14 @@ class TestCleanBdsSpeeds:
     @staticmethod
     def _make_df() -> pl.DataFrame:
         n = 50
-        bds_mach = np.full(n, 0.80)
-        bds_ias_kt = np.full(n, 250.0)
-        bds_tas_kt = np.full(n, 230.0)
+        # Small jitter rather than a constant. A strictly constant run is what
+        # `_flag_frozen_runs` exists to delete — a real BDS signal never repeats
+        # to the fourth decimal for 50 samples — and with the ERA5 fill now off
+        # for Mach and CAS there is nothing left to resurrect the column.
+        rng = np.random.default_rng(0)
+        bds_mach = 0.80 + rng.normal(0, 2e-4, n)
+        bds_ias_kt = 250.0 + rng.normal(0, 0.3, n)
+        bds_tas_kt = 230.0 + rng.normal(0, 0.3, n)
         bds_mach[25] = 1.5
         bds_ias_kt[25] = 800.0
         bds_tas_kt[25] = 800.0
@@ -238,8 +243,8 @@ class TestCleanBdsSpeeds:
         n = 30
         df = pl.DataFrame(
             {
-                "bds_mach": np.full(n, 0.80),
-                "bds_ias_kt": np.full(n, 250.0),
+                "bds_mach": 0.80 + np.random.default_rng(1).normal(0, 2e-4, n),
+                "bds_ias_kt": 250.0 + np.random.default_rng(2).normal(0, 0.3, n),
                 "bds_tas_kt": np.full(n, 230.0),
                 "era_mach": np.full(n, 0.80),
                 "era_cas_kt": np.full(n, 250.0),
@@ -408,11 +413,17 @@ class TestOnGroundMask:
     def test_airborne_high_vz_keeps_clean_value(self) -> None:
         """A point with low alt but high |vz| (taking off) is NOT on ground."""
         n = 30
+        # Jittered rather than constant: `_flag_frozen_runs` deletes strictly
+        # identical runs, and with the ERA5 fill now off for Mach and CAS there
+        # is nothing to put the column back. The jitter is far below what this
+        # test is about — whether the on-ground mask fires — so the assertion
+        # still measures only that.
+        rng = np.random.default_rng(3)
         df = pl.DataFrame(
             {
-                "bds_mach": np.full(n, 0.50),
-                "bds_ias_kt": np.full(n, 200.0),
-                "bds_tas_kt": np.full(n, 200.0),
+                "bds_mach": 0.50 + rng.normal(0, 2e-4, n),
+                "bds_ias_kt": 200.0 + rng.normal(0, 0.3, n),
+                "bds_tas_kt": 200.0 + rng.normal(0, 0.3, n),
                 "era_mach": np.full(n, 0.50),
                 "era_cas_kt": np.full(n, 200.0),
                 "era_tas_kt": np.full(n, 250.0),
@@ -431,8 +442,8 @@ class TestOnGroundMask:
         n = 30
         df = pl.DataFrame(
             {
-                "bds_mach": np.full(n, 0.80),
-                "bds_ias_kt": np.full(n, 250.0),
+                "bds_mach": 0.80 + np.random.default_rng(1).normal(0, 2e-4, n),
+                "bds_ias_kt": 250.0 + np.random.default_rng(2).normal(0, 0.3, n),
                 "bds_tas_kt": np.full(n, 230.0),
                 "era_mach": np.full(n, 0.80),
                 "era_cas_kt": np.full(n, 250.0),
