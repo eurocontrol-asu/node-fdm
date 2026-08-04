@@ -449,11 +449,18 @@ def download(
     start_date: Annotated[
         str,
         cyclopts.Parameter(name="--start-date", help="Start date (YYYY-MM-DD)"),
-    ],
+    ] = "",
     end_date: Annotated[
         str,
         cyclopts.Parameter(name="--end-date", help="End date (YYYY-MM-DD)"),
-    ],
+    ] = "",
+    flight_plan: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--flight-plan",
+            help="CSV of selected flights (icao24 + day); fetch only those aircraft-days",
+        ),
+    ] = None,
     step_hours: Annotated[
         int,
         cyclopts.Parameter(name="--step-hours", help="Hours between windows"),
@@ -471,7 +478,12 @@ def download(
         cyclopts.Parameter(name="--force-refresh", help="Bypass cache and re-fetch all data"),
     ] = False,
 ) -> None:
-    """Download ADS-B history data from OpenSky by date range."""
+    """Download ADS-B history from OpenSky, by date range or by flight plan.
+
+    Range mode fetches every aircraft in aircraft_db.csv on every day of the
+    range. Plan mode fetches, per day, only the aircraft that have a selected
+    flight that day — so the cost follows the selection rather than the span.
+    """
     from node_fdm_pipeline.commands.data import download as download_fn
 
     download_fn(
@@ -482,6 +494,7 @@ def download(
         dry_run=dry_run,
         no_decode=no_decode,
         force_refresh=force_refresh,
+        flight_plan=flight_plan,
     )
 
 

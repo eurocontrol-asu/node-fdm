@@ -396,6 +396,44 @@ def _read_icao24_filter(path: Path | None) -> set[str] | None:
     return {line.strip().lower() for line in Path(path).read_text().splitlines() if line.strip()}
 
 
+def _read_flight_plan(path: Path) -> dict[str, list[str]]:
+    """Read a flight selection into a ``{YYYYMMDD: [icao24, ...]}`` download plan.
+
+    The default download mode takes a date range and one aircraft list, and
+    fetches every aircraft on every day. That is right when you want a whole
+    fleet over a period, and wrong when a selection step has already chosen
+    which flights matter: on a stratified seven-year selection it downloads
+    essentially every day for every aircraft, then throws away most of it.
+    Worse, the stratification becomes decorative — the effort spent balancing
+    durations, hours and regions buys nothing if everything is fetched anyway.
+
+    A plan makes the download proportional to what is kept. Each day fetches
+    only the aircraft that actually have a selected flight that day.
+
+    The CSV needs an ``icao24`` column and one of ``day`` or ``firstseen``;
+    anything else (callsign, split, duration) is ignored here. Cache
+    granularity is (date, icao24) rather than the individual flight, so two
+    selected flights by the same aircraft on the same day cost one fetch.
+    """
+    import polars as pl
+
+    frame = pl.read_csv(path, try_parse_dates=True)
+    if "day" in frame.columns:
+        day = pl.col("day")
+    elif "firstseen" in frame.columns:
+        day = pl.col("firstseen")
+    else:
+        raise SystemExit(f"{path}: needs a 'day' or 'firstseen' column to build a plan")
+
+    grouped = (
+        frame.with_columns(day.cast(pl.Datetime).dt.strftime("%Y%m%d").alias("_day"))
+        .group_by("_day")
+        .agg(pl.col("icao24").unique().alias("_icao24"))
+        .sort("_day")
+    )
+    return {row["_day"]: row["_icao24"] for row in grouped.iter_rows(named=True)}
+
+
 def _decode_one_window(
     cfg: PipelineConfig,
     date_str: str,
@@ -431,14 +469,34 @@ def _decode_one_window(
     decoder = _RawEHSDecoder(extended_pdf)
     decoded_flights: list[Flight] = []
     if "icao24" in history_pdf.columns:
-        for _icao24, group in history_pdf.groupby("icao24"):
+        # Group on (icao24, callsign), not on icao24 alone. `query_ehs` refuses
+        # a Flight carrying several callsigns — "Several callsigns for this
+        # flight" — and one aircraft flies several rotations a day, so grouping
+        # by aircraft hands it a whole day and it raises every time. The raised
+        # error was then swallowed and the flight came back with empty BDS
+        # fields: on a one-day sample, 1.1M raw Comm-B messages decoded into
+        # 4,311 usable rows, 0.4%, and the only two aircraft that worked were
+        # the two that happened to fly a single rotation.
+        #
+        # (icao24, callsign) is the same key `identify` uses to build
+        # meta_original_flight_id, so this anticipates its coarse split rather
+        # than inventing one. identify additionally cuts on time gaps, which
+        # query_ehs does not care about.
+        group_keys = ["icao24"]
+        if "callsign" in history_pdf.columns:
+            group_keys.append("callsign")
+        ehs_failures = 0
+        for _key, group in history_pdf.groupby(group_keys, dropna=False):
             try:
                 fl = Flight(group)
-            except Exception:  # noqa: BLE001, S112
+            except Exception:  # noqa: BLE001
+                ehs_failures += 1
                 continue
             decoded = decoder(fl)
             if decoded is not None:
                 decoded_flights.append(decoded)
+        if ehs_failures:
+            log.warning("decode_flight_construct_failed", count=ehs_failures)
     else:
         return None, skipped
 
@@ -526,12 +584,13 @@ def decode(
 def download(  # noqa: PLR0913
     *,
     config: Path,
-    start_date: str,
-    end_date: str,
+    start_date: str = "",
+    end_date: str = "",
     step_hours: int = 24,
     dry_run: bool = False,
     no_decode: bool = False,
     force_refresh: bool = False,
+    flight_plan: Path | None = None,
 ) -> None:
     """Download ADS-B history and EHS data into the raw parquet cache.
 
@@ -539,21 +598,59 @@ def download(  # noqa: PLR0913
     OpenSky. Unless ``no_decode`` is set, ``decode`` is auto-chained
     after the cache write to produce the Delta Table.
 
+    Two modes, and the second is what a selection step wants.
+
+    **Range mode** (``start_date``/``end_date``) fetches every aircraft in
+    ``aircraft_db.csv`` on every day of the range. Right for taking a whole
+    fleet over a period.
+
+    **Plan mode** (``flight_plan``) reads a selection CSV and fetches, for each
+    day, only the aircraft that have a selected flight that day. The download
+    then costs what the selection keeps rather than what the range spans — on a
+    stratified multi-year selection the difference is one or two orders of
+    magnitude, and without it the stratification is decorative, since everything
+    gets fetched regardless.
+
     Args:
         config: Path to the YAML config file.
-        start_date: Start date (YYYY-MM-DD).
-        end_date: End date (YYYY-MM-DD).
-        step_hours: Hours between download windows.
+        start_date: Start date (YYYY-MM-DD). Range mode.
+        end_date: End date (YYYY-MM-DD). Range mode.
+        step_hours: Hours between download windows. Range mode.
         dry_run: Validate config without performing I/O.
         no_decode: Skip the auto-chained ``decode`` step.
         force_refresh: Bypass cache and re-fetch every (date, icao24).
+        flight_plan: CSV of selected flights (``icao24`` + ``day``/
+            ``firstseen``). Plan mode; mutually exclusive with a date range.
     """
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
-    _aircraft_db, icao24_list = _load_aircraft_db(cfg)
 
-    log.info("download_start", start_date=start_date, end_date=end_date)
+    if flight_plan is not None:
+        if start_date or end_date:
+            raise SystemExit("--flight-plan and --start-date/--end-date are exclusive")
+        plan = _read_flight_plan(flight_plan)
+        if not plan:
+            raise SystemExit(f"{flight_plan}: no flights to download")
+        days = sorted(plan)
+        # decode() still works on a range, so derive one covering the plan.
+        start_date = f"{days[0][:4]}-{days[0][4:6]}-{days[0][6:]}"
+        last = datetime.strptime(days[-1], "%Y%m%d") + timedelta(days=1)
+        end_date = last.strftime("%Y-%m-%d")
+        fetches = sum(len(v) for v in plan.values())
+        log.info(
+            "download_plan",
+            days=len(plan),
+            aircraft_days=fetches,
+            first=days[0],
+            last=days[-1],
+        )
+    else:
+        if not (start_date and end_date):
+            raise SystemExit("give either --flight-plan or --start-date and --end-date")
+        _aircraft_db, icao24_list = _load_aircraft_db(cfg)
+        plan = None
+        log.info("download_start", start_date=start_date, end_date=end_date)
 
     if dry_run:
         log.info("download_dry_run", msg="Config valid, would download to raw cache")
@@ -561,16 +658,21 @@ def download(  # noqa: PLR0913
 
     _require_traffic()
 
-    start = datetime.strptime(start_date, "%Y-%m-%d")
-    end = datetime.strptime(end_date, "%Y-%m-%d")
-    step = timedelta(hours=step_hours)
+    if plan is not None:
+        for date_str, aircraft in sorted(plan.items()):
+            log.info("download_fetch", date=date_str, aircraft=len(aircraft))
+            _ensure_window_cached(cfg, date_str, aircraft, force=force_refresh)
+    else:
+        start = datetime.strptime(start_date, "%Y-%m-%d")
+        end = datetime.strptime(end_date, "%Y-%m-%d")
+        step = timedelta(hours=step_hours)
 
-    current = start
-    while current < end:
-        date_str = current.strftime("%Y%m%d")
-        log.info("download_fetch", date=date_str)
-        _ensure_window_cached(cfg, date_str, icao24_list, force=force_refresh)
-        current += step
+        current = start
+        while current < end:
+            date_str = current.strftime("%Y%m%d")
+            log.info("download_fetch", date=date_str)
+            _ensure_window_cached(cfg, date_str, icao24_list, force=force_refresh)
+            current += step
 
     if no_decode:
         log.info("download_done_no_decode")
@@ -1666,7 +1768,17 @@ class _RawEHSDecoder:
 
         try:
             decoded = flight.query_ehs(self.rawdata)
-        except Exception:  # noqa: BLE001
+        except Exception as exc:  # noqa: BLE001
+            # Log rather than swallow. A silent fallback here cost 99.6% of the
+            # selected-parameter signal without a single line of output, and the
+            # cause ("Several callsigns for this flight") was one string away
+            # from being obvious.
+            log.warning(
+                "decode_ehs_failed",
+                icao24=str(flight.icao24),
+                callsign=str(flight.callsign),
+                error=str(exc)[:120],
+            )
             return _flight_with_empty_bds_keys(flight)
 
         for bds in ("bds40", "bds50", "bds60"):
