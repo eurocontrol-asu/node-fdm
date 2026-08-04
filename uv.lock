@@ -1132,7 +1132,7 @@ wheels = [
 
 [[package]]
 name = "fastmeteo"
-version = "1.1.0"
+version = "1.2.0"
 source = { registry = "https://pypi.org/simple" }
 dependencies = [
     { name = "cfgrib" },
@@ -1153,9 +1153,9 @@ dependencies = [
     { name = "xarray" },
     { name = "zarr" },
 ]
-sdist = { url = "https://files.pythonhosted.org/packages/64/6c/47fc995cb331ffe7d20b3a88bc4bbf62de2b6b5325632e124f02807e9ab3/fastmeteo-1.1.0.tar.gz", hash = "sha256:cabcf538844bad37639fb6fbfa9e4827f882a604c3170cef7e513473fb673d2e", size = 26488887, upload-time = "2025-06-24T22:03:28.918Z" }
+sdist = { url = "https://files.pythonhosted.org/packages/96/ba/200f91528f61a9ed93087ba4629477b1e73aabf3187918fac373f38a8859/fastmeteo-1.2.0.tar.gz", hash = "sha256:d02bebcbe324aff53ae00b3d6ee789221412aad158c3496f8dd4bba96cac3589", size = 26497310, upload-time = "2026-06-05T09:39:57.875Z" }
 wheels = [
-    { url = "https://files.pythonhosted.org/packages/40/e9/f40ef224f6a9a9eb8f60a061b9ce4a4b02f6e8cbae05f5acc3b7a2d13af0/fastmeteo-1.1.0-py3-none-any.whl", hash = "sha256:a3de1d744ebe67ce1bfec4bc942e9ccacb77cea26decc27a95fefd9af46f87f2", size = 21958, upload-time = "2025-06-24T22:03:17.283Z" },
+    { url = "https://files.pythonhosted.org/packages/09/45/9087d539ad208b71da15f2d9bb65df8318d196fb14c65fefb374c7ed93e1/fastmeteo-1.2.0-py3-none-any.whl", hash = "sha256:c7c5cb0a0dc97e0a6ac210a60867def008aec672585f18518f2782b7d8cc4b33", size = 22035, upload-time = "2026-06-05T09:39:56.62Z" },
 ]
 
 [[package]]
