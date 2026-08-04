@@ -3,7 +3,8 @@
 Resamples each flight to a regular time grid (default 4 s), detecting
 sub-segments per column group and interpolating only within them.
 Gaps longer than ``max_gap_s`` are left null with explicit boolean
-flags ``fdm_flag_gap_position``, ``fdm_flag_gap_altitude``, ``fdm_flag_gap_bds``.
+flags ``fdm_flag_gap_position``, ``fdm_flag_gap_altitude``, ``fdm_flag_gap_bds40``,
+``fdm_flag_gap_bds50``, and their conjunction ``fdm_flag_gap_bds``.
 """
 
 from __future__ import annotations
@@ -29,22 +30,37 @@ __all__ = [
 
 POSITION_COLS: list[str] = ["raw_lat_deg", "raw_lon_deg"]
 ALTITUDE_COLS: list[str] = ["raw_alt_ft", "raw_gs_kt", "raw_track_deg", "raw_vz_ftmin"]
-BDS_COLS: list[str] = [
+# Mode-S Comm-B registers arrive in SEPARATE messages, so their timestamps are
+# disjoint. Measured on one day of 29 CRJ-1000s: 294,656 rows carry bds_mach
+# (BDS 5,0) and 263,021 carry bds_mcp_alt_sel_ft (BDS 4,0) — and **zero rows
+# carry both**.
+#
+# That is why the registers are resampled apart. An earlier version put all
+# eight columns in one group referenced on bds_mach alone, which resampled the
+# BDS 4,0 columns onto the BDS 5,0 grid, where they are null by construction:
+# every one of the 263,021 selected-altitude values was silently destroyed, and
+# selected altitude is the central signal of the segmentation stage.
+BDS40_COLS: list[str] = [
+    "bds_mcp_alt_sel_ft",
+    "bds_fms_alt_sel_ft",
+]
+BDS50_COLS: list[str] = [
     "bds_mach",
     "bds_tas_kt",
     "bds_ias_kt",
     "bds_hdg_deg",
-    "bds_mcp_alt_sel_ft",
-    "bds_fms_alt_sel_ft",
     "bds_roll_deg",
     "bds_track_rate_dps",
 ]
+#: Kept for callers that want every BDS column regardless of register.
+BDS_COLS: list[str] = BDS40_COLS + BDS50_COLS
 
 # (columns_to_interpolate, reference_columns_for_subsegment_detection)
 COLUMN_GROUPS: dict[str, tuple[list[str], list[str]]] = {
     "position": (POSITION_COLS, POSITION_COLS),
     "altitude": (ALTITUDE_COLS, ["raw_alt_ft"]),
-    "bds": (BDS_COLS, ["bds_mach"]),
+    "bds40": (BDS40_COLS, ["bds_mcp_alt_sel_ft"]),
+    "bds50": (BDS50_COLS, ["bds_mach"]),
 }
 
 _CARRY_OVER: set[str] = {"raw_icao24", "raw_callsign"}
@@ -350,7 +366,9 @@ def resample_flight(
     2. For each column group (position, altitude, BDS): detect sub-segments,
        interpolate within, leave null between.
     3. Optionally smooth position sub-segments with Savitzky-Golay.
-    4. Add gap flags: ``fdm_flag_gap_position``, ``fdm_flag_gap_altitude``, ``fdm_flag_gap_bds``.
+    4. Add gap flags: ``fdm_flag_gap_position``, ``fdm_flag_gap_altitude``,
+       ``fdm_flag_gap_bds40``, ``fdm_flag_gap_bds50`` and their conjunction
+       ``fdm_flag_gap_bds``.
 
     Args:
         df: Single-flight DataFrame, sorted by ``raw_timestamp``.
@@ -371,6 +389,17 @@ def resample_flight(
             grid_ts,
             (group_name, interp_cols, ref_cols),
             max_gap_s,
+        )
+
+    # `fdm_flag_gap_bds` predates the BDS 4,0 / 5,0 split and is kept as the
+    # conjunction of the two: a sample is BDS-gapped only when BOTH registers
+    # are missing, which is what the single flag used to mean when both lived in
+    # one group. The per-register flags carry the finer truth — the registers
+    # arrive in separate messages, so one can be present while the other is not.
+    per_register = [f"fdm_flag_gap_{name}" for name in ("bds40", "bds50")]
+    if all(flag in result.columns for flag in per_register):
+        result = result.with_columns(
+            (pl.col(per_register[0]) & pl.col(per_register[1])).alias("fdm_flag_gap_bds")
         )
 
     if smooth:
