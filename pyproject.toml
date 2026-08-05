@@ -23,6 +23,15 @@ dependencies = [
     "pygeomag>=1.1.0",
     "ruptures>=1.1.10",
     "rs1090>=0.6.0",
+    # Spreadsheet engines for the national aircraft registers read by
+    # papers/paper_node_fdm_v2/fleet/src/resolve.py. pandas dispatches to these
+    # by file extension and neither is a pandas dependency, so a missing one
+    # surfaces as ImportError at read time rather than at install time: the
+    # Netherlands register is .ods (odfpy), Ireland's is .xlsx (openpyxl).
+    # Undeclared, the fleet tables build only on a machine where something else
+    # happened to pull them in.
+    "odfpy>=1.4",
+    "openpyxl>=3.1",
 ]
 
 [project.urls]
