@@ -417,7 +417,14 @@ def _read_flight_plan(path: Path) -> dict[str, list[str]]:
     """
     import polars as pl
 
-    frame = pl.read_csv(path, try_parse_dates=True)
+    # `infer_schema=False` reads every column as text, then only the date column
+    # is cast below. A plan is consumed for its `icao24` and its date and nothing
+    # else, so inferring types for the remaining columns is risk without benefit:
+    # an A220 selection carries serial numbers that are numeric for most rows and
+    # `unknown-c05ec7` for airframes whose register publishes no serial, and
+    # inference picked int64 from the head of the file then failed on the first
+    # such row — rejecting a valid plan over a column it never reads.
+    frame = pl.read_csv(path, infer_schema=False)
     if "day" in frame.columns:
         day = pl.col("day")
     elif "firstseen" in frame.columns:
