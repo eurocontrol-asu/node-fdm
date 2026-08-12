@@ -121,7 +121,16 @@ _in_flight = threading.Semaphore(DEFAULT_WORKERS)
 
 #: Substrings identifying a refusal that is worth retrying. Matched on the message
 #: because ``traffic`` re-raises Trino's error as a plain ``RuntimeError``.
-_RETRYABLE = ("QUERY_QUEUE_FULL", "INSUFFICIENT_RESOURCES", "TOO_MANY_REQUESTS")
+#: ``ADMINISTRATIVELY_KILLED`` is here because a query cancelled from the Trino
+#: console — clearing a stuck queue, say — says nothing about whether it could
+#: have succeeded. Treating it as terminal drops a date that a later attempt
+#: would fetch in seconds; one was lost that way on 20190121.
+_RETRYABLE = (
+    "QUERY_QUEUE_FULL",
+    "INSUFFICIENT_RESOURCES",
+    "TOO_MANY_REQUESTS",
+    "ADMINISTRATIVELY_KILLED",
+)
 
 _KINDS: tuple[_raw_cache.Kind, ...] = ("history", "extended", "flightlist")
 
