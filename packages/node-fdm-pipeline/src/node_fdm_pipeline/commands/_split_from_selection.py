@@ -36,8 +36,12 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
+from typing import TYPE_CHECKING
 
 import structlog
+
+if TYPE_CHECKING:
+    import polars as pl
 
 log = structlog.get_logger()
 
@@ -59,7 +63,7 @@ class SplitOutcome:
         return self.matched / self.rows if self.rows else 0.0
 
 
-def _read_selection_splits(selection: Path):
+def _read_selection_splits(selection: Path) -> pl.DataFrame:
     """Read ``{icao24: split}`` from a selection CSV, refusing an ambiguous map.
 
     Raises:
