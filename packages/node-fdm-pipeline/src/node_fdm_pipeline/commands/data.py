@@ -1724,6 +1724,20 @@ def _explode_bds_column(series: pd.Series, keys: tuple[str, ...]) -> pd.DataFram
 
     Drop-in replacement for ``series.apply(pd.Series)`` that avoids pandas'
     super-linear behavior on object-dtype dict columns.
+
+    Numeric keys are cast to float explicitly rather than left to pandas'
+    inference, because inference on a list of ``object`` reads the *contents*,
+    not the contract: a key present on millions of rows lands as ``float64``
+    while one present on a handful lands as ``object``, which Delta then stores
+    as a string. That is how ``bds_fms_alt_sel_ft`` — 40 non-null values out of
+    13,037,916 — reached ``segments`` holding ``'31000.0'`` instead of
+    ``31000.0`` and failed it on ``is_not_nan`` over dtype ``str``, while its
+    sibling ``bds_mcp_alt_sel_ft`` (3.7 M values) was fine.
+
+    The dtype each key must carry is already declared in
+    :data:`_BDS_SOURCE_DTYPES`, which the decode-failure path honours. This
+    applies the same contract on the success path, so a column's type no longer
+    depends on how often the aircraft happened to broadcast that register.
     """
     import pandas as pd
 
@@ -1734,7 +1748,14 @@ def _explode_bds_column(series: pd.Series, keys: tuple[str, ...]) -> pd.DataFram
         if isinstance(d, dict):
             for k in keys:
                 out[k][i] = d.get(k)
-    return pd.DataFrame(out, index=series.index)
+
+    frame = pd.DataFrame(out, index=series.index)
+    for key in keys:
+        if _BDS_SOURCE_DTYPES.get(key) == "Float64":
+            # errors="coerce": a malformed value becomes NaN rather than pinning
+            # the whole column back to object and reintroducing the bug.
+            frame[key] = pd.to_numeric(frame[key], errors="coerce")
+    return frame
 
 
 def _flight_with_empty_bds_keys(flight: Flight) -> Flight:
@@ -1848,11 +1869,24 @@ def split(
     of ``raw_icao24``.  All segments of the same aircraft land in the
     same split, preventing data leakage.
 
+    **Superseded where a stratified selection exists.** The v2 fleet pipeline
+    draws the split before any trajectory is fetched (``stratify.py``), keyed on
+    **MSN** and balanced across year, hour, duration and region; carry it onto the
+    table with ``split-from-selection`` instead. Hashing ``raw_icao24`` is unsafe
+    against that selection — 103 MSNs in the v2 fleet hold more than one Mode-S
+    address, so one airframe would land in two splits while an icao24-keyed leak
+    check still reads zero. This command refuses to overwrite a ``meta_split``
+    that is already present rather than silently replacing a stratified split
+    with a hashed one.
+
     Args:
         config: Path to the YAML config file.
         ratios: ``(train, val, test)`` proportions.
         seed: Hash salt for reproducible splits.
         dry_run: Validate config without modifying the Delta Table.
+
+    Raises:
+        SystemExit: If the table already carries ``meta_split``.
     """
     from node_fdm_data.delta import read_delta_table, write_columns
     from node_fdm_data.split import split_by_icao
@@ -1869,6 +1903,13 @@ def split(
         return
 
     df = read_delta_table(delta_table)
+    if "meta_split" in df.columns:
+        raise SystemExit(
+            f"{delta_table} already carries meta_split. Overwriting it with an "
+            "icao24-hashed split would discard a stratified, MSN-keyed one and can "
+            "put a single airframe in two splits. Drop the column first if you "
+            "really mean to re-derive it."
+        )
     df = split_by_icao(df, ratios=ratios, seed=seed)
 
     write_columns(df, delta_table)

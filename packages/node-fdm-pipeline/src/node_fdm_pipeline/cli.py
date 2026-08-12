@@ -498,6 +498,123 @@ def download(
     )
 
 
+@app.command(name="download-fleet")
+def download_fleet(
+    *,
+    fleet_dir: Annotated[
+        Path,
+        cyclopts.Parameter(
+            name="--fleet-dir", help="Fleet directory holding types/*/config*.yaml"
+        ),
+    ],
+    workers: Annotated[
+        int,
+        cyclopts.Parameter(
+            name="--workers",
+            help="Concurrent Trino queries; the cluster caps this per account",
+        ),
+    ] = 2,
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Validate the plan without I/O"),
+    ] = False,
+    force_refresh: Annotated[
+        bool,
+        cyclopts.Parameter(name="--force-refresh", help="Bypass cache and re-fetch all data"),
+    ] = False,
+) -> None:
+    """Download every cohort at once: aircraft mutualised per date, dates in parallel.
+
+    ``download --flight-plan`` runs one cohort at a time and asks for that
+    cohort's 2-3 aircraft per day, so the same calendar day is fetched once per
+    cohort. This visits each date once instead, naming every aircraft any cohort
+    wants that day, and routes the rows back into the owning silo — 2,545
+    requests where the per-cohort loop issues 35,000, for the identical payload.
+
+    Dates are independent, so several run concurrently. Keep ``--workers`` at or
+    below the account's Trino concurrency limit; above it, queries are rejected
+    rather than queued. Decoding is not chained here — run ``decode`` per cohort
+    afterwards, which needs no network.
+    """
+    from node_fdm_pipeline.commands._fleet_fetch import download_fleet as run_fleet
+    from node_fdm_pipeline.commands._fleet_plan import build_fleet_plan, discover_cohorts
+
+    plan = build_fleet_plan(discover_cohorts(fleet_dir))
+    run_fleet(plan, workers=workers, force=force_refresh, dry_run=dry_run)
+
+
+@app.command(name="split-from-selection")
+def split_from_selection(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to the cohort's YAML config file"),
+    ],
+    selection: Annotated[
+        Path,
+        cyclopts.Parameter(name="--selection", help="Path to the cohort's selection_*.csv"),
+    ],
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Report coverage without writing"),
+    ] = False,
+) -> None:
+    """Write ``meta_split`` from the stratified selection — replaces ``split``.
+
+    ``split`` assigns train/val/test from a hash of ``raw_icao24``. In the v2
+    pipeline the split is already drawn, before anything is fetched, by
+    ``stratify.py`` — keyed on **MSN**, and stratified across year, hour,
+    duration and region. Re-deriving it here would discard that, and hashing
+    icao24 would split an airframe across sets: 103 MSNs in this fleet carry more
+    than one Mode-S address.
+
+    This carries the decided split onto the table instead. It refuses rather than
+    guesses: an icao24 under two splits, or a row left without one, is an error.
+    """
+    from node_fdm_pipeline.commands._split_from_selection import (
+        split_from_selection as run_split,
+    )
+
+    run_split(config=config, selection=selection, dry_run=dry_run)
+
+
+@app.command(name="decode-fleet")
+def decode_fleet(
+    *,
+    fleet_dir: Annotated[
+        Path,
+        cyclopts.Parameter(
+            name="--fleet-dir", help="Fleet directory holding types/*/config*.yaml"
+        ),
+    ],
+    workers: Annotated[
+        int,
+        cyclopts.Parameter(
+            name="--workers", help="Concurrent decode processes; each peaks near 95-160 GiB"
+        ),
+    ] = 1,
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="List the spans without decoding"),
+    ] = False,
+) -> None:
+    """Decode every cohort's raw cache into its Delta table, several at a time.
+
+    ``download-fleet`` does not chain this: being date-major, it completes no
+    cohort before the final date, so there is nothing to decode incrementally.
+    Decoding is a separate phase and a different bottleneck — no network at all,
+    so it scales with local cores rather than with the Trino quota.
+
+    Each cohort decodes its own span, derived from its own selection. The limit is
+    memory, not cores: one decode of the smallest cohort peaks near 94 GiB and the
+    largest is 1.68x that, so ``--workers`` is a RAM budget — it defaults to 1 and
+    the command warns when the estimate exceeds what is free.
+    """
+    from node_fdm_pipeline.commands._fleet_decode import decode_fleet as run_decode_fleet
+
+    run_decode_fleet(fleet_dir, workers=workers, dry_run=dry_run)
+
+
 @app.command
 def decode(
     *,

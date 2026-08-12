@@ -69,3 +69,6 @@ scripts/debug/conditional_scaling_design.md
 scripts/debug/check_inference2.py
 scripts/debug/grad_norm_diag.py
 scripts/debug/wmm_vec.py
+
+# Fleet download logs — run artefacts, not source
+download-fleet.log*

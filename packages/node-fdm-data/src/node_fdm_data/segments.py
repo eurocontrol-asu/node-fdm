@@ -708,13 +708,23 @@ def _detect_masked(
 
 
 def _backfill_alias(df: pl.DataFrame, src: str, alias: str) -> pl.DataFrame:
+    """Forward/backward-fill *src* into *alias*, coercing to float first.
+
+    The cast is not cosmetic. ``fill_nan`` is undefined on a string column, and
+    a BDS register broadcast by only a handful of samples can reach the table
+    typed as a string — ``bds_fms_alt_sel_ft`` arrived here holding
+    ``'31000.0'`` on 40 rows out of 13 M and failed the whole ``segments`` step
+    with ``is_not_nan not supported for dtype str``.
+
+    ``decode`` now pins these dtypes at the source, so this is the second line
+    of defence: it keeps tables written before that fix usable, and costs
+    nothing on a column that is already numeric.
+    """
+    col = pl.col(src)
+    if df.schema[src] == pl.String:
+        col = col.cast(pl.Float64, strict=False)
     return df.with_columns(
-        pl.col(src)
-        .fill_nan(None)
-        .forward_fill()
-        .backward_fill()
-        .fill_null(pl.lit(float("nan")))
-        .alias(alias)
+        col.fill_nan(None).forward_fill().backward_fill().fill_null(pl.lit(float("nan"))).alias(alias)
     )
 
 

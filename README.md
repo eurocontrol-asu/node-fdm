@@ -88,24 +88,35 @@ fdm aircraft-list --config config.yaml    # List aircraft types in scope
 fdm download --config config.yaml         # Download ADS-B parquet from OpenSky
 
 # 2. Preprocessing
-fdm preprocess --config config.yaml       # Resample, unit-convert, attach raw_* columns
-fdm identify --config config.yaml         # Segment flights and attach metadata
+# identify FIRST: preprocess calls _ensure_identify_ran and fails without meta_flight_id
+fdm identify --config config.yaml         # Segment flights at gaps, attach flightlist metadata
+fdm preprocess --config config.yaml       # Resample to a regular 4 s grid (drops flights < 240 s)
 fdm flag --config config.yaml             # Add fdm_flag_* validity columns (no rows deleted)
 
 # 3. Weather + speed cleaning
 fdm enrich --config config.yaml           # Join ERA5 (era_temp_K, era_mach, era_cas_kt, era_tas_kt, ...)
 fdm clean-speeds --config config.yaml     # Hampel + V-shape + zigzag + on-ground mask on BDS;
                                           # produces bds_mach_clean, bds_ias_kt_clean, bds_tas_kt_clean
-                                          # and the derived bds_tas_from_cas_kt (CAS_clean → TAS via ERA T)
+                                          # and the derived fdm_tas_from_cas_kt (CAS_clean → TAS via ERA T)
 
 # 4. Derived physics + segments + SI
 fdm derive --config config.yaml           # Gamma, lateral, distance, drift, ... from raw + ERA + clean-speeds
 fdm segments --config config.yaml         # FMS plateau detection on bds_mach_clean / bds_ias_kt_clean /
-                                          # bds_tas_from_cas_kt → fdm_*_sel + fdm_tas_target_kt
+                                          # fdm_tas_from_cas_kt → fdm_*_sel + fdm_tas_target_kt
 fdm convert --config config.yaml          # Convert to SI units + finite-difference derivatives
 
-# 5. Split dataset by ICAO group
-fdm split --config config.yaml            # Assign train/val/test split column (meta_split)
+# 5. Split dataset
+# The v2 fleet work draws the split BEFORE downloading, in stratify.py, keyed on
+# MSN and stratified across year/hour/duration/region. Carry that decision onto
+# the table rather than re-deriving it:
+fdm split-from-selection --config config.yaml \
+    --selection .../selection_{cohort}.csv # Join the stratified split → meta_split
+#
+# `fdm split` (below) hashes raw_icao24 instead. It predates the stratified
+# selection and is unsafe with it: 103 MSNs in the v2 fleet carry more than one
+# Mode-S address, so a hash-assigned split puts one airframe in train and test at
+# once while an icao24-based leak check reads zero.
+# fdm split --config config.yaml          # legacy — do not use with a stratified selection
 
 # 6. Training
 fdm train --config config.yaml            # Train Neural ODE model
