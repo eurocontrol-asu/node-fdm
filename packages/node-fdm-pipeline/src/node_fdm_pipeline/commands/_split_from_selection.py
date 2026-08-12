@@ -80,9 +80,7 @@ def _read_selection_splits(selection: Path) -> pl.DataFrame:
             raise SystemExit(f"{selection}: no '{column}' column; is this a stratified selection?")
 
     ambiguous = (
-        frame.group_by("icao24")
-        .agg(pl.col("split").n_unique().alias("n"))
-        .filter(pl.col("n") > 1)
+        frame.group_by("icao24").agg(pl.col("split").n_unique().alias("n")).filter(pl.col("n") > 1)
     )
     if ambiguous.height:
         offenders = ambiguous["icao24"].to_list()[:5]
