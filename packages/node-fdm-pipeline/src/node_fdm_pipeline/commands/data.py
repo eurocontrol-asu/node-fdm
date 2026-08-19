@@ -19,6 +19,7 @@ from typing import TYPE_CHECKING, Any
 import structlog
 
 from node_fdm_pipeline.commands import _raw_cache
+from node_fdm_pipeline.commands._fleet_plan import _parse_plan_day
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -433,7 +434,7 @@ def _read_flight_plan(path: Path) -> dict[str, list[str]]:
         raise SystemExit(f"{path}: needs a 'day' or 'firstseen' column to build a plan")
 
     grouped = (
-        frame.with_columns(day.cast(pl.Datetime).dt.strftime("%Y%m%d").alias("_day"))
+        frame.with_columns(_parse_plan_day(day).dt.strftime("%Y%m%d").alias("_day"))
         .group_by("_day")
         .agg(pl.col("icao24").unique().alias("_icao24"))
         .sort("_day")

@@ -28,6 +28,8 @@ from pathlib import Path
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    import polars as pl
+
     from node_fdm_pipeline.config import PipelineConfig
 
 __all__ = [
@@ -72,11 +74,29 @@ class FleetPlan:
     def requests_saved(self) -> tuple[int, int]:
         """``(per_cohort_requests, mutualised_requests)`` for the same payload."""
         per_cohort = sum(
-            1
-            for date_ac in self.dates.values()
-            for _ in {self.owner[a].name for a in date_ac}
+            1 for date_ac in self.dates.values() for _ in {self.owner[a].name for a in date_ac}
         )
         return per_cohort, len(self.dates)
+
+
+def _parse_plan_day(day: pl.Expr) -> pl.Expr:
+    """Parse a plan's date column, read as text, into a datetime.
+
+    ``infer_schema=False`` reads every column as text, so the date arrives as a
+    string and a bare ``cast(pl.Datetime)`` does not parse it: on a plain ISO
+    date — ``2025-02-17``, the format this module's own docstrings advertise —
+    the cast failed on every row.
+
+    Only the calendar day is ever used (the result is immediately formatted as
+    ``%Y%m%d``), so the time part is noise to be discarded rather than data to
+    be parsed. Taking the first 10 characters and reading them as a date makes
+    the parse independent of what follows: a bare ``2025-02-17``, a
+    space-separated ``2025-02-17 08:31:00`` and an ISO-8601
+    ``2025-02-17T09:02:11Z`` all yield the same day. Inference cannot do this --
+    it picks one format from the leading rows and then fails on any row that
+    does not match it, which a real ``firstseen`` column routinely contains.
+    """
+    return day.str.slice(0, 10).str.to_date("%Y-%m-%d", strict=True)
 
 
 def _read_selection_days(path: Path) -> dict[str, set[str]]:
@@ -98,7 +118,7 @@ def _read_selection_days(path: Path) -> dict[str, set[str]]:
         raise SystemExit(f"{path}: needs a 'day' or 'firstseen' column to build a plan")
 
     grouped = (
-        frame.with_columns(day.cast(pl.Datetime).dt.strftime("%Y%m%d").alias("_day"))
+        frame.with_columns(_parse_plan_day(day).dt.strftime("%Y%m%d").alias("_day"))
         .group_by("_day")
         .agg(pl.col("icao24").unique().alias("_icao24"))
     )
