@@ -1047,9 +1047,25 @@ def flag(
     )
 
 
+def _slice_by_date(df: pl.DataFrame, start_date: str, end_date: str) -> pl.DataFrame:
+    # Dates are YYYY-MM-DD; end_date is exclusive, matching download and decode.
+    # An empty bound leaves that side open.
+    import polars as pl
+
+    day = pl.col("raw_timestamp").dt.date()
+    out = df
+    if start_date:
+        out = out.filter(day >= datetime.strptime(start_date, "%Y-%m-%d").date())
+    if end_date:
+        out = out.filter(day < datetime.strptime(end_date, "%Y-%m-%d").date())
+    return out
+
+
 def enrich(
     *,
     config: Path,
+    start_date: str = "",
+    end_date: str = "",
     dry_run: bool = False,
 ) -> None:
     """Enrich the Delta Table with ERA5 weather data (étape 3).
@@ -1061,8 +1077,23 @@ def enrich(
 
     Existing ``bds_*`` columns are never modified.
 
+    **Enrich one date at a time on a multi-date table.** ``fastmeteo`` fills its
+    local store hour by hour from the earliest to the latest timestamp it is
+    handed (``Grid.sync_local``), with no notion of which days are actually
+    wanted. Passing a table spanning February to November therefore asks it to
+    download every hour of those 258 days -- thousands of global hourly fields,
+    at roughly 4 GB per day -- rather than the four days the table holds. That
+    fills a disk long before it finishes.
+
+    Bounding the window makes the download proportional to the data: one day in,
+    one day fetched. ``write_columns`` merges rather than replaces, so enriching
+    day by day accumulates correctly, and the local ERA5 store can be pruned
+    between days since the interpolated values live in the table afterwards.
+
     Args:
         config: Path to the YAML config file.
+        start_date: Restrict to rows on or after this date (YYYY-MM-DD).
+        end_date: Restrict to rows strictly before this date (YYYY-MM-DD).
         dry_run: Validate config without modifying the Delta Table.
     """
     from node_fdm_data.delta import read_delta_table, write_columns
@@ -1094,6 +1125,13 @@ def enrich(
     arco_grid = ArcoEra5(local_store=str(era5_cache), features=era5_features)
 
     df = read_delta_table(delta_table)
+
+    if start_date or end_date:
+        df = _slice_by_date(df, start_date, end_date)
+        if df.is_empty():
+            log.warning("enrich_empty_window", start_date=start_date, end_date=end_date)
+            return
+        log.info("enrich_window", start_date=start_date, end_date=end_date, rows=len(df))
 
     # Drop existing ERA5 columns to allow re-enrichment
     era_existing = [c for c in df.columns if c.startswith("era_")]

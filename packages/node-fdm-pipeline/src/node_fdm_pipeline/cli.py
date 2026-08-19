@@ -661,15 +661,28 @@ def enrich(
         Path,
         cyclopts.Parameter(help="Path to YAML config file"),
     ],
+    start_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--start-date", help="Only rows from this date (YYYY-MM-DD)"),
+    ] = "",
+    end_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--end-date", help="Only rows before this date (exclusive)"),
+    ] = "",
     dry_run: Annotated[
         bool,
         cyclopts.Parameter(name="--dry-run", help="Validate without I/O"),
     ] = False,
 ) -> None:
-    """Enrich the Delta Table with ERA5 weather data (étape 3)."""
+    """Enrich the Delta Table with ERA5 weather data (étape 3).
+
+    On a multi-date table, enrich ONE DATE AT A TIME: fastmeteo downloads every
+    hour between the earliest and latest timestamp it is given, so a table
+    spanning months asks it for months of global weather fields (~4 GB/day).
+    """
     from node_fdm_pipeline.commands.data import enrich as enrich_fn
 
-    enrich_fn(config=config, dry_run=dry_run)
+    enrich_fn(config=config, start_date=start_date, end_date=end_date, dry_run=dry_run)
 
 
 @app.command
