@@ -4,3 +4,6 @@
 [submodule "papers/paper_node_fdm_v2"]
 	path = papers/paper_node_fdm_v2
 	url = https://github.com/JarryGabriel/paper_node-fdm-v2.git
+[submodule "papers/paper_sids26_control"]
+	path = papers/paper_sids26_control
+	url = https://github.com/JarryGabriel/paper_sids26_control.git
