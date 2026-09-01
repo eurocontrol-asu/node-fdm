@@ -16,6 +16,7 @@ import structlog
 
 from node_fdm_pipeline.commands._fleet_manifest import append_event
 from node_fdm_pipeline.commands.data import (
+    ENRICH_INPUT_COLUMNS,
     EnrichOutcome,
     enrich_with_grid,
     validate_enriched_frame,
@@ -187,7 +188,7 @@ def weather_status(cohort: EnrichmentCohort, day: str) -> tuple[bool, int, float
         return False, 0, 0.0
     frame = (
         scan.filter(pl.col("meta_batch_date") == day.replace("-", ""))
-        .select(_ERA_COLUMNS)
+        .select([*ENRICH_INPUT_COLUMNS, *_ERA_COLUMNS])
         .collect()
     )
     if frame.is_empty():

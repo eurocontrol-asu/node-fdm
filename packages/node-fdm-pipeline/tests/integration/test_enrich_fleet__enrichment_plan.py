@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 from collections.abc import Callable
+from datetime import UTC, datetime
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any, cast
@@ -26,6 +27,17 @@ _ERA_VALUES = {
     "era_mach": [0.7, 0.71],
     "era_cas_kt": [250.0, 251.0],
 }
+_INPUT_VALUES = {
+    "raw_timestamp": [
+        datetime(2024, 1, 1, tzinfo=UTC),
+        datetime(2024, 1, 2, tzinfo=UTC),
+    ],
+    "raw_lat_deg": [48.0, 49.0],
+    "raw_lon_deg": [2.0, 3.0],
+    "raw_alt_ft": [30_000.0, 31_000.0],
+    "raw_gs_kt": [400.0, 410.0],
+    "raw_track_deg": [90.0, 91.0],
+}
 
 
 def _cohort(name: str, root: Path) -> _fleet_enrich.EnrichmentCohort:
@@ -43,6 +55,7 @@ def test_plan_and_status_read_actual_delta_partitions(
     frame = pl.DataFrame(
         {
             "meta_batch_date": ["20240101", "20240102"],
+            **_INPUT_VALUES,
             **_ERA_VALUES,
         }
     )
@@ -73,6 +86,7 @@ def test_enrich_with_grid_reads_and_overwrites_only_one_delta_day(
         {
             "meta_batch_date": ["20240101", "20240102"],
             "raw_marker": [1, 2],
+            **_INPUT_VALUES,
         }
     )
     source.write_delta(

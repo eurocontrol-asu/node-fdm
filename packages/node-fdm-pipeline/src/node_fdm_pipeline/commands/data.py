@@ -1071,6 +1071,18 @@ class EnrichOutcome:
     max_null_fraction: float
 
 
+ENRICH_INPUT_COLUMNS = (
+    "raw_timestamp",
+    "raw_lat_deg",
+    "raw_lon_deg",
+    "raw_alt_ft",
+    "raw_gs_kt",
+    "raw_track_deg",
+)
+_ERA_SOURCE_COLUMNS = ("era_temp_K", "era_u_wind_ms", "era_v_wind_ms")
+_ERA_DERIVED_COLUMNS = ("era_tas_kt", "era_mach", "era_cas_kt")
+
+
 def _read_enrichment_window(delta_table: Path, start_date: str, end_date: str) -> pl.DataFrame:
     """Read only the requested Delta partitions instead of the whole cohort."""
     import polars as pl
@@ -1088,35 +1100,47 @@ def _read_enrichment_window(delta_table: Path, start_date: str, end_date: str) -
     return scan.collect()
 
 
-def validate_enriched_frame(df: pl.DataFrame, null_threshold: float) -> EnrichOutcome:
-    """Reject incomplete ERA5 output before it can be treated as durable."""
+def _eligible_null_fractions(
+    df: pl.DataFrame,
+    outputs: tuple[str, ...],
+    inputs: tuple[str, ...],
+) -> dict[str, float]:
     import polars as pl
 
+    eligible = df.filter(pl.all_horizontal(pl.col(column).is_not_null() for column in inputs))
+    if eligible.is_empty():
+        return dict.fromkeys(outputs, 0.0)
+    values = eligible.select(
+        [
+            (pl.col(column).is_null() | pl.col(column).is_nan()).mean().alias(column)
+            for column in outputs
+        ]
+    ).row(0, named=True)
+    return {column: float(value or 0.0) for column, value in values.items()}
+
+
+def validate_enriched_frame(df: pl.DataFrame, null_threshold: float) -> EnrichOutcome:
+    """Validate ERA5 output among rows whose required ADS-B inputs exist."""
+
     era_columns = tuple(c for c in df.columns if c.startswith("era_"))
-    required = {
-        "era_temp_K",
-        "era_u_wind_ms",
-        "era_v_wind_ms",
-        "era_tas_kt",
-        "era_mach",
-        "era_cas_kt",
-    }
-    missing = sorted(required.difference(era_columns))
+    required = {*ENRICH_INPUT_COLUMNS, *_ERA_SOURCE_COLUMNS, *_ERA_DERIVED_COLUMNS}
+    missing = sorted(required.difference(df.columns))
     if missing:
-        raise RuntimeError(f"ERA5 enrichment missing columns: {', '.join(missing)}")
+        raise RuntimeError(f"ERA5 validation missing columns: {', '.join(missing)}")
     if df.is_empty():
         return EnrichOutcome(rows=0, era_columns=era_columns, max_null_fraction=0.0)
 
-    fractions = df.select(
-        [
-            (pl.col(column).is_null() | pl.col(column).is_nan()).mean().alias(column)
-            for column in era_columns
-        ]
-    ).row(0, named=True)
-    worst_column, worst_fraction = max(
-        ((column, float(value or 0.0)) for column, value in fractions.items()),
-        key=lambda item: item[1],
+    source_inputs = ENRICH_INPUT_COLUMNS[:4]
+    derived_inputs = (*source_inputs, *ENRICH_INPUT_COLUMNS[4:], *_ERA_SOURCE_COLUMNS)
+    groups = (
+        (_ERA_SOURCE_COLUMNS, source_inputs),
+        (_ERA_DERIVED_COLUMNS, derived_inputs),
     )
+    fractions: dict[str, float] = {}
+    for outputs, inputs in groups:
+        fractions.update(_eligible_null_fractions(df, outputs, inputs))
+
+    worst_column, worst_fraction = max(fractions.items(), key=lambda item: item[1])
     if worst_fraction > null_threshold:
         raise RuntimeError(
             f"ERA5 null fraction {worst_fraction:.3%} in {worst_column} exceeds "

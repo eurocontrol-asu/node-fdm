@@ -46,6 +46,12 @@ def test_enrichment_validation_rejects_excessive_nulls() -> None:
 
     frame = pl.DataFrame(
         {
+            "raw_timestamp": [datetime(2024, 1, 1), datetime(2024, 1, 1, 1)],
+            "raw_lat_deg": [48.0, 49.0],
+            "raw_lon_deg": [2.0, 3.0],
+            "raw_alt_ft": [30_000.0, 31_000.0],
+            "raw_gs_kt": [400.0, 410.0],
+            "raw_track_deg": [90.0, 91.0],
             "era_temp_K": [280.0, None],
             "era_u_wind_ms": [1.0, None],
             "era_v_wind_ms": [2.0, None],
@@ -64,6 +70,12 @@ def test_enrichment_validation_reports_complete_output() -> None:
 
     frame = pl.DataFrame(
         {
+            "raw_timestamp": [datetime(2024, 1, 1)],
+            "raw_lat_deg": [48.0],
+            "raw_lon_deg": [2.0],
+            "raw_alt_ft": [30_000.0],
+            "raw_gs_kt": [400.0],
+            "raw_track_deg": [90.0],
             "era_temp_K": [280.0],
             "era_u_wind_ms": [1.0],
             "era_v_wind_ms": [2.0],
@@ -76,6 +88,32 @@ def test_enrichment_validation_reports_complete_output() -> None:
     outcome = validate_enriched_frame(frame, 0.05)
 
     assert outcome.rows == 1
+    assert outcome.max_null_fraction == 0.0
+
+
+def test_enrichment_validation_ignores_rows_without_adsb_inputs() -> None:
+    from node_fdm_pipeline.commands.data import validate_enriched_frame
+
+    frame = pl.DataFrame(
+        {
+            "raw_timestamp": [datetime(2024, 1, 1), None],
+            "raw_lat_deg": [48.0, None],
+            "raw_lon_deg": [2.0, None],
+            "raw_alt_ft": [30_000.0, None],
+            "raw_gs_kt": [400.0, None],
+            "raw_track_deg": [90.0, None],
+            "era_temp_K": [280.0, None],
+            "era_u_wind_ms": [1.0, None],
+            "era_v_wind_ms": [2.0, None],
+            "era_tas_kt": [300.0, None],
+            "era_mach": [0.7, None],
+            "era_cas_kt": [250.0, None],
+        }
+    )
+
+    outcome = validate_enriched_frame(frame, 0.05)
+
+    assert outcome.rows == 2
     assert outcome.max_null_fraction == 0.0
 
 
