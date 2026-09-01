@@ -411,7 +411,7 @@ class PipelineConfig(BaseModel, frozen=True):
         return v
 
     @classmethod
-    def from_yaml(cls, path: Path) -> Self:
+    def from_yaml(cls, path: Path, *, data_root: Path | None = None) -> Self:
         """Load and validate configuration from a YAML file.
 
         Args:
@@ -424,7 +424,25 @@ class PipelineConfig(BaseModel, frozen=True):
             FileNotFoundError: If *path* does not exist.
             pydantic.ValidationError: If the YAML content is invalid.
         """
+        import os
+
         import yaml
 
         data = yaml.safe_load(path.read_text())
-        return cls.model_validate(data)
+        cfg = cls.model_validate(data)
+
+        configured_root = data_root
+        if configured_root is None and (environment_root := os.environ.get("NODE_FDM_DATA")):
+            configured_root = Path(environment_root).expanduser()
+        if configured_root is None:
+            return cfg
+
+        root = configured_root.expanduser().resolve()
+        cohort_name = cfg.paths.data_dir.name
+        paths = cfg.paths.model_copy(
+            update={
+                "data_dir": root / cohort_name,
+                "era5_cache_dir": str(root / "era5_cache"),
+            }
+        )
+        return cfg.model_copy(update={"paths": paths})

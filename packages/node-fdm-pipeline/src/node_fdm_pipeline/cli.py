@@ -511,9 +511,16 @@ def download_fleet(
         int,
         cyclopts.Parameter(
             name="--workers",
-            help="Concurrent Trino queries; the cluster caps this per account",
+            help="Must be 1: measured Trino throughput collapses with concurrency",
         ),
-    ] = 2,
+    ] = 1,
+    data_root: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--data-root",
+            help="Portable fleet data root; overrides paths embedded in configs",
+        ),
+    ] = None,
     dry_run: Annotated[
         bool,
         cyclopts.Parameter(name="--dry-run", help="Validate the plan without I/O"),
@@ -523,24 +530,35 @@ def download_fleet(
         cyclopts.Parameter(name="--force-refresh", help="Bypass cache and re-fetch all data"),
     ] = False,
 ) -> None:
-    """Download every cohort at once: aircraft mutualised per date, dates in parallel.
+    """Download every cohort at once, mutualised per date and strictly sequential.
 
     ``download --flight-plan`` runs one cohort at a time and asks for that
     cohort's 2-3 aircraft per day, so the same calendar day is fetched once per
-    cohort. This visits each date once instead, naming every aircraft any cohort
-    wants that day, and routes the rows back into the owning silo — 2,545
-    requests where the per-cohort loop issues 35,000, for the identical payload.
+    cohort. This visits each date once instead, names every aircraft any cohort
+    wants that day, and routes the rows back into the owning silo.
 
-    Dates are independent, so several run concurrently. Keep ``--workers`` at or
-    below the account's Trino concurrency limit; above it, queries are rejected
-    rather than queued. Decoding is not chained here — run ``decode`` per cohort
-    afterwards, which needs no network.
+    A measured two-query run hit Trino's 30-minute limit on both batches while
+    the same two batches finished sequentially in 6m20s. Consequently this
+    command rejects ``--workers`` other than one. Decoding is not chained here.
     """
+    if workers != 1:
+        raise SystemExit("--workers must be 1; concurrent Trino queries time out")
+
     from node_fdm_pipeline.commands._fleet_fetch import download_fleet as run_fleet
     from node_fdm_pipeline.commands._fleet_plan import build_fleet_plan, discover_cohorts
 
-    plan = build_fleet_plan(discover_cohorts(fleet_dir))
-    run_fleet(plan, workers=workers, force=force_refresh, dry_run=dry_run)
+    plan = build_fleet_plan(discover_cohorts(fleet_dir), data_root=data_root)
+    root = next(iter(plan.cohorts)).cfg.paths.data_dir.parent
+    outcomes = run_fleet(
+        plan,
+        workers=workers,
+        force=force_refresh,
+        dry_run=dry_run,
+        manifest_path=root / "download-fleet.manifest.jsonl",
+    )
+    failed = [outcome for outcome in outcomes if outcome.error]
+    if failed:
+        raise SystemExit(f"download-fleet failed on {len(failed)} date(s); see manifest")
 
 
 @app.command(name="split-from-selection")

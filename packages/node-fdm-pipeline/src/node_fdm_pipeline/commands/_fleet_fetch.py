@@ -26,7 +26,6 @@ from __future__ import annotations
 import random
 import threading
 import time
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from typing import TYPE_CHECKING, Any
@@ -117,7 +116,6 @@ QUEUE_BACKOFF_S = 20.0
 #: dates in flight against a two-query quota, the retries piling onto the very
 #: queue they were waiting for. This semaphore is released around the sleep, so
 #: what it bounds is queries at the cluster, not threads in the pool.
-_in_flight = threading.Semaphore(DEFAULT_WORKERS)
 
 #: Substrings identifying a refusal that is worth retrying. Matched on the message
 #: because ``traffic`` re-raises Trino's error as a plain ``RuntimeError``.
@@ -183,22 +181,20 @@ def _fetch_with_retry(
             not a capacity refusal.
     """
     for attempt in range(1, QUEUE_RETRIES + 1):
-        # Held only while a query is actually at the cluster. Sleeping inside it
-        # would be the bug this exists to fix: a backoff must free the slot so a
-        # ready worker can use it, not sit on the quota while waiting for it.
-        with _in_flight:
-            try:
-                return fetcher(start, end, icao24=icao)
-            except Exception as exc:
-                if not _is_retryable(exc) or attempt == QUEUE_RETRIES:
-                    raise
-                delay = QUEUE_BACKOFF_S * (2 ** (attempt - 1)) * (0.5 + random.random())  # noqa: S311
-                log.warning(
-                    "fleet_queue_full",
-                    date=date_str,
-                    attempt=f"{attempt}/{QUEUE_RETRIES}",
-                    sleep_s=round(delay, 1),
-                )
+        try:
+            # The pipeline raw store is the sole durable cache. pyopensky's
+            # query cache duplicates the payload without helping resume.
+            return fetcher(start, end, icao24=icao, cached=False)
+        except Exception as exc:
+            if not _is_retryable(exc) or attempt == QUEUE_RETRIES:
+                raise
+            delay = QUEUE_BACKOFF_S * (2 ** (attempt - 1)) * (0.5 + random.random())  # noqa: S311
+            log.warning(
+                "fleet_queue_full",
+                date=date_str,
+                attempt=f"{attempt}/{QUEUE_RETRIES}",
+                sleep_s=round(delay, 1),
+            )
         time.sleep(delay)
     raise AssertionError("unreachable")  # pragma: no cover
 
@@ -238,9 +234,7 @@ def _dispatch_history(
     for icao24, cohort in wanted.items():
         sub = pdf[pdf["icao24"] == icao24] if has_column else pdf
         frame = pl.from_pandas(sub) if not isinstance(sub, pl.DataFrame) else sub
-        _raw_cache.write_atomic(
-            _raw_cache.cache_path(cohort.cfg, kind, date_str, icao24), frame
-        )
+        _raw_cache.write_atomic(_raw_cache.cache_path(cohort.cfg, kind, date_str, icao24), frame)
         written += 1
     return written
 
@@ -269,9 +263,7 @@ def _collect_flightlist(
 
     for name, (cohort, aircraft) in by_cohort.items():
         subset = (
-            frame.filter(pl.col("icao24").is_in(aircraft))
-            if "icao24" in frame.columns
-            else frame
+            frame.filter(pl.col("icao24").is_in(aircraft)) if "icao24" in frame.columns else frame
         )
         if subset.height:
             into.setdefault(name, (cohort, []))[1].append(subset)
@@ -370,14 +362,86 @@ def fetch_one_date(plan: FleetPlan, date_str: str, *, force: bool = False) -> Da
     )
 
 
+def _append_manifest(manifest_path: Any | None, event: dict[str, Any]) -> None:
+    """Append *event* when campaign auditing is enabled."""
+    if manifest_path is None:
+        return
+    from node_fdm_pipeline.commands._fleet_manifest import append_event
+
+    append_event(manifest_path, event)
+
+
+def _plan_digest(plan: FleetPlan) -> str:
+    """Hash the ordered aircraft-day plan recorded by the campaign manifest."""
+    import hashlib
+
+    digest = hashlib.sha256()
+    for date in sorted(plan.dates):
+        aircraft = plan.dates[date]
+        digest.update(date.encode())
+        digest.update(b"\0")
+        for icao24 in sorted(aircraft):
+            digest.update(icao24.encode())
+            digest.update(b"\0")
+    return digest.hexdigest()
+
+
+def _date_event(outcome: DateOutcome) -> dict[str, Any]:
+    """Serialize the stable, public part of a date outcome."""
+    return {
+        "event": "date_finished",
+        "date": outcome.date,
+        "requested": outcome.requested,
+        "written": outcome.written,
+        "requests": outcome.requests,
+        "empty_kinds": list(outcome.empty_kinds),
+        "error": outcome.error,
+    }
+
+
+def _log_date_outcome(outcome: DateOutcome, done: int, total: int) -> None:
+    """Emit one progress record at the appropriate severity."""
+    if outcome.error:
+        log.error("fleet_date_failed", date=outcome.date, error=outcome.error)
+        return
+    log.info(
+        "fleet_date_done",
+        date=outcome.date,
+        aircraft=outcome.requested,
+        written=outcome.written,
+        requests=outcome.requests,
+        progress=f"{done}/{total}",
+    )
+
+
+def _run_summary(outcomes: list[DateOutcome]) -> tuple[list[DateOutcome], dict[str, Any]]:
+    """Return failed dates and the terminal manifest event."""
+    failed = [outcome for outcome in outcomes if outcome.error]
+    event: dict[str, Any] = {
+        "event": "run_finished",
+        "dates": len(outcomes),
+        "failed": len(failed),
+        "written": sum(outcome.written for outcome in outcomes),
+        "requests": sum(outcome.requests for outcome in outcomes),
+    }
+    return failed, event
+
+
 def download_fleet(
     plan: FleetPlan,
     *,
     workers: int = DEFAULT_WORKERS,
     force: bool = False,
     dry_run: bool = False,
+    manifest_path: Any | None = None,
 ) -> list[DateOutcome]:
-    """Download every date in *plan*, mutualised per date, *workers* at a time."""
+    """Download every date in *plan* through one strictly sequential stream."""
+    if workers != 1:
+        raise ValueError(
+            "download-fleet is deliberately sequential; --workers must be 1 "
+            "because two Trino queries time out instead of increasing throughput"
+        )
+
     per_cohort, mutualised = plan.requests_saved()
     log.info(
         "fleet_plan",
@@ -392,40 +456,39 @@ def download_fleet(
         log.info("fleet_dry_run", msg="Plan valid, would download")
         return []
 
+    _append_manifest(
+        manifest_path,
+        {
+            "event": "run_started",
+            "cohorts": len(plan.cohorts),
+            "dates": len(plan.dates),
+            "aircraft_days": plan.aircraft_days,
+            "plan_sha256": _plan_digest(plan),
+            "force": force,
+        },
+    )
+
     _get_opensky()  # resolve the lazy import once, before any worker touches it
 
     outcomes: list[DateOutcome] = []
     done = 0
     total = len(plan.dates)
-    with ThreadPoolExecutor(max_workers=workers) as pool:
-        futures = {
-            pool.submit(fetch_one_date, plan, date_str, force=force): date_str
-            for date_str in plan.dates
-        }
-        for future in as_completed(futures):
-            outcome = future.result()
-            outcomes.append(outcome)
-            done += 1
-            if outcome.error:
-                log.error("fleet_date_failed", date=outcome.date, error=outcome.error)
-            else:
-                log.info(
-                    "fleet_date_done",
-                    date=outcome.date,
-                    aircraft=outcome.requested,
-                    written=outcome.written,
-                    requests=outcome.requests,
-                    progress=f"{done}/{total}",
-                )
+    for date_str in plan.dates:
+        outcome = fetch_one_date(plan, date_str, force=force)
+        outcomes.append(outcome)
+        done += 1
+        _append_manifest(manifest_path, _date_event(outcome))
+        _log_date_outcome(outcome, done, total)
 
-    failed = [o for o in outcomes if o.error]
+    failed, summary = _run_summary(outcomes)
     log.info(
         "fleet_done",
-        dates=len(outcomes),
-        failed=len(failed),
-        written=sum(o.written for o in outcomes),
-        requests=sum(o.requests for o in outcomes),
+        dates=summary["dates"],
+        failed=summary["failed"],
+        written=summary["written"],
+        requests=summary["requests"],
     )
     if failed:
         log.warning("fleet_failed_dates", dates=[o.date for o in failed][:20])
+    _append_manifest(manifest_path, summary)
     return outcomes

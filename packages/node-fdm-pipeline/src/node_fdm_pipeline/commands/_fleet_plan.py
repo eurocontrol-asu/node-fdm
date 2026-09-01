@@ -147,7 +147,9 @@ def discover_cohorts(fleet_dir: Path) -> list[tuple[str, Path, Path]]:
     return out
 
 
-def build_fleet_plan(triples: list[tuple[str, Path, Path]]) -> FleetPlan:
+def build_fleet_plan(
+    triples: list[tuple[str, Path, Path]], *, data_root: Path | None = None
+) -> FleetPlan:
     """Invert per-cohort selections into one date-major, mutualised plan.
 
     Raises:
@@ -168,7 +170,7 @@ def build_fleet_plan(triples: list[tuple[str, Path, Path]]) -> FleetPlan:
             name=name,
             config_path=config_path,
             selection_path=selection_path,
-            cfg=PipelineConfig.from_yaml(config_path),
+            cfg=PipelineConfig.from_yaml(config_path, data_root=data_root),
             icao24=frozenset(icao),
         )
         cohorts.append(cohort)

@@ -341,7 +341,7 @@ def _fetch_and_cache_window(  # noqa: PLR0913
     api = opensky if opensky is not None else _get_opensky()
 
     if kind == "flightlist":
-        result = api.flightlist(start, end, icao24=icao24_misses)
+        result = api.flightlist(start, end, icao24=icao24_misses, cached=False)
         if result is None:
             log.warning("download_empty", kind=kind, date=date_str)
             return
@@ -350,7 +350,7 @@ def _fetch_and_cache_window(  # noqa: PLR0913
         return
 
     fetcher = api.history if kind == "history" else api.extended
-    result = fetcher(start, end, icao24=icao24_misses)
+    result = fetcher(start, end, icao24=icao24_misses, cached=False)
     if result is None:
         log.warning("download_empty", kind=kind, date=date_str)
         return

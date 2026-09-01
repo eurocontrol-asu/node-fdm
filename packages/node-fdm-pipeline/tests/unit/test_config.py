@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import pytest
@@ -224,3 +225,29 @@ class TestPipelineConfigLateralBlock:
         assert cfg.lateral_detection.rate_threshold == 0.10
         assert cfg.lateral_detection.bilateral_sigma_s == 8.0
         assert cfg.lateral_detection.bilateral_passes == 2
+
+
+def test_explicit_data_root_rebases_cohort_and_shared_weather_cache(
+    tmp_path: Path, make_config: Callable[..., Path]
+) -> None:
+    config = make_config(tmp_path / "config.yaml", "/old/machine/A320neo__PW1100G")
+    root = tmp_path / "portable"
+
+    cfg = PipelineConfig.from_yaml(config, data_root=root)
+
+    assert cfg.paths.data_dir == root.resolve() / "A320neo__PW1100G"
+    assert cfg.paths.resolve("era5_cache_dir") == root.resolve() / "era5_cache"
+
+
+def test_node_fdm_data_environment_rebases_config(
+    tmp_path: Path,
+    make_config: Callable[..., Path],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    config = make_config(tmp_path / "config.yaml", "/old/machine/E170")
+    root = tmp_path / "environment-root"
+    monkeypatch.setenv("NODE_FDM_DATA", str(root))
+
+    cfg = PipelineConfig.from_yaml(config)
+
+    assert cfg.paths.data_dir == root.resolve() / "E170"

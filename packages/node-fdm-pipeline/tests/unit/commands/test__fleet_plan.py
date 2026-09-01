@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from collections.abc import Callable
 from pathlib import Path
 
 import polars as pl
@@ -72,6 +73,23 @@ def test_plan_groups_aircraft_by_day(tmp_path: Path) -> None:
     assert sorted(plan) == ["20250217", "20250521"]
     assert sorted(plan["20250217"]) == ["aaa111", "bbb222"]
     assert plan["20250521"] == ["aaa111"]
+
+
+def test_build_fleet_plan_rejects_cross_cohort_identity(
+    tmp_path: Path, make_config: Callable[..., Path]
+) -> None:
+    """One Mode-S identity cannot silently dispatch into two model silos."""
+    from node_fdm_pipeline.commands._fleet_plan import build_fleet_plan
+
+    triples: list[tuple[str, Path, Path]] = []
+    for name in ("A320neo", "A321neo"):
+        config = make_config(tmp_path / f"{name}.yaml", tmp_path / name)
+        selection = tmp_path / f"selection_{name}.csv"
+        pl.DataFrame({"icao24": ["424461"], "day": ["2020-01-01"]}).write_csv(selection)
+        triples.append((name, config, selection))
+
+    with pytest.raises(SystemExit, match=r"424461.*A320neo.*A321neo"):
+        build_fleet_plan(triples)
 
 
 def test_plan_without_a_date_column_is_rejected(tmp_path: Path) -> None:

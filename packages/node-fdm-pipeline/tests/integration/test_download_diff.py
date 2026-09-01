@@ -176,6 +176,12 @@ def test_download_cold_calls_trino_per_date_per_kind(
     assert mock_opensky.history.call_count == 1
     assert mock_opensky.extended.call_count == 1
     assert mock_opensky.flightlist.call_count == 1
+    for fetcher in (
+        mock_opensky.history,
+        mock_opensky.extended,
+        mock_opensky.flightlist,
+    ):
+        assert fetcher.call_args.kwargs["cached"] is False
 
 
 def test_download_warm_zero_trino_calls(
