@@ -703,6 +703,68 @@ def enrich(
     enrich_fn(config=config, start_date=start_date, end_date=end_date, dry_run=dry_run)
 
 
+@app.command(name="enrich-fleet")
+def enrich_fleet(
+    *,
+    fleet_dir: Annotated[
+        Path,
+        cyclopts.Parameter(
+            name="--fleet-dir", help="Fleet directory holding types/*/config*.yaml"
+        ),
+    ],
+    data_root: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--data-root",
+            help="Portable fleet data root; overrides paths embedded in configs",
+        ),
+    ] = None,
+    start_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--start-date", help="First day to enrich (YYYY-MM-DD)"),
+    ] = "",
+    end_date: Annotated[
+        str,
+        cyclopts.Parameter(name="--end-date", help="Stop before this day (exclusive, YYYY-MM-DD)"),
+    ] = "",
+    dry_run: Annotated[
+        bool,
+        cyclopts.Parameter(name="--dry-run", help="Inspect decoded dates without weather I/O"),
+    ] = False,
+) -> None:
+    """Enrich every decoded cohort date-major with one disposable ERA5 cache per day.
+
+    The day cache is shared by all cohorts that contain that date. It is deleted
+    only after every Delta write has been read back and passed its null threshold.
+    A failed day retains its cache and stops the campaign before the next date;
+    rerunning skips cohorts whose durable output is already complete.
+    """
+    from node_fdm_pipeline.commands._fleet_enrich import (
+        build_enrichment_plan,
+    )
+    from node_fdm_pipeline.commands._fleet_enrich import (
+        enrich_fleet as run_enrich_fleet,
+    )
+    from node_fdm_pipeline.commands._fleet_plan import discover_cohorts
+
+    plan = build_enrichment_plan(
+        discover_cohorts(fleet_dir),
+        data_root=data_root,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    outcomes = run_enrich_fleet(
+        plan,
+        dry_run=dry_run,
+        manifest_path=plan.cache_root.parent / "enrich-fleet.manifest.jsonl",
+    )
+    failed = [outcome for outcome in outcomes if outcome.error]
+    if failed:
+        raise SystemExit(
+            f"enrich-fleet stopped on {failed[0].day}; cache retained for resume; see manifest"
+        )
+
+
 @app.command
 def derive(
     *,

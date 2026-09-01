@@ -12,6 +12,7 @@ import multiprocessing
 import os
 import sys
 from concurrent.futures import ProcessPoolExecutor
+from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -1061,6 +1062,100 @@ def _slice_by_date(df: pl.DataFrame, start_date: str, end_date: str) -> pl.DataF
     return out
 
 
+@dataclass(frozen=True)
+class EnrichOutcome:
+    """Result of one bounded ERA5 enrichment write."""
+
+    rows: int
+    era_columns: tuple[str, ...]
+    max_null_fraction: float
+
+
+def _read_enrichment_window(delta_table: Path, start_date: str, end_date: str) -> pl.DataFrame:
+    """Read only the requested Delta partitions instead of the whole cohort."""
+    import polars as pl
+    from node_fdm_data.delta import read_delta_table
+
+    if not start_date and not end_date:
+        return read_delta_table(delta_table)
+
+    scan = pl.scan_delta(str(delta_table))
+    batch_day = pl.col("meta_batch_date")
+    if start_date:
+        scan = scan.filter(batch_day >= start_date.replace("-", ""))
+    if end_date:
+        scan = scan.filter(batch_day < end_date.replace("-", ""))
+    return scan.collect()
+
+
+def validate_enriched_frame(df: pl.DataFrame, null_threshold: float) -> EnrichOutcome:
+    """Reject incomplete ERA5 output before it can be treated as durable."""
+    import polars as pl
+
+    era_columns = tuple(c for c in df.columns if c.startswith("era_"))
+    required = {
+        "era_temp_K",
+        "era_u_wind_ms",
+        "era_v_wind_ms",
+        "era_tas_kt",
+        "era_mach",
+        "era_cas_kt",
+    }
+    missing = sorted(required.difference(era_columns))
+    if missing:
+        raise RuntimeError(f"ERA5 enrichment missing columns: {', '.join(missing)}")
+    if df.is_empty():
+        return EnrichOutcome(rows=0, era_columns=era_columns, max_null_fraction=0.0)
+
+    fractions = df.select(
+        [
+            (pl.col(column).is_null() | pl.col(column).is_nan()).mean().alias(column)
+            for column in era_columns
+        ]
+    ).row(0, named=True)
+    worst_column, worst_fraction = max(
+        ((column, float(value or 0.0)) for column, value in fractions.items()),
+        key=lambda item: item[1],
+    )
+    if worst_fraction > null_threshold:
+        raise RuntimeError(
+            f"ERA5 null fraction {worst_fraction:.3%} in {worst_column} exceeds "
+            f"configured threshold {null_threshold:.3%}"
+        )
+    return EnrichOutcome(
+        rows=len(df),
+        era_columns=era_columns,
+        max_null_fraction=worst_fraction,
+    )
+
+
+def enrich_with_grid(
+    cfg: PipelineConfig,
+    arco_grid: Any,
+    *,
+    start_date: str = "",
+    end_date: str = "",
+) -> EnrichOutcome:
+    """Enrich one bounded cohort window with an already-shared ERA5 grid."""
+    from node_fdm_data.delta import write_columns
+    from node_fdm_data.meteo import enrich_era5
+
+    delta_table = cfg.paths.resolve("delta_table")
+    df = _read_enrichment_window(delta_table, start_date, end_date)
+    if df.is_empty():
+        return EnrichOutcome(rows=0, era_columns=(), max_null_fraction=0.0)
+
+    era_existing = [c for c in df.columns if c.startswith("era_")]
+    if era_existing:
+        log.info("enrich_drop_existing", columns=era_existing)
+        df = df.drop(era_existing)
+
+    enriched = enrich_era5(df, arco_grid)
+    outcome = validate_enriched_frame(enriched, cfg.era5_null_threshold)
+    write_columns(enriched, delta_table)
+    return outcome
+
+
 def enrich(
     *,
     config: Path,
@@ -1096,9 +1191,6 @@ def enrich(
         end_date: Restrict to rows strictly before this date (YYYY-MM-DD).
         dry_run: Validate config without modifying the Delta Table.
     """
-    from node_fdm_data.delta import read_delta_table, write_columns
-    from node_fdm_data.meteo import enrich_era5
-
     from node_fdm_pipeline.config import PipelineConfig
 
     cfg = PipelineConfig.from_yaml(config)
@@ -1124,30 +1216,22 @@ def enrich(
     era5_features = cfg.era5_features or None
     arco_grid = ArcoEra5(local_store=str(era5_cache), features=era5_features)
 
-    df = read_delta_table(delta_table)
-
+    outcome = enrich_with_grid(
+        cfg,
+        arco_grid,
+        start_date=start_date,
+        end_date=end_date,
+    )
+    if outcome.rows == 0:
+        log.warning("enrich_empty_window", start_date=start_date, end_date=end_date)
+        return
     if start_date or end_date:
-        df = _slice_by_date(df, start_date, end_date)
-        if df.is_empty():
-            log.warning("enrich_empty_window", start_date=start_date, end_date=end_date)
-            return
-        log.info("enrich_window", start_date=start_date, end_date=end_date, rows=len(df))
-
-    # Drop existing ERA5 columns to allow re-enrichment
-    era_existing = [c for c in df.columns if c.startswith("era_")]
-    if era_existing:
-        log.info("enrich_drop_existing", columns=era_existing)
-        df = df.drop(era_existing)
-
-    df = enrich_era5(df, arco_grid)
-
-    write_columns(df, delta_table)
-
-    era_cols = [c for c in df.columns if c.startswith("era_")]
+        log.info("enrich_window", start_date=start_date, end_date=end_date, rows=outcome.rows)
     log.info(
         "enrich_done",
-        rows=len(df),
-        era_cols=era_cols,
+        rows=outcome.rows,
+        era_cols=outcome.era_columns,
+        max_null_fraction=outcome.max_null_fraction,
     )
 
 
