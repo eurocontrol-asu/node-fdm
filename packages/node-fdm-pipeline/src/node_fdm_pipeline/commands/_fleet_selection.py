@@ -105,6 +105,31 @@ def _acquisition_key(identity: FlightIdentity) -> str:
     return hashlib.sha256(canonical_identity.encode()).hexdigest()
 
 
+def _cohorts_by_identity(
+    rows: Iterable[Mapping[str, object]],
+) -> dict[FlightIdentity, set[str]]:
+    cohorts_by_identity: dict[FlightIdentity, set[str]] = {}
+    for raw_row in rows:
+        row = _SelectionRow.model_validate(raw_row)
+        identity = _identity(row)
+        cohorts_by_identity.setdefault(identity, set()).add(row.cohort)
+    return cohorts_by_identity
+
+
+def _selection_flights(
+    cohorts_by_identity: dict[FlightIdentity, set[str]],
+) -> tuple[SelectedFlight, ...]:
+    return tuple(
+        _selected_flight(identity, cohorts)
+        for identity, cohorts in sorted(cohorts_by_identity.items())
+    )
+
+
+def _selection_digest(flights: tuple[SelectedFlight, ...]) -> str:
+    payload = _canonical_json(_digest_payload(flights)).encode()
+    return hashlib.sha256(payload).hexdigest()
+
+
 def _selected_flight(identity: FlightIdentity, cohorts: set[str]) -> SelectedFlight:
     icao24, callsign, firstseen, lastseen, msn, split = identity
     return SelectedFlight(
@@ -133,15 +158,5 @@ def _digest_payload(flights: tuple[SelectedFlight, ...]) -> list[dict[str, objec
 
 def compile_selection(rows: Iterable[Mapping[str, object]]) -> SelectionPlan:
     """Mutualise identical flights while preserving every cohort assignment."""
-    cohorts_by_identity: dict[FlightIdentity, set[str]] = {}
-    for raw_row in rows:
-        row = _SelectionRow.model_validate(raw_row)
-        identity = _identity(row)
-        cohorts_by_identity.setdefault(identity, set()).add(row.cohort)
-
-    flights = tuple(
-        _selected_flight(identity, cohorts)
-        for identity, cohorts in sorted(cohorts_by_identity.items())
-    )
-    digest = hashlib.sha256(_canonical_json(_digest_payload(flights)).encode()).hexdigest()
-    return SelectionPlan(flights=flights, digest=digest)
+    flights = _selection_flights(_cohorts_by_identity(rows))
+    return SelectionPlan(flights=flights, digest=_selection_digest(flights))
