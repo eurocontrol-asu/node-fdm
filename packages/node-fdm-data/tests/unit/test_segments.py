@@ -16,6 +16,8 @@ import polars as pl
 import pytest
 from node_fdm_pipeline.config import AltFilterConfig
 
+import node_fdm_data.segments as segments_module
+from node_fdm_data import load_profile
 from node_fdm_data.segments import (
     add_segment_column,
     build_selected_params,
@@ -2717,3 +2719,172 @@ class TestTasTargetForwardBackwardFill:
         assert not np.isnan(alt_target).any(), "fdm_alt_target_ft must be fully filled"
         # Anchor invariant: last row equals the raw altitude at that point.
         assert np.isclose(alt_target[-1], raw_alt[-1])
+
+
+_PROFILE_NAME = "opensky26-exp03-v1"
+_PROFILE_SEGMENT_COLUMNS = (
+    "fdm_alt_sel_ft",
+    "fdm_gamma_sel_rad",
+    "fdm_vz_sel_ftmin",
+    "fdm_mach_sel",
+    "fdm_cas_sel_kt",
+)
+
+
+def _profile_selected_params_cfg() -> dict[str, dict[str, float | int | str | None]]:
+    """Hand-written legacy equivalent of the frozen OpenSky profile."""
+    return {
+        "alt": {
+            "mode": "bilateral_alt",
+            "sigma_r": 5.0,
+            "sigma_s": 20.0,
+            "slope_tol": 3.6342411857,
+            "flat_tol": 30.48,
+            "min_len": 8,
+        },
+        "gamma": {
+            "mode": "bilateral_gamma",
+            "sigma_r": 0.002,
+            "sigma_s": 4.0,
+            "slope_tol": 0.000144225,
+            "flat_tol": 0.002,
+            "min_len": 10,
+            "abs_min": None,
+        },
+        "vz": {
+            "mode": "bilateral_vz",
+            "sigma_r": 50.0,
+            "sigma_s": 4.0,
+            "slope_tol": 21.9381500315,
+            "flat_tol": 100.0,
+            "min_len": 8,
+            "min_abs": None,
+        },
+        "mach": {
+            "mode": "bilateral_mach",
+            "sigma_r": 0.0025,
+            "sigma_s": 8.0,
+            "slope_tol": 0.0003162278,
+            "flat_tol": 0.05,
+            "min_len": 15,
+        },
+        "cas": {
+            "mode": "bilateral_cas",
+            "sigma_r": 1.5,
+            "sigma_s": 8.0,
+            "slope_tol": 0.3534391546,
+            "flat_tol": 20.0,
+            "min_len": 5,
+        },
+    }
+
+
+def _profile_selected_params_frame() -> pl.DataFrame:
+    """Build an in-memory flight with separated plateaus for all five channels."""
+    n = 240
+    alt = np.linspace(10_000.0, 30_000.0, n)
+    alt[20:70] = 20_000.0
+
+    mach = np.linspace(0.55, 0.85, n)
+    mach[20:70] = 0.78
+    cas = np.linspace(220.0, 320.0, n)
+    cas[100:145] = 260.0
+
+    tas = np.linspace(300.0, 500.0, n)
+    gamma = np.linspace(0.01, 0.12, n)
+    tas[80:115] = 400.0
+    gamma[80:115] = 0.04
+    vz = np.sin(gamma) * tas * _GT_KT_TO_MS / _GT_FT_MIN_TO_MS
+    vz[160:205] = -1200.0
+    gamma[160:205] = np.arcsin(vz[160:205] * _GT_FT_MIN_TO_MS / (tas[160:205] * _GT_KT_TO_MS))
+
+    return pl.DataFrame(
+        {
+            "timestamp": np.arange(n, dtype=np.int64),
+            "raw_alt_ft": alt,
+            "altitude": alt,
+            "raw_vz_ftmin": vz,
+            "vertical_rate": vz,
+            "bds_mach_clean": mach,
+            "bds_ias_kt_clean": cas,
+            "fdm_tas_from_cas_kt": tas,
+            "fdm_gamma_rad": gamma,
+            "era_temp_K": np.full(n, 250.0),
+            "raw_gs_kt": tas - 10.0,
+            "ground_speed": tas - 10.0,
+            "track": np.full(n, 90.0),
+            "latitude": np.linspace(48.0, 49.0, n),
+            "longitude": np.linspace(2.0, 3.0, n),
+        }
+    )
+
+
+def _assert_profile_segment_columns_equal(left: pl.DataFrame, right: pl.DataFrame) -> None:
+    for column in _PROFILE_SEGMENT_COLUMNS:
+        np.testing.assert_allclose(
+            left[column].to_numpy(),
+            right[column].to_numpy(),
+            equal_nan=True,
+            err_msg=f"{column} differs",
+        )
+
+
+def test_build_selected_params_profile_produces_five_segment_columns() -> None:
+    """AC1: a profile-only run computes all five selected-parameter channels."""
+    result = build_selected_params(_profile_selected_params_frame(), profile=_PROFILE_NAME)
+
+    for column in _PROFILE_SEGMENT_COLUMNS:
+        assert column in result.columns
+        assert np.isfinite(result[column].to_numpy()).any(), f"{column} has no detected segment"
+
+
+def test_build_selected_params_profile_overrides_divergent_legacy_cfg() -> None:
+    """AC2: an explicit profile wholly overrides divergent legacy channel settings."""
+    divergent = _profile_selected_params_cfg()
+    divergent["alt"] = {**divergent["alt"], "min_len": 200}
+    divergent["mach"] = {**divergent["mach"], "flat_tol": 0.5}
+    frame = _profile_selected_params_frame()
+
+    combined = build_selected_params(frame, divergent, profile=_PROFILE_NAME)
+    profile_only = build_selected_params(frame, profile=_PROFILE_NAME)
+    legacy_only = build_selected_params(frame, divergent)
+
+    _assert_profile_segment_columns_equal(combined, profile_only)
+    assert any(
+        not np.array_equal(
+            combined[column].to_numpy(),
+            legacy_only[column].to_numpy(),
+            equal_nan=True,
+        )
+        for column in _PROFILE_SEGMENT_COLUMNS
+    )
+
+
+def test_legacy_selected_params_cfg_preserves_divergent_values() -> None:
+    """AC3: the legacy facade returns divergent historical values unchanged."""
+    divergent = _profile_selected_params_cfg()
+    divergent["alt"] = {**divergent["alt"], "min_len": 200}
+    divergent["mach"] = {**divergent["mach"], "flat_tol": 0.5}
+
+    legacy = segments_module.legacy_selected_params_cfg(divergent)
+
+    assert legacy == divergent
+    assert legacy["alt"]["min_len"] == 200
+    assert legacy["mach"]["flat_tol"] == 0.5
+    profile_cfg = segments_module.selected_params_cfg_from_profile(_PROFILE_NAME)
+    assert legacy["alt"] != profile_cfg["alt"]
+    assert legacy["mach"] != profile_cfg["mach"]
+
+
+def test_profile_cfg_matches_equivalent_legacy_cfg_and_results() -> None:
+    """AC4: profile translation equals its legacy equivalent and drives identical output."""
+    profile = load_profile(_PROFILE_NAME)
+    hand_written = _profile_selected_params_cfg()
+
+    profile_cfg = segments_module.selected_params_cfg_from_profile(profile)
+
+    assert profile_cfg == hand_written
+    frame = _profile_selected_params_frame()
+    profile_result = build_selected_params(frame, profile=_PROFILE_NAME)
+    legacy_result = build_selected_params(frame, hand_written)
+    _assert_profile_segment_columns_equal(profile_result, legacy_result)

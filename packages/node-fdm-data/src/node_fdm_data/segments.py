@@ -17,7 +17,7 @@ Example::
 
 from __future__ import annotations
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from typing import Any
 
 import numpy as np
@@ -32,6 +32,7 @@ from node_fdm_data.physics.speed import (
     tas_to_cas_real,
     vz_to_gamma,
 )
+from node_fdm_data.profiles import SegmentProfile, load_profile
 from node_fdm_data.smoothing import bilateral_1d, butter_lowpass, interpolate_nans
 
 __all__ = [
@@ -44,6 +45,8 @@ __all__ = [
     "detect_gamma_plateaus_from_bilat",
     "detect_mach_plateaus_bilat",
     "detect_vz_plateaus_from_bilat",
+    "legacy_selected_params_cfg",
+    "selected_params_cfg_from_profile",
 ]
 
 
@@ -349,7 +352,7 @@ def detect_cas_plateaus_bilat(
     cas_raw: np.ndarray,
     mach_mask: np.ndarray,
     *,
-    cutoff_s: float,
+    cutoff_s: float | None = None,
     sigma_s: float,
     sigma_r: float,
     n_passes: int = 2,
@@ -370,7 +373,8 @@ def detect_cas_plateaus_bilat(
         if int((~nan_mask).sum()) == 0:
             return []
         work = interpolate_nans(work)
-    work = butter_lowpass(work, cutoff_s)
+    if cutoff_s is not None:
+        work = butter_lowpass(work, cutoff_s)
     smooth = work
     for _ in range(max(0, int(n_passes))):
         smooth = bilateral_1d(smooth, sigma_s, sigma_r)
@@ -589,6 +593,50 @@ def _normalize_cfg(cfg: dict[str, Any]) -> dict[str, Any]:
     return out
 
 
+type SelectedParamValue = float | int | str | None
+type SelectedParamsCfg = dict[str, dict[str, SelectedParamValue]]
+
+_PROFILE_CHANNEL_MODES = {
+    "alt": "bilateral_alt",
+    "gamma": "bilateral_gamma",
+    "vz": "bilateral_vz",
+    "mach": "bilateral_mach",
+    "cas": "bilateral_cas",
+}
+
+
+def selected_params_cfg_from_profile(profile: str | SegmentProfile) -> SelectedParamsCfg:
+    """Translate a registered segment profile into detector channel configuration."""
+    resolved = load_profile(profile) if isinstance(profile, str) else profile
+    result: SelectedParamsCfg = {}
+    for name, mode in _PROFILE_CHANNEL_MODES.items():
+        channel = resolved.channels[name]
+        cfg: dict[str, SelectedParamValue] = {
+            "mode": mode,
+            "sigma_r": channel.sigma_r,
+            "sigma_s": channel.sigma_s,
+            "slope_tol": channel.slope_tol,
+            "flat_tol": channel.flat_tol,
+            "min_len": channel.min_len,
+        }
+        if name == "gamma":
+            cfg["abs_min"] = channel.abs_min
+        elif name == "vz":
+            cfg["min_abs"] = channel.min_abs
+        result[name] = cfg
+    return result
+
+
+def legacy_selected_params_cfg[T: Mapping[str, object]](cfg: T) -> T:
+    """Return the legacy selected-parameter block unchanged."""
+    return cfg
+
+
+def _channel_cfg(config: Mapping[str, object], channel: str) -> dict[str, object]:
+    value = config.get(channel)
+    return dict(value) if isinstance(value, Mapping) else {}
+
+
 def _detect_mach_bilateral(
     df: pl.DataFrame,
     src_col: str,
@@ -724,7 +772,11 @@ def _backfill_alias(df: pl.DataFrame, src: str, alias: str) -> pl.DataFrame:
     if df.schema[src] == pl.String:
         col = col.cast(pl.Float64, strict=False)
     return df.with_columns(
-        col.fill_nan(None).forward_fill().backward_fill().fill_null(pl.lit(float("nan"))).alias(alias)
+        col.fill_nan(None)
+        .forward_fill()
+        .backward_fill()
+        .fill_null(pl.lit(float("nan")))
+        .alias(alias)
     )
 
 
@@ -1135,7 +1187,9 @@ def _collect_propagated_columns(
 
 def build_selected_params(
     df: pl.DataFrame,
-    config: dict[str, Any],
+    config: Mapping[str, object] | None = None,
+    *,
+    profile: str | SegmentProfile | None = None,
 ) -> pl.DataFrame:
     """Build selected-parameter columns from segment detection.
 
@@ -1164,21 +1218,26 @@ def build_selected_params(
 
     Args:
         df: Single-flight DataFrame (sorted by time).
-        config: Selected-parameter config dict with keys
-            ``mach``, ``cas``, ``vz``, and optionally ``tas``,
-            ``gamma``, ``alt``.  Each value is a dict of kwargs
-            for :func:`detect_constant_segments`.
+        config: Optional legacy selected-parameter configuration.
+        profile: Registered profile name or immutable profile. When supplied,
+            it replaces the complete legacy channel set without merging.
 
     Returns:
         DataFrame with selected-parameter columns added.
     """
+    effective_config: Mapping[str, object]
+    if profile is None:
+        effective_config = legacy_selected_params_cfg(config or {})
+    else:
+        effective_config = selected_params_cfg_from_profile(profile)
+
     alt_col = _resolve_col(df, "raw_alt_ft", "altitude")
     alt_arr = df[alt_col].to_numpy()
     tas_col = "fdm_tas_from_cas_kt"
     cas_src_col = "bds_ias_kt_clean"
 
     # 1. Altitude plateaus FIRST — Mach detection is restricted to these rows.
-    alt_cfg = config.get("alt")
+    alt_cfg = _channel_cfg(effective_config, "alt") if "alt" in effective_config else None
     vz_col = _resolve_col(df, "raw_vz_ftmin", "vertical_rate")
     df, alt_segs = _detect_alt_sel(df, alt_cfg, alt_col, alt_arr, vz_col=vz_col)
     if alt_cfg is None:
@@ -1191,12 +1250,13 @@ def build_selected_params(
         for seg in alt_segs:
             plateau_mask[seg["start_idx"] : seg["end_idx"] + 1] = True
 
-    min_mach_value = float(config.get("mach_min_value", 0.5))
+    mach_min_value = effective_config.get("mach_min_value", 0.5)
+    min_mach_value = float(mach_min_value) if isinstance(mach_min_value, (int, float)) else 0.5
     df, mach_segs = _detect_mach_in_plateau(
         df,
         "bds_mach_clean",
         "fdm_mach_sel",
-        config.get("mach", {}),
+        _channel_cfg(effective_config, "mach"),
         alt_arr,
         plateau_mask,
         min_mach_value,
@@ -1205,11 +1265,11 @@ def build_selected_params(
         df,
         cas_src_col,
         "fdm_cas_sel_kt",
-        config.get("cas", {}),
+        _channel_cfg(effective_config, "cas"),
         mach_segs,
     )
     df = _propagate_speed_plateaus(df, mach_segs, cas_segs, alt_arr)
-    tas_cfg = config.get("tas")
+    tas_cfg = _channel_cfg(effective_config, "tas") if "tas" in effective_config else None
     # The legacy ``_detect_masked`` path overwrites ``fdm_tas_sel_kt`` with the
     # segment-detector output via :func:`add_segment_column`. When
     # :func:`_propagate_speed_plateaus` has already produced the physically
@@ -1227,15 +1287,18 @@ def build_selected_params(
             tas_cfg,
             [mach_segs, cas_segs],
         )
-    df = _detect_gamma_sel(df, config.get("gamma"))
+    gamma_cfg = _channel_cfg(effective_config, "gamma") if "gamma" in effective_config else None
+    df = _detect_gamma_sel(df, gamma_cfg)
     df = _detect_vz_sel(
         df,
-        config.get("vz", {}),
+        _channel_cfg(effective_config, "vz"),
         _resolve_col(df, "raw_vz_ftmin", "vertical_rate"),
         alt_arr,
     )
 
-    df = _gamma_from_alt(df, alt_segs, alt_cfg, int(config.get("alt_hold_relax", 15)))
+    relax_value = effective_config.get("alt_hold_relax", 15)
+    alt_hold_relax = int(relax_value) if isinstance(relax_value, (int, float)) else 15
+    df = _gamma_from_alt(df, alt_segs, alt_cfg, alt_hold_relax)
 
     if "bds_mcp_alt_sel_ft" in df.columns:
         df = _backfill_alias(df, "bds_mcp_alt_sel_ft", "fdm_mcp_alt_sel_ft")

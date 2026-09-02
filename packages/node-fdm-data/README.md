@@ -14,8 +14,8 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 - **Meteorological computations** — Haversine distance, Mach/CAS derivation, TAS from wind components; Polars expression variants: `haversine_expr`, `compute_mach_expr`, `compute_cas_expr`
 - **Column schemas** — OpenSky 2025, QAR, and ADS-B architectures with typed column lists and conversion registries
 - **Flight processor** — Configurable `FlightProcessor` pipeline with method-chaining API
-- **Versioned segment profiles** — `load_profile` exposes immutable, reproducible detection settings together with their source commit and artifact digests; `list_profiles` discovers the bundled profiles
-- **Segment detection** — `build_selected_params` detects constant-speed/altitude plateaus and produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`, `fdm_gamma_target_rad`) plus a `fdm_tas_target_known` boolean mask (True iff TAS target is non-NaN). Mach detection is restricted to altitude plateaus and aberrant low-Mach segments (mean below `mach_min_value`, default 0.5) are dropped. The TAS target is the FMS envelope `min(mach_to_tas_real, cas_to_tas_real)` on overlap, single-source TAS elsewhere, NaN where neither segment covers (no global backward-fill); ERA5 `era_temp_K` is used when present, ISA otherwise. `fdm_gamma_target_rad` fuses three sources with priority vz→gamma (highest) > gamma_sel > gamma_from_alt=0 / ALT HLD (lowest), NaN-preserving (gaps between segments stay NaN); `GammaFilterConfig` provides sensible defaults including `min_abs_value` to filter near-zero cruise plateaus; altitude plateaus also emit `fdm_gamma_from_alt_rad` (0.0 in level flight, NaN elsewhere)
+- **Versioned segment profiles** — `load_profile` exposes immutable, reproducible detection settings together with their source commit and artifact digests; `list_profiles` discovers the bundled profiles, and `selected_params_cfg_from_profile` translates one into the five-channel detector configuration
+- **Segment detection** — `build_selected_params(df, profile="opensky26-exp03-v1")` runs all five selected-parameter channels from the frozen profile. An explicit profile replaces the complete legacy configuration rather than merging with it. The function produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`, `fdm_gamma_target_rad`) plus a `fdm_tas_target_known` boolean mask (True iff TAS target is non-NaN). Mach detection is restricted to altitude plateaus and aberrant low-Mach segments (mean below `mach_min_value`, default 0.5) are dropped. The TAS target is the FMS envelope `min(mach_to_tas_real, cas_to_tas_real)` on overlap, single-source TAS elsewhere, NaN where neither segment covers (no global backward-fill); ERA5 `era_temp_K` is used when present, ISA otherwise. `fdm_gamma_target_rad` fuses three sources with priority vz→gamma (highest) > gamma_sel > gamma_from_alt=0 / ALT HLD (lowest), NaN-preserving (gaps between segments stay NaN); `GammaFilterConfig` provides sensible defaults including `min_abs_value` to filter near-zero cruise plateaus; altitude plateaus also emit `fdm_gamma_from_alt_rad` (0.0 in level flight, NaN elsewhere)
 - **Lateral augmentation** — `augment_lateral` adds three columns describing the FMS-equivalent lateral target: `fdm_in_turn` (bool, True inside a detected turn interval `[s_k, e_k]`), `fdm_track_ortho_deg` (great-circle bearing to the next straight-segment end, back-filled inside turns and forward-filled on the trailing tail so it is finite on every sample of a non-degenerate flight), and `fdm_track_sel_known` (boolean = `np.isfinite(fdm_track_ortho_deg)`). Turn intervals are detected via Savitzky-Golay smoothing of the track signal + `scipy.signal.find_peaks` on absolute rotation rate with backtrack to the noise floor; helpers `segment_bounds` and `build_in_turn_mask` (in `lateral_segments`) materialize the per-sample enclosing-segment bounds and the in-turn mask, while `orthodromic_bearing` computes the initial great-circle bearing.
 - **Preprocessing** — SI conversion with precomputed delta columns (`fdm_alt_diff_m`, `fdm_tas_diff_ms`, `fdm_gamma_diff_rad`; diff=0 where target is NaN), temporal derivatives, OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction); BDS speed cleaning (`clean_speeds`, `clean_bds_speeds`: multi-pass Hampel + ERA-deviation cap + short-gap interpolation)
 - **Dataset splitting** — `split_by_icao` for deterministic train/val/test split (prevents data leakage)
@@ -113,19 +113,36 @@ result = processor.process(raw_df)
 ### Versioned segment profiles
 
 ```python
-from node_fdm_data import list_profiles, load_profile
+from node_fdm_data import (
+    legacy_selected_params_cfg,
+    list_profiles,
+    load_profile,
+    selected_params_cfg_from_profile,
+)
+from node_fdm_data.segments import build_selected_params
 
-assert "opensky26-exp03-v1" in list_profiles()
-profile = load_profile("opensky26-exp03-v1")
+profile_name = "opensky26-exp03-v1"
+assert profile_name in list_profiles()
+profile = load_profile(profile_name)
 
 # Frozen Pydantic models: settings and provenance cannot be reassigned.
 print(profile.family, profile.passes)
 print(profile.provenance.commit)
 print(profile.channels["alt"].sigma_r)
+
+profile_cfg = selected_params_cfg_from_profile(profile_name)
+result = build_selected_params(flight_df, profile=profile_name)
+
+# A legacy block remains inspectable, but cannot override an explicit profile.
+historical_cfg = legacy_selected_params_cfg(legacy_selected_params)
+assert historical_cfg is legacy_selected_params
 ```
 
 Profiles are literal package data: loading one performs no network or filesystem access.
-An unknown name raises `KeyError` and reports the registered names.
+An unknown name raises `KeyError` and reports the registered names. Passing both `config` and
+`profile` to `build_selected_params` gives the profile all-or-nothing precedence: legacy channel
+values are neither merged nor allowed to win. Use `legacy_selected_params_cfg` only when the
+historical block itself must remain observable.
 
 ### Dataset splitting
 
