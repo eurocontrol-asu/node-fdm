@@ -947,6 +947,30 @@ def enrich_fleet(
         bool,
         cyclopts.Parameter(name="--dry-run", help="Inspect decoded dates without weather I/O"),
     ] = False,
+    selection: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--selection", help="Recorded campaign selection digest"),
+    ] = None,
+    resolved_config: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--resolved-config", help="Recorded resolved configuration"),
+    ] = None,
+    profile: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--profile", help="Recorded campaign profile"),
+    ] = None,
+    lease_path: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--lease-path", help="Shared acquisition lease record"),
+    ] = None,
+    lease_ttl_s: Annotated[
+        int | None,
+        cyclopts.Parameter(name="--lease-ttl-s", help="Shared lease lifetime in seconds"),
+    ] = None,
+    disk_min_gib: Annotated[
+        float | None,
+        cyclopts.Parameter(name="--disk-min-gib", help="Minimum free disk space in GiB"),
+    ] = None,
 ) -> None:
     """Enrich every decoded cohort date-major with one disposable ERA5 cache per day.
 
@@ -955,6 +979,12 @@ def enrich_fleet(
     A failed day retains its cache and stops the campaign before the next date;
     rerunning skips cohorts whose durable output is already complete.
     """
+    import sys
+
+    from node_fdm_pipeline.commands._fleet_boundary import (
+        CampaignGuardIncomplete,
+        resolve_fleet_guard,
+    )
     from node_fdm_pipeline.commands._fleet_enrich import (
         build_enrichment_plan,
     )
@@ -962,18 +992,76 @@ def enrich_fleet(
         enrich_fleet as run_enrich_fleet,
     )
     from node_fdm_pipeline.commands._fleet_plan import discover_cohorts
+    from node_fdm_pipeline.commands._trino_lease import (
+        LeaseConfigError,
+        LeaseUnavailable,
+    )
+    from node_fdm_pipeline.config import FleetRunConfig
 
-    plan = build_enrichment_plan(
-        discover_cohorts(fleet_dir),
-        data_root=data_root,
-        start_date=start_date,
-        end_date=end_date,
+    campaign_values = (
+        ("selection", selection),
+        ("resolved_config", resolved_config),
+        ("profile", profile),
+        ("lease_path", lease_path),
+        ("lease_ttl_s", lease_ttl_s),
+        ("disk_min_gib", disk_min_gib),
     )
-    outcomes = run_enrich_fleet(
-        plan,
-        dry_run=dry_run,
-        manifest_path=plan.cache_root.parent / "enrich-fleet.manifest.jsonl",
-    )
+    try:
+        try:
+            decision = resolve_fleet_guard(
+                selection=selection,
+                resolved_config=resolved_config,
+                profile=profile,
+                lease_path=lease_path,
+            )
+        except CampaignGuardIncomplete as exc:
+            missing = list(exc.missing)
+            if lease_ttl_s is None:
+                missing.append("lease_ttl_s")
+            if disk_min_gib is None:
+                missing.append("disk_min_gib")
+            raise CampaignGuardIncomplete(missing) from exc
+
+        missing = [name for name, value in campaign_values if value is None]
+        if decision.mode == "historical":
+            if len(missing) != len(campaign_values):
+                raise CampaignGuardIncomplete(missing)
+            fleet_config = None
+            acquisition_preflight = None
+        else:
+            if missing:
+                raise CampaignGuardIncomplete(missing)
+            assert lease_ttl_s is not None
+            assert disk_min_gib is not None
+            acquisition_preflight = decision.preflight
+            if acquisition_preflight is None:
+                raise RuntimeError("campaign guard returned no acquisition preflight")
+            fleet_config = FleetRunConfig(
+                lease_path=acquisition_preflight.lease_path,
+                lease_ttl_s=lease_ttl_s,
+                disk_min_gib=disk_min_gib,
+            )
+
+        plan = build_enrichment_plan(
+            discover_cohorts(fleet_dir),
+            data_root=data_root,
+            start_date=start_date,
+            end_date=end_date,
+        )
+        run_root = plan.cache_root.parent
+        outcomes = run_enrich_fleet(
+            plan,
+            dry_run=dry_run,
+            manifest_path=run_root / "enrich-fleet.manifest.jsonl",
+            fleet_config=fleet_config,
+            decision=decision,
+            acquisition_preflight=acquisition_preflight,
+            journal_path=run_root / "enrich-fleet.journal.jsonl",
+            receipt_dir=run_root / "enrich-fleet-receipts",
+        )
+    except (CampaignGuardIncomplete, LeaseConfigError, LeaseUnavailable) as exc:
+        print(str(exc), file=sys.stderr)  # noqa: T201
+        raise SystemExit(1) from exc
     failed = [outcome for outcome in outcomes if outcome.error]
     if failed:
         raise SystemExit(

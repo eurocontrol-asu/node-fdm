@@ -87,6 +87,33 @@ the supplied shared lease, then starts decoding. The command records that identi
 `fleet/decode-fleet.resume.json`; a later run whose selection, resolved configuration,
 or profile differs exits before producing another decoded artefact.
 
+### Fleet enrichment
+
+Historical enrichment remains available without campaign options:
+
+```bash
+fdm enrich-fleet --fleet-dir fleet
+```
+
+A coordinated enrichment campaign uses the same atomic six-input contract:
+
+```bash
+fdm enrich-fleet \
+  --fleet-dir fleet \
+  --selection run/selection.digest \
+  --resolved-config run/resolved-config.json \
+  --profile run/profile.json \
+  --lease-path /shared/node-fdm/enrich-fleet.lease \
+  --lease-ttl-s 120 \
+  --disk-min-gib 8.5
+```
+
+A partial set exits non-zero and reports every missing input before creating a lease
+or fallback lock. With a complete set, the shared lease path is validated before the
+enrichment plan is built, and the lease is acquired before the weather provider is
+constructed. An unavailable or misconfigured lease therefore produces no enriched
+artefact and no plan event.
+
 Commands that load coordinated settings from pipeline YAML use the equivalent
 deployment-owned model:
 
@@ -107,6 +134,7 @@ an absolute path.
 |---|---|---|
 | `fdm download-fleet` | Plan historical fleet downloads or run a coordinated campaign behind a shared lease | ✅ Implemented |
 | `fdm decode-fleet` | Decode historical fleets or resume a digest-checked campaign behind a shared lease | ✅ Implemented |
+| `fdm enrich-fleet` | Enrich historical fleets or run a coordinated campaign behind a shared lease | ✅ Implemented |
 | `fdm preprocess` | Resample flights: subsegment detection, position smoothing, fixed-rate resampling | ✅ Implemented |
 | `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
 | `fdm derive` | Compute derived physics columns (gamma, wind, distance) — étape 4 | ✅ Implemented |

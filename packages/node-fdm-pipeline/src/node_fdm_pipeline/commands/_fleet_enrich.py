@@ -15,8 +15,11 @@ from typing import Any
 import structlog
 
 from node_fdm_pipeline.commands._fleet_boundary import (
+    AcquisitionPreflight,
+    FleetGuardDecision,
     acquisition_section,
     preflight_acquisition,
+    resolve_fleet_guard,
 )
 from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
 from node_fdm_pipeline.commands._fleet_manifest import append_event
@@ -135,37 +138,57 @@ def enrich_fleet(  # noqa: PLR0913
     profile: DigestInput | None = None,
     journal_path: Path | None = None,
     receipt_dir: Path | None = None,
+    decision: FleetGuardDecision | None = None,
+    acquisition_preflight: AcquisitionPreflight | None = None,
 ) -> list[DateEnrichmentOutcome]:
     """Enrich a fleet after validating its resume identity and shared lease."""
-    if (
-        fleet_config is None
-        and recorded_digest is None
-        and selection_digest is None
-        and resolved_config is None
-        and profile is None
-    ):
+    guard = decision
+    preflight = acquisition_preflight
+    legacy_values = (
+        fleet_config,
+        recorded_digest,
+        selection_digest,
+        resolved_config,
+        profile,
+    )
+    if guard is None:
+        if all(value is None for value in legacy_values):
+            guard = resolve_fleet_guard(
+                selection=None,
+                resolved_config=None,
+                profile=None,
+                lease_path=None,
+            )
+        elif all(value is not None for value in legacy_values):
+            assert fleet_config is not None
+            assert recorded_digest is not None
+            assert selection_digest is not None
+            assert resolved_config is not None
+            assert profile is not None
+            preflight = preflight_acquisition(
+                recorded_digest=recorded_digest,
+                selection_digest=selection_digest,
+                resolved_config=resolved_config,
+                profile=profile,
+                fleet_config=fleet_config,
+            )
+            guard = FleetGuardDecision(
+                mode="campaign",
+                preflight=preflight,
+                resume_digest=preflight.resume_digest,
+            )
+        else:
+            raise ValueError("fleet acquisition preflight inputs must be provided together")
+
+    if guard.mode == "historical":
         return _enrich_fleet_impl(
             plan,
             dry_run=dry_run,
             manifest_path=manifest_path,
             runtime=runtime,
         )
-    if (
-        fleet_config is None
-        or recorded_digest is None
-        or selection_digest is None
-        or resolved_config is None
-        or profile is None
-    ):
-        raise ValueError("fleet acquisition preflight inputs must be provided together")
-
-    preflight = preflight_acquisition(
-        recorded_digest=recorded_digest,
-        selection_digest=selection_digest,
-        resolved_config=resolved_config,
-        profile=profile,
-        fleet_config=fleet_config,
-    )
+    if fleet_config is None or preflight is None:
+        raise ValueError("campaign enrich requires fleet configuration and preflight")
     if dry_run:
         return _enrich_fleet_impl(
             plan,
