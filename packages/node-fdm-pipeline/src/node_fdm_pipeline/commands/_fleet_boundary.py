@@ -15,6 +15,8 @@ from node_fdm_pipeline.commands._fleet_digest import (
     ResumeDigest,
     check_resume_compatible,
     compute_resume_digest,
+    load_campaign_identity,
+    record_campaign_identity,
 )
 from node_fdm_pipeline.commands._trino_lease import (
     acquire_lease,
@@ -103,17 +105,25 @@ def resolve_fleet_guard(
     )
 
 
-def preflight_acquisition(
+def preflight_acquisition(  # noqa: PLR0913
     *,
     recorded_digest: ResumeDigest,
     selection_digest: str,
     resolved_config: DigestInput,
     profile: DigestInput,
     fleet_config: FleetRunConfig,
+    campaign_root: Path | None = None,
 ) -> AcquisitionPreflight:
     """Validate resume identity and the shared lease location before acquisition."""
     current_digest = compute_resume_digest(selection_digest, resolved_config, profile)
-    check_resume_compatible(recorded_digest, current_digest)
+    authoritative_digest = recorded_digest
+    if campaign_root is not None:
+        try:
+            authoritative_digest = load_campaign_identity(campaign_root)
+        except FileNotFoundError:
+            record_campaign_identity(campaign_root, current_digest)
+            authoritative_digest = current_digest
+    check_resume_compatible(authoritative_digest, current_digest)
     lease_path = require_shared_lease_path(fleet_config.lease_path)
     preflight = AcquisitionPreflight(
         lease_path=lease_path,
