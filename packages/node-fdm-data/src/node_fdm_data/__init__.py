@@ -4,7 +4,13 @@ from __future__ import annotations
 
 from node_fdm_data.profiles import SegmentProfile, list_profiles, load_profile
 from node_fdm_data.qualification import (
+    FrozenComparisonResult,
+    FrozenTargets,
     QualificationEvidenceError,
+    QualificationMismatchError,
+    assert_coverage,
+    assert_qualification,
+    compare_to_frozen_targets,
     load_qualification_evidence,
     resolve_evidence_manifest,
     verify_digests,
@@ -22,10 +28,16 @@ from node_fdm_data.segments import (
 )
 
 __all__ = [
+    "FrozenComparisonResult",
+    "FrozenTargets",
     "QualificationCoverage",
     "QualificationEvidenceError",
+    "QualificationMismatchError",
     "SegmentProfile",
+    "assert_coverage",
+    "assert_qualification",
     "blank_frozen_endpoints",
+    "compare_to_frozen_targets",
     "conversions",
     "delta",
     "lateral",

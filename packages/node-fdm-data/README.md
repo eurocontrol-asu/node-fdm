@@ -15,7 +15,7 @@ Flight data processing, physics, conversions, and schemas for node-fdm.
 - **Column schemas** — OpenSky 2025, QAR, and ADS-B architectures with typed column lists and conversion registries
 - **Flight processor** — Configurable `FlightProcessor` pipeline with method-chaining API
 - **Versioned segment profiles** — `load_profile` exposes immutable, reproducible detection settings together with their source commit and artifact digests; `list_profiles` discovers the bundled profiles, and `selected_params_cfg_from_profile` translates one into the five-channel detector configuration
-- **Qualification evidence and replay** — `load_qualification_evidence` verifies the SHA-256 digests of the bundled experiment-03 evidence, while `replay_profile_coverage` recomputes its vertical and speed campaign coverages locally as a frozen `QualificationCoverage`
+- **Qualification evidence and replay** — `load_qualification_evidence` verifies the SHA-256 digests of the bundled experiment-03 evidence, `replay_profile_coverage` recomputes its vertical and speed campaign coverages locally, and `assert_qualification` compares them fail-closed with the frozen targets parsed from the verified `metrics.yaml`
 - **Segment detection** — `build_selected_params(df, profile="opensky26-exp03-v1")` runs all five selected-parameter channels from the frozen profile. An explicit profile replaces the complete legacy configuration rather than merging with it. The function produces target columns (`fdm_alt_target_ft`, `fdm_cas_target_kt`, `fdm_tas_target_kt`, `fdm_gamma_target_rad`) plus a `fdm_tas_target_known` boolean mask (True iff TAS target is non-NaN). Mach detection is restricted to altitude plateaus and aberrant low-Mach segments (mean below `mach_min_value`, default 0.5) are dropped. The TAS target is the FMS envelope `min(mach_to_tas_real, cas_to_tas_real)` on overlap, single-source TAS elsewhere, NaN where neither segment covers (no global backward-fill); ERA5 `era_temp_K` is used when present, ISA otherwise. `fdm_gamma_target_rad` fuses three sources with priority vz→gamma (highest) > gamma_sel > gamma_from_alt=0 / ALT HLD (lowest), NaN-preserving (gaps between segments stay NaN); `GammaFilterConfig` provides sensible defaults including `min_abs_value` to filter near-zero cruise plateaus; altitude plateaus also emit `fdm_gamma_from_alt_rad` (0.0 in level flight, NaN elsewhere). `selected_params_coverage` reports the union of finite selected rows for the vertical and speed families as percentages rounded to four decimals
 - **Lateral augmentation** — `augment_lateral` adds three columns describing the FMS-equivalent lateral target: `fdm_in_turn` (bool, True inside a detected turn interval `[s_k, e_k]`), `fdm_track_ortho_deg` (great-circle bearing to the next straight-segment end, back-filled inside turns and forward-filled on the trailing tail so it is finite on every sample of a non-degenerate flight), and `fdm_track_sel_known` (boolean = `np.isfinite(fdm_track_ortho_deg)`). Turn intervals are detected via Savitzky-Golay smoothing of the track signal + `scipy.signal.find_peaks` on absolute rotation rate with backtrack to the noise floor; helpers `segment_bounds` and `build_in_turn_mask` (in `lateral_segments`) materialize the per-sample enclosing-segment bounds and the in-turn mask, while `orthodromic_bearing` computes the initial great-circle bearing.
 - **Preprocessing** — SI conversion with precomputed delta columns (`fdm_alt_diff_m`, `fdm_tas_diff_ms`, `fdm_gamma_diff_rad`; diff=0 where target is NaN), temporal derivatives, OpenSky (altitude diff, segment filtering, subsegment detection, position smoothing, fixed-rate resampling via `resample_flight` / `preprocess_flights`) and QAR (Butterworth, smoothing, engine reduction); BDS speed cleaning (`clean_speeds`, `clean_bds_speeds`: multi-pass Hampel + ERA-deviation cap + short-gap interpolation)
@@ -166,7 +166,11 @@ remain observable.
 ### Qualification evidence
 
 ```python
-from node_fdm_data import load_qualification_evidence, replay_profile_coverage
+from node_fdm_data import (
+    assert_qualification,
+    load_qualification_evidence,
+    replay_profile_coverage,
+)
 
 bundle = load_qualification_evidence("opensky26-exp03-v1")
 assert bundle.provenance.source_commit == "80e8039f85a59dc214630386ca637ea7a296cfa3"
@@ -177,12 +181,16 @@ coverage = replay_profile_coverage("opensky26-exp03-v1")
 assert coverage.profile_id == "opensky26-exp03-v1"
 assert coverage.vertical_pct == 73.9448
 assert coverage.speed_pct == 85.2183
+
+targets = assert_qualification("opensky26-exp03-v1")
+assert targets.vertical_pct == 73.9448
+assert targets.speed_pct == 85.2183
 ```
 
 The loader resolves the files from the installed package, recomputes every declared SHA-256 digest
 before parsing, and raises `QualificationEvidenceError` on an unknown profile or altered byte. It
 performs no network access and does not depend on the paper subproject. Use `resolve_evidence_manifest`
-to inspect the frozen manifest and `verify_digests` to validate a copied evidence directory. The replay derives its four-decimal percentages from those verified package bytes through the registered segment profile; it neither reads the paper subproject nor performs network access.
+to inspect the frozen manifest and `verify_digests` to validate a copied evidence directory. The replay derives its four-decimal percentages from those verified package bytes through the registered segment profile; it neither reads the paper subproject nor performs network access. `assert_qualification` parses the vertical and speed targets from the digest-verified `metrics.yaml`, compares them at four-decimal precision, and raises `QualificationMismatchError` with the expected and observed percentages when either channel diverges.
 
 ### Dataset splitting
 
