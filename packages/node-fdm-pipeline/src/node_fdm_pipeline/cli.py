@@ -1014,8 +1014,10 @@ def enrich_fleet(
 
     from node_fdm_pipeline.commands._fleet_boundary import (
         CampaignGuardIncomplete,
+        preflight_acquisition,
         resolve_fleet_guard,
     )
+    from node_fdm_pipeline.commands._fleet_digest import ResumeDigestMismatch
     from node_fdm_pipeline.commands._fleet_enrich import (
         build_enrichment_plan,
     )
@@ -1064,13 +1066,24 @@ def enrich_fleet(
                 raise CampaignGuardIncomplete(missing)
             assert lease_ttl_s is not None
             assert disk_min_gib is not None
-            acquisition_preflight = decision.preflight
-            if acquisition_preflight is None:
+            initial_preflight = decision.preflight
+            if initial_preflight is None or decision.resume_digest is None:
                 raise RuntimeError("campaign guard returned no acquisition preflight")
+            assert selection is not None
+            assert resolved_config is not None
+            assert profile is not None
             fleet_config = FleetRunConfig(
-                lease_path=acquisition_preflight.lease_path,
+                lease_path=initial_preflight.lease_path,
                 lease_ttl_s=lease_ttl_s,
                 disk_min_gib=disk_min_gib,
+            )
+            acquisition_preflight = preflight_acquisition(
+                recorded_digest=decision.resume_digest,
+                selection_digest=selection.read_text(encoding="utf-8"),
+                resolved_config=resolved_config.read_text(encoding="utf-8"),
+                profile=profile.read_text(encoding="utf-8"),
+                fleet_config=fleet_config,
+                campaign_root=data_root if data_root is not None else fleet_dir,
             )
 
         plan = build_enrichment_plan(
@@ -1090,7 +1103,12 @@ def enrich_fleet(
             journal_path=run_root / "enrich-fleet.journal.jsonl",
             receipt_dir=run_root / "enrich-fleet-receipts",
         )
-    except (CampaignGuardIncomplete, LeaseConfigError, LeaseUnavailable) as exc:
+    except (
+        CampaignGuardIncomplete,
+        LeaseConfigError,
+        LeaseUnavailable,
+        ResumeDigestMismatch,
+    ) as exc:
         print(str(exc), file=sys.stderr)  # noqa: T201
         raise SystemExit(1) from exc
     failed = [outcome for outcome in outcomes if outcome.error]

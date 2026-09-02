@@ -25,9 +25,11 @@ from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
 from node_fdm_pipeline.commands._fleet_manifest import append_event
 from node_fdm_pipeline.commands.data import (
     ENRICH_INPUT_COLUMNS,
-    EnrichOutcome,
     enrich_with_grid,
     validate_enriched_frame,
+)
+from node_fdm_pipeline.commands.data import (
+    EnrichOutcome as EnrichOutcome,
 )
 from node_fdm_pipeline.config import FleetRunConfig, PipelineConfig
 
@@ -165,12 +167,14 @@ def enrich_fleet(  # noqa: PLR0913
             assert selection_digest is not None
             assert resolved_config is not None
             assert profile is not None
+            campaign_root = manifest_path.parent if manifest_path is not None else None
             preflight = preflight_acquisition(
                 recorded_digest=recorded_digest,
                 selection_digest=selection_digest,
                 resolved_config=resolved_config,
                 profile=profile,
                 fleet_config=fleet_config,
+                campaign_root=campaign_root,
             )
             guard = FleetGuardDecision(
                 mode="campaign",
@@ -197,7 +201,7 @@ def enrich_fleet(  # noqa: PLR0913
             runtime=runtime,
         )
 
-    run_key = _plan_digest(plan)
+    run_key = preflight.resume_digest.composite
     with acquisition_section(
         preflight.lease_path,
         owner=run_key,

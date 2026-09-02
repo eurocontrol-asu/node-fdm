@@ -109,10 +109,13 @@ fdm enrich-fleet \
 ```
 
 A partial set exits non-zero and reports every missing input before creating a lease
-or fallback lock. With a complete set, the shared lease path is validated before the
-enrichment plan is built, and the lease is acquired before the weather provider is
-constructed. An unavailable or misconfigured lease therefore produces no enriched
-artefact and no plan event.
+or fallback lock. With a complete set, the shared lease path and the authoritative
+campaign identity are validated before the enrichment plan is built. The identity is
+recorded under `--data-root` (or `--fleet-dir` when no data root is supplied); a later
+run whose selection, resolved configuration, or profile differs exits non-zero before
+lease acquisition, weather-provider construction, or artefact publication. The lease is
+then acquired before the weather provider is constructed, so a rejected or unavailable
+campaign leaves the enriched-output tree unchanged and creates no lease or fallback lock.
 
 Commands that load coordinated settings from pipeline YAML use the equivalent
 deployment-owned model:
