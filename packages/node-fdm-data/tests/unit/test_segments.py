@@ -2721,6 +2721,26 @@ class TestTasTargetForwardBackwardFill:
         assert np.isclose(alt_target[-1], raw_alt[-1])
 
 
+def test_selected_params_coverage_is_rounded_union_share() -> None:
+    """AC5: la couverture est l'union sélectionnée, arrondie à quatre décimales."""
+    nan = float("nan")
+    frame = pl.DataFrame(
+        {
+            "fdm_alt_sel_ft": [1000.0] * 5 + [nan] * 5,
+            "fdm_gamma_sel_rad": [nan] * 10,
+            "fdm_vz_sel_ftmin": [nan] * 10,
+            "fdm_mach_sel": [nan] * 10,
+            "fdm_cas_sel_kt": [nan] * 10,
+        }
+    )
+
+    coverage = segments_module.selected_params_coverage(frame)
+
+    assert coverage["vertical"] == 50.0
+    assert coverage == {"vertical": 50.0, "speed": 0.0}
+    assert coverage == {name: round(value, 4) for name, value in coverage.items()}
+
+
 _PROFILE_NAME = "opensky26-exp03-v1"
 _PROFILE_SEGMENT_COLUMNS = (
     "fdm_alt_sel_ft",

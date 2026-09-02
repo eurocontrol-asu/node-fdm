@@ -48,6 +48,7 @@ __all__ = [
     "detect_vz_plateaus_from_bilat",
     "legacy_selected_params_cfg",
     "selected_params_cfg_from_profile",
+    "selected_params_coverage",
 ]
 
 
@@ -566,6 +567,36 @@ def add_segment_column(
     for seg in segments:
         arr[seg["start_idx"] : seg["end_idx"] + 1] = seg["var_mean"]
     return df.with_columns(pl.Series(col_name, arr))
+
+
+def selected_params_coverage(df: pl.DataFrame) -> dict[str, float]:
+    """Return selected-segment coverage percentages by channel family.
+
+    Coverage is the share of frame rows carrying at least one finite selected
+    value in the family. Missing selected columns contribute no covered rows.
+
+    Args:
+        df: Frame containing any of the selected-parameter columns.
+
+    Returns:
+        Percent coverage for the vertical and speed families, rounded to four
+        decimal places.
+    """
+    families = {
+        "vertical": ("fdm_alt_sel_ft", "fdm_gamma_sel_rad", "fdm_vz_sel_ftmin"),
+        "speed": ("fdm_mach_sel", "fdm_cas_sel_kt"),
+    }
+    if len(df) == 0:
+        return dict.fromkeys(families, 0.0)
+
+    coverage: dict[str, float] = {}
+    for family, columns in families.items():
+        selected = np.zeros(len(df), dtype=bool)
+        for column in columns:
+            if column in df.columns:
+                selected |= np.isfinite(df[column].to_numpy())
+        coverage[family] = round(float(selected.mean() * 100.0), 4)
+    return coverage
 
 
 _KT_TO_MS = 0.514444

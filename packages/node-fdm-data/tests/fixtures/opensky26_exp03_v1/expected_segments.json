@@ -1,0 +1,89 @@
+{
+  "profile": "opensky26-exp03-v1",
+  "perturbations": {
+    "altitude_step_index": 95,
+    "retained_mach_bounds": [
+      15,
+      39
+    ]
+  },
+  "segments": {
+    "alt": [
+      {
+        "start_idx": 16,
+        "end_idx": 39,
+        "values": [
+          20000
+        ]
+      },
+      {
+        "start_idx": 56,
+        "end_idx": 74,
+        "values": [
+          25000
+        ]
+      },
+      {
+        "start_idx": 86,
+        "end_idx": 104,
+        "values": [
+          27000
+        ]
+      }
+    ],
+    "gamma": [
+      {
+        "start_idx": 43,
+        "end_idx": 54,
+        "values": [
+          0.040049
+        ]
+      }
+    ],
+    "vz": [
+      {
+        "start_idx": 109,
+        "end_idx": 119,
+        "values": [
+          -1200
+        ]
+      }
+    ],
+    "mach": [
+      {
+        "start_idx": 16,
+        "end_idx": 39,
+        "values": [
+          0.78
+        ]
+      },
+      {
+        "start_idx": 56,
+        "end_idx": 74,
+        "values": [
+          0.626576
+        ]
+      }
+    ],
+    "cas": [
+      {
+        "start_idx": 16,
+        "end_idx": 39,
+        "values": [
+          363.115696
+        ]
+      },
+      {
+        "start_idx": 56,
+        "end_idx": 74,
+        "values": [
+          260
+        ]
+      }
+    ]
+  },
+  "coverage": {
+    "vertical": 70.8333,
+    "speed": 35.8333
+  }
+}

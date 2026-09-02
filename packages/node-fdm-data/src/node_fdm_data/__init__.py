@@ -7,6 +7,7 @@ from node_fdm_data.segments import (
     blank_frozen_endpoints,
     legacy_selected_params_cfg,
     selected_params_cfg_from_profile,
+    selected_params_coverage,
 )
 
 __all__ = [
@@ -26,5 +27,6 @@ __all__ = [
     "schemas",
     "segments",
     "selected_params_cfg_from_profile",
+    "selected_params_coverage",
     "split",
 ]
