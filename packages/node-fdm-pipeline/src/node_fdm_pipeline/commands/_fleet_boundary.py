@@ -5,6 +5,7 @@ import time
 from collections.abc import Iterator
 from contextlib import contextmanager
 from pathlib import Path
+from typing import Literal
 
 import structlog
 from pydantic import BaseModel
@@ -21,7 +22,13 @@ from node_fdm_pipeline.commands._trino_lease import (
 )
 from node_fdm_pipeline.config import FleetRunConfig
 
-__all__ = ["AcquisitionPreflight", "preflight_acquisition"]
+__all__ = [
+    "AcquisitionPreflight",
+    "CampaignGuardIncomplete",
+    "FleetGuardDecision",
+    "preflight_acquisition",
+    "resolve_fleet_guard",
+]
 
 log = structlog.get_logger()
 
@@ -31,6 +38,69 @@ class AcquisitionPreflight(BaseModel, frozen=True):
 
     lease_path: Path
     resume_digest: ResumeDigest
+
+
+class CampaignGuardIncomplete(ValueError):  # noqa: N818
+    """Raised when only part of the campaign input set is supplied."""
+
+    def __init__(self, missing: list[str]) -> None:
+        self.missing = tuple(sorted(missing))
+        super().__init__(f"Incomplete campaign inputs; missing: {', '.join(self.missing)}")
+
+
+class FleetGuardDecision(BaseModel, frozen=True):
+    """Resolved acquisition mode and validated campaign state."""
+
+    mode: Literal["historical", "campaign"]
+    preflight: AcquisitionPreflight | None = None
+    resume_digest: ResumeDigest | None = None
+
+
+def resolve_fleet_guard(
+    *,
+    selection: Path | None,
+    resolved_config: Path | None,
+    profile: Path | None,
+    lease_path: Path | None,
+) -> FleetGuardDecision:
+    """Resolve historical or campaign mode before acquisition writes begin."""
+    campaign_inputs = {
+        "selection": selection,
+        "resolved_config": resolved_config,
+        "profile": profile,
+        "lease_path": lease_path,
+    }
+    present = {name for name, value in campaign_inputs.items() if value is not None}
+    if not present:
+        return FleetGuardDecision(mode="historical")
+
+    missing = sorted(campaign_inputs.keys() - present)
+    if missing:
+        raise CampaignGuardIncomplete(missing)
+
+    assert selection is not None
+    assert resolved_config is not None
+    assert profile is not None
+    assert lease_path is not None
+
+    shared_lease_path = require_shared_lease_path(lease_path)
+    selection_digest = selection.read_text(encoding="utf-8")
+    resolved_config_digest = resolved_config.read_text(encoding="utf-8")
+    profile_digest = profile.read_text(encoding="utf-8")
+    resume_digest = compute_resume_digest(
+        selection_digest,
+        resolved_config_digest,
+        profile_digest,
+    )
+    preflight = AcquisitionPreflight(
+        lease_path=shared_lease_path,
+        resume_digest=resume_digest,
+    )
+    return FleetGuardDecision(
+        mode="campaign",
+        preflight=preflight,
+        resume_digest=resume_digest,
+    )
 
 
 def preflight_acquisition(

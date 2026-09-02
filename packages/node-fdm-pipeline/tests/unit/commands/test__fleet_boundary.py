@@ -17,6 +17,9 @@ from node_fdm_pipeline.config import FleetRunConfig
 _SELECTION_DIGEST = "selection-v1"
 _RESOLVED_CONFIG: dict[str, DigestInput] = {"workers": 2, "mode": "fleet"}
 _PROFILE: dict[str, DigestInput] = {"aircraft": "A320", "version": 1}
+_RESOLVE_GUARD_SYMBOL = "resolve_fleet_guard"
+_DECISION_SYMBOL = "FleetGuardDecision"
+_INCOMPLETE_SYMBOL = "CampaignGuardIncomplete"
 
 
 def _boundary_module() -> ModuleType:
@@ -80,3 +83,41 @@ def test_preflight_rejects_unset_shared_lease_path() -> None:
             profile=_PROFILE,
             fleet_config=fleet_config,
         )
+
+
+def test_resolve_fleet_guard_defaults_to_historical_mode() -> None:
+    """AC1: an absent campaign input set resolves to historical mode."""
+    boundary = _boundary_module()
+    resolve_fleet_guard = getattr(boundary, _RESOLVE_GUARD_SYMBOL)
+    decision_type = getattr(boundary, _DECISION_SYMBOL)
+
+    decision = resolve_fleet_guard(
+        selection=None,
+        resolved_config=None,
+        profile=None,
+        lease_path=None,
+    )
+
+    assert isinstance(decision, decision_type)
+    assert decision.mode == "historical"
+    assert decision.preflight is None
+
+
+def test_resolve_fleet_guard_names_all_missing_campaign_inputs() -> None:
+    """AC2: a partial campaign set reports every missing input before any I/O."""
+    boundary = _boundary_module()
+    resolve_fleet_guard = getattr(boundary, _RESOLVE_GUARD_SYMBOL)
+    incomplete_error = getattr(boundary, _INCOMPLETE_SYMBOL)
+
+    with pytest.raises(incomplete_error) as exc_info:
+        resolve_fleet_guard(
+            selection=Path("selection.json"),
+            resolved_config=None,
+            profile=None,
+            lease_path=None,
+        )
+
+    message = str(exc_info.value)
+    assert "resolved_config" in message
+    assert "profile" in message
+    assert "lease_path" in message
