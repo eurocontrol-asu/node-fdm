@@ -45,6 +45,8 @@ from node_fdm_pipeline.commands._fleet_boundary import (
     preflight_acquisition,
 )
 from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
+from node_fdm_pipeline.commands._fleet_journal import AttemptRecord, replay_attempts
+from node_fdm_pipeline.commands._fleet_manifest import read_events
 from node_fdm_pipeline.commands._trino_errors import classify_trino_failure
 from node_fdm_pipeline.config import FleetRunConfig
 
@@ -214,14 +216,18 @@ def _attempt_event(  # noqa: PLR0913
     outcome: str,
     observed_delay_s: float,
 ) -> dict[str, object]:
+    batch_label = _batch_label(batch)
     return {
         "event": "fetch_attempt",
+        "attempt_id": f"{date_str}:{kind}:{batch_label}:{attempt}",
         "date": date_str,
         "kind": kind,
         "batch": batch,
+        "batch_label": batch_label,
         "attempt": attempt,
         "outcome": outcome,
         "observed_delay_s": observed_delay_s,
+        "branch_name": batch_label,
     }
 
 
@@ -246,7 +252,15 @@ def _fetch_with_retry(  # noqa: PLR0913
     """
     resolved_policy = policy or _default_backoff_policy()
     resolved_rng = rng or random.Random()  # noqa: S311 - retry jitter is not cryptographic
-    attempt = 0
+    attempt = (
+        _next_attempt_rank(
+            manifest_path,
+            date_str=date_str,
+            kind=kind,
+            batch=icao,
+        )
+        - 1
+    )
     while True:
         attempt += 1
         try:
@@ -543,6 +557,56 @@ def _date_outcome(values: _DateOutcomeInput) -> DateOutcome:
     )
 
 
+def _batch_label(batch: list[str]) -> str:
+    """Return the stable journal label for one submitted batch."""
+    if not batch:
+        return "empty"
+    return f"{batch[0]}-{batch[-1]}"
+
+
+def _recorded_attempts(manifest_path: object | None) -> tuple[AttemptRecord, ...]:
+    """Read typed attempts when a durable manifest is available."""
+    if not isinstance(manifest_path, (str, Path)):
+        return ()
+    path = Path(manifest_path)
+    if not path.exists():
+        return ()
+    return replay_attempts(read_events(path))
+
+
+def _next_attempt_rank(
+    manifest_path: object | None,
+    *,
+    date_str: str,
+    kind: _raw_cache.Kind,
+    batch: list[str],
+) -> int:
+    """Continue after the last durable rank for the same logical batch."""
+    recorded_ranks = (
+        event.attempt
+        for event in _recorded_attempts(manifest_path)
+        if event.date == date_str and event.kind == kind and event.batch == tuple(batch)
+    )
+    return max(recorded_ranks, default=0) + 1
+
+
+def _remaining_aircraft(
+    aircraft: list[str],
+    *,
+    date_str: str,
+    kind: _raw_cache.Kind,
+    manifest_path: object | None,
+) -> list[str]:
+    """Remove successfully received aircraft before any source submission."""
+    received = {
+        icao24
+        for event in _recorded_attempts(manifest_path)
+        if event.date == date_str and event.kind == kind and event.outcome == "success"
+        for icao24 in event.batch
+    }
+    return [icao24 for icao24 in aircraft if icao24 not in received]
+
+
 def fetch_one_date(
     plan: FleetPlan,
     date_str: str,
@@ -561,13 +625,21 @@ def fetch_one_date(
 
     try:
         for kind in _KINDS:
+            pending_aircraft = _remaining_aircraft(
+                aircraft,
+                date_str=date_str,
+                kind=kind,
+                manifest_path=manifest_path,
+            )
+            if not pending_aircraft:
+                continue
             fetcher = api.flightlist if kind == "flightlist" else getattr(api, kind)
             counters = _fetch_kind(
                 _KindFetch(
                     plan,
                     kind,
                     date_str,
-                    aircraft,
+                    pending_aircraft,
                     start,
                     end,
                     force,

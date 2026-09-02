@@ -13,12 +13,14 @@ from pydantic import BaseModel, ConfigDict
 from node_fdm_pipeline.commands._fleet_manifest import append_event, read_events
 
 __all__ = [
+    "AttemptRecord",
     "JournalEvent",
     "RunSnapshot",
     "RunState",
     "next_incomplete_step",
     "record_state",
     "render_operator_summary",
+    "replay_attempts",
     "replay_journal",
 ]
 
@@ -82,6 +84,32 @@ _NEXT_STATE: dict[RunState, RunState | None] = {
     RunState.INTERRUPTED: RunState.ACQUIRING,
     RunState.CLEANUP_FAILED: RunState.CLEANED,
 }
+
+
+class AttemptRecord(BaseModel):
+    """One typed fetch attempt reconstructed from an append-only journal."""
+
+    model_config = ConfigDict(frozen=True)
+
+    event: str
+    attempt_id: str
+    date: str
+    kind: str
+    batch: tuple[str, ...]
+    batch_label: str
+    attempt: int
+    outcome: str
+    observed_delay_s: float
+    branch_name: str
+
+
+def replay_attempts(events: list[dict[str, object]]) -> tuple[AttemptRecord, ...]:
+    """Rebuild fetch attempts without changing their journal order."""
+    return tuple(
+        AttemptRecord.model_validate(raw_event)
+        for raw_event in events
+        if raw_event.get("event") == "fetch_attempt"
+    )
 
 
 def replay_journal(path: Path) -> RunSnapshot:
