@@ -11,13 +11,14 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
-from node_fdm_pipeline.commands import _fleet_fetch
+from node_fdm_pipeline.commands import _fleet_fetch, _raw_cache
 from node_fdm_pipeline.commands._fleet_digest import (
     DigestInput,
     ResumeDigestMismatch,
     compute_resume_digest,
 )
-from node_fdm_pipeline.config import FleetRunConfig
+from node_fdm_pipeline.commands._fleet_plan import Cohort, FleetPlan
+from node_fdm_pipeline.config import FleetRunConfig, PipelineConfig
 
 _SELECTION_DIGEST = "selection-v1"
 _RESOLVED_CONFIG: DigestInput = {"workers": 1, "mode": "fleet"}
@@ -68,6 +69,38 @@ def _plan() -> Any:
         aircraft_days=2,
         requests_saved=lambda: (2, 2),
     )
+
+
+def test_missing_by_owner_keeps_shared_aircraft_for_each_cohort(
+    mocker: MockerFixture,
+) -> None:
+    """AC2: a missing shared aircraft remains associated with every owning cohort."""
+    cohorts = tuple(
+        Cohort(
+            name=name,
+            config_path=Path(f"/{name}/config.yaml"),
+            selection_path=Path(f"/{name}/selection.csv"),
+            cfg=PipelineConfig.model_construct(),
+            icao24=frozenset({"a00001"}),
+        )
+        for name in ("C1", "C2")
+    )
+    plan = FleetPlan(
+        dates={"20191231": ["a00001"]},
+        owner={"a00001": cohorts},
+        cohorts=cohorts,
+    )
+    mocker.patch.object(_raw_cache, "is_cached", return_value=False)
+
+    missing = _fleet_fetch._missing_by_owner(
+        plan,
+        "history",
+        "20191231",
+        ["a00001"],
+        force=False,
+    )
+
+    assert tuple(cohort.name for cohort in missing["a00001"]) == ("C1", "C2")
 
 
 def test_fetch_disables_pyopensky_cache() -> None:

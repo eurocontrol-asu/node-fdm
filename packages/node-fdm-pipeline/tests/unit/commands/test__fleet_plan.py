@@ -75,7 +75,7 @@ def test_plan_groups_aircraft_by_day(tmp_path: Path) -> None:
     assert plan["20250521"] == ["aaa111"]
 
 
-def test_build_fleet_plan_rejects_cross_cohort_identity(
+def test_build_fleet_plan_keeps_every_cross_cohort_owner(
     tmp_path: Path, make_config: Callable[..., Path]
 ) -> None:
     """One Mode-S identity cannot silently dispatch into two model silos."""
@@ -88,8 +88,10 @@ def test_build_fleet_plan_rejects_cross_cohort_identity(
         pl.DataFrame({"icao24": ["424461"], "day": ["2020-01-01"]}).write_csv(selection)
         triples.append((name, config, selection))
 
-    with pytest.raises(SystemExit, match=r"424461.*A320neo.*A321neo"):
-        build_fleet_plan(triples)
+    plan = build_fleet_plan(triples)
+
+    assert isinstance(plan.owner["424461"], tuple)
+    assert tuple(cohort.name for cohort in plan.owner["424461"]) == ("A320neo", "A321neo")
 
 
 def test_plan_without_a_date_column_is_rejected(tmp_path: Path) -> None:

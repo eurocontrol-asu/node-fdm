@@ -327,13 +327,19 @@ class DateOutcome:
 
 def _missing_by_owner(
     plan: FleetPlan, kind: _raw_cache.Kind, date_str: str, aircraft: list[str], *, force: bool
-) -> dict[str, Cohort]:
+) -> dict[str, tuple[Cohort, ...]]:
     """Aircraft still needed for *kind* on *date*, mapped to their owning cohort."""
-    missing: dict[str, Cohort] = {}
+    missing: dict[str, tuple[Cohort, ...]] = {}
     for icao24 in aircraft:
-        cohort = plan.owner[icao24]
-        if force or not _raw_cache.is_cached(cohort.cfg, kind, date_str, icao24):
-            missing[icao24] = cohort
+        owner = plan.owner[icao24]
+        owner_cohorts = owner if isinstance(owner, tuple) else (owner,)
+        owners = tuple(
+            cohort
+            for cohort in owner_cohorts
+            if force or not _raw_cache.is_cached(cohort.cfg, kind, date_str, icao24)
+        )
+        if owners:
+            missing[icao24] = owners
     return missing
 
 
@@ -483,16 +489,24 @@ def _fetch_or_split(context: _KindFetch, chunk: list[str]) -> _ChunkFetch:
 def _dispatch_chunk(
     context: _KindFetch,
     chunk: list[str],
-    wanted: dict[str, Cohort],
+    wanted: dict[str, tuple[Cohort, ...]],
     result: object,
     flightlist_rows: dict[str, tuple[Cohort, list[object]]],
 ) -> int:
-    chunk_wanted = {aircraft: wanted[aircraft] for aircraft in chunk}
+    by_cohort: dict[str, dict[str, Cohort]] = {}
+    for aircraft in chunk:
+        for cohort in wanted[aircraft]:
+            by_cohort.setdefault(cohort.name, {})[aircraft] = cohort
+
     pdf = getattr(result, "data", result)
     if context.kind == "flightlist":
-        _collect_flightlist(pdf, chunk_wanted, flightlist_rows)
+        for cohort_wanted in by_cohort.values():
+            _collect_flightlist(pdf, cohort_wanted, flightlist_rows)
         return 0
-    return _dispatch_history(pdf, chunk_wanted, context.kind, context.date)
+    return sum(
+        _dispatch_history(pdf, cohort_wanted, context.kind, context.date)
+        for cohort_wanted in by_cohort.values()
+    )
 
 
 def _fetch_kind(context: _KindFetch) -> _KindCounters:

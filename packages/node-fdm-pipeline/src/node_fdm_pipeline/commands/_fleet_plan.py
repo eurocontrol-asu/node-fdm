@@ -58,12 +58,12 @@ class FleetPlan:
     Attributes:
         dates: ``{YYYYMMDD: [icao24, ...]}`` — every aircraft wanted that day,
             across all cohorts, sorted for reproducible request ordering.
-        owner: ``{icao24: Cohort}`` — where each aircraft's rows must be written.
+        owner: ``{icao24: (Cohort, ...)}`` — every silo receiving the aircraft's rows.
         cohorts: The cohorts this plan covers.
     """
 
     dates: dict[str, list[str]]
-    owner: dict[str, Cohort]
+    owner: dict[str, tuple[Cohort, ...]]
     cohorts: tuple[Cohort, ...]
 
     @property
@@ -74,7 +74,8 @@ class FleetPlan:
     def requests_saved(self) -> tuple[int, int]:
         """``(per_cohort_requests, mutualised_requests)`` for the same payload."""
         per_cohort = sum(
-            1 for date_ac in self.dates.values() for _ in {self.owner[a].name for a in date_ac}
+            len({cohort.name for aircraft in date_ac for cohort in self.owner[aircraft]})
+            for date_ac in self.dates.values()
         )
         return per_cohort, len(self.dates)
 
@@ -152,15 +153,13 @@ def build_fleet_plan(
 ) -> FleetPlan:
     """Invert per-cohort selections into one date-major, mutualised plan.
 
-    Raises:
-        SystemExit: If two cohorts claim the same icao24. The dispatch assumes a
-            single owner per aircraft; sharing one would need fan-out writes, and
-            silently picking a winner would leave the other silo incomplete.
+    Shared aircraft retain every owning cohort in declaration order so one
+    mutualised acquisition can fan out into every relevant silo.
     """
     from node_fdm_pipeline.config import PipelineConfig
 
     cohorts: list[Cohort] = []
-    owner: dict[str, Cohort] = {}
+    owner: dict[str, list[Cohort]] = {}
     dates: dict[str, set[str]] = defaultdict(set)
 
     for name, config_path, selection_path in triples:
@@ -176,19 +175,13 @@ def build_fleet_plan(
         cohorts.append(cohort)
 
         for aircraft in icao:
-            previous = owner.get(aircraft)
-            if previous is not None:
-                raise SystemExit(
-                    f"icao24 {aircraft} claimed by both {previous.name} and {name}; "
-                    "the mutualised dispatch needs one owner per aircraft"
-                )
-            owner[aircraft] = cohort
+            owner.setdefault(aircraft, []).append(cohort)
 
         for day, day_set in per_day.items():
             dates[day] |= day_set
 
     return FleetPlan(
         dates={day: sorted(v) for day, v in sorted(dates.items())},
-        owner=owner,
+        owner={aircraft: tuple(owners) for aircraft, owners in owner.items()},
         cohorts=tuple(cohorts),
     )

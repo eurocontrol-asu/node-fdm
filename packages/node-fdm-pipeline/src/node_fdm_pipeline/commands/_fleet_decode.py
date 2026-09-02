@@ -248,7 +248,7 @@ def plan_decodes(fleet_dir: Path) -> list[CohortDecode]:
         days = sorted(
             date
             for date, aircraft in plan.dates.items()
-            if any(plan.owner[a].name == cohort.name for a in aircraft)
+            if any(cohort in plan.owner[a] for a in aircraft)
         )
         if not days:
             log.warning("decode_plan_empty", cohort=cohort.name)
