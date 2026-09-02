@@ -9,6 +9,7 @@ import pytest
 import yaml
 from pydantic import ValidationError
 
+from node_fdm_pipeline import config as config_module
 from node_fdm_pipeline.config import (
     GammaFilterConfig,
     LateralDetectionConfig,
@@ -16,6 +17,39 @@ from node_fdm_pipeline.config import (
     PipelineConfig,
     SelectedParamConfig,
 )
+
+
+class TestFleetRunConfig:
+    """Unit tests for the deployment-owned fleet run settings."""
+
+    def test_zero_or_missing_lease_ttl_is_rejected(self) -> None:
+        """AC2: lease_ttl_s is required and must be strictly positive."""
+        with pytest.raises(ValidationError, match="lease_ttl_s"):
+            config_module.FleetRunConfig(
+                lease_path=Path("/tmp/trino.lease"),
+                lease_ttl_s=0,
+                disk_min_gib=1.0,
+            )
+
+        with pytest.raises(ValidationError, match="lease_ttl_s"):
+            config_module.FleetRunConfig.model_validate(
+                {
+                    "lease_path": Path("/tmp/trino.lease"),
+                    "disk_min_gib": 1.0,
+                }
+            )
+
+    def test_lease_path_is_expanded_and_absolute(self) -> None:
+        """AC3: a home-relative lease_path is exposed as an expanded absolute Path."""
+        cfg = config_module.FleetRunConfig(
+            lease_path=Path("~/shared/trino.lease"),
+            lease_ttl_s=60,
+            disk_min_gib=1.0,
+        )
+
+        assert cfg.lease_path == Path("~/shared/trino.lease").expanduser().resolve()
+        assert cfg.lease_path.is_absolute() is True
+        assert "~" not in str(cfg.lease_path)
 
 
 class TestPathsConfig:

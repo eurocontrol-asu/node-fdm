@@ -33,6 +33,22 @@ fdm predict --arch opensky --config config.yaml --device cuda:0
 fdm evaluate --arch opensky --config config.yaml
 ```
 
+## Fleet run configuration
+
+Coordinated fleet runs may declare deployment-owned lease and disk settings in the same
+pipeline YAML:
+
+```yaml
+fleet_run:
+  lease_path: ~/shared/trino.lease
+  lease_ttl_s: 120
+  disk_min_gib: 8.5
+```
+
+The `fleet_run` section is optional for backward compatibility. When present, all three
+values are required, `lease_ttl_s` and `disk_min_gib` must be strictly positive, and
+`lease_path` is expanded and resolved to an absolute path.
+
 ## Commands
 
 | Command | Description | Status |

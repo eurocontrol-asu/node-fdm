@@ -15,6 +15,7 @@ __all__ = [
     "CleanSpeedsConfig",
     "ComputingConfig",
     "FlagConfig",
+    "FleetRunConfig",
     "GammaFilterConfig",
     "LateralDetectionConfig",
     "MachFilterConfig",
@@ -377,6 +378,19 @@ class TrainingPipelineConfig(BaseModel, frozen=True):
     mode_weight_alpha: float = 0.5
 
 
+class FleetRunConfig(BaseModel, frozen=True):
+    """Deployment-owned settings for a coordinated fleet run."""
+
+    lease_path: Path
+    lease_ttl_s: int = Field(gt=0)
+    disk_min_gib: float = Field(gt=0)
+
+    @field_validator("lease_path", mode="after")
+    @classmethod
+    def _resolve_lease_path(cls, value: Path) -> Path:
+        return value.expanduser().resolve()
+
+
 class PipelineConfig(BaseModel, frozen=True):
     """Root configuration model — replaces raw YAML dict access.
 
@@ -391,6 +405,7 @@ class PipelineConfig(BaseModel, frozen=True):
     era5_features: list[str] = []
     era5_null_threshold: float = 0.05
     computing: ComputingConfig = ComputingConfig()
+    fleet_run: FleetRunConfig | None = None
     bada: BadaConfig = BadaConfig()
     preprocess: PreprocessConfig = PreprocessConfig()
     flag: FlagConfig = FlagConfig()

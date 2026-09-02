@@ -19,6 +19,32 @@ from node_fdm_pipeline.config import (
 class TestPipelineConfig:
     """Tests for PipelineConfig model."""
 
+    @pytest.mark.integration
+    def test_fleet_run_section_is_loaded(
+        self,
+        tmp_path: Path,
+        make_config: Callable[..., Path],
+    ) -> None:
+        """AC1: YAML fleet_run values are exposed by PipelineConfig."""
+        lease_path = (tmp_path / "shared" / "trino.lease").resolve()
+        config = make_config(
+            tmp_path / "config.yaml",
+            "/tmp/data",
+            extra=(
+                "fleet_run:\n"
+                f'  lease_path: "{lease_path}"\n'
+                "  lease_ttl_s: 120\n"
+                "  disk_min_gib: 8.5\n"
+            ),
+        )
+
+        cfg = PipelineConfig.from_yaml(config)
+
+        assert cfg.fleet_run is not None
+        assert cfg.fleet_run.lease_path == lease_path
+        assert cfg.fleet_run.lease_ttl_s == 120
+        assert cfg.fleet_run.disk_min_gib == 8.5
+
     def test_from_opensky_yaml(self, opensky_config_path: Path) -> None:
         """PipelineConfig loads the real OpenSky config YAML."""
         cfg = PipelineConfig.from_yaml(opensky_config_path)
