@@ -9,6 +9,11 @@ from node_fdm_data.qualification import (
     resolve_evidence_manifest,
     verify_digests,
 )
+from node_fdm_data.qualification.replay import (
+    QualificationCoverage,
+    replay_coverage_from_frame,
+    replay_profile_coverage,
+)
 from node_fdm_data.segments import (
     blank_frozen_endpoints,
     legacy_selected_params_cfg,
@@ -17,6 +22,7 @@ from node_fdm_data.segments import (
 )
 
 __all__ = [
+    "QualificationCoverage",
     "QualificationEvidenceError",
     "SegmentProfile",
     "blank_frozen_endpoints",
@@ -31,6 +37,8 @@ __all__ = [
     "physics",
     "preprocessing",
     "processor",
+    "replay_coverage_from_frame",
+    "replay_profile_coverage",
     "resolve_evidence_manifest",
     "schema",
     "schemas",
