@@ -13,7 +13,7 @@ import math
 import random
 from collections.abc import Sequence
 from pathlib import Path
-from typing import Any
+from typing import Any, Final
 
 import numpy as np
 import structlog
@@ -107,6 +107,56 @@ class TrainingConfig(BaseModel):
     seed: int | None = Field(default=None, ge=0)
 
 
+_OPTIONAL_SAMPLE_FIELDS: Final = ("e1", "w")
+
+
+def _seed_global_rngs(seed: int | None) -> None:
+    """Seed every global RNG so downstream randomness shares one source."""
+    if seed is None:
+        return
+    random.seed(seed)
+    np.random.seed(seed)
+    torch.manual_seed(seed)
+    if torch.cuda.is_available():
+        torch.cuda.manual_seed_all(seed)
+
+
+def _build_stats_kwargs(spec: ArchitectureSpec) -> dict[str, Any]:
+    """Column selectors passed to :func:`compute_stats` for ``spec``.
+
+    ``u_cols`` uses ``u_ode_cols`` only: passthrough flags present in
+    ``input_cols`` are not ODE controls and would misalign the u tensor.
+    """
+    return {
+        "x_cols": spec.x_cols,
+        "u_cols": list(getattr(spec, "u_ode_cols", []) or []),
+        "e_cols": spec.e0_cols,
+        "dx_cols": [col for _, col in spec.dx_cols],
+        "e1_cols": getattr(spec, "e1_cols", None),
+        "derived_cols": list(getattr(spec, "derived_output_cols", []) or []),
+        "derived_scale_floor_ratio": float(
+            getattr(spec, "nn_output_scale_floor_ratio", 0.0) or 0.0
+        ),
+    }
+
+
+def _optional_col_index(cols: Sequence[str], name: str) -> int | None:
+    """Index of ``name`` in ``cols``, or ``None`` when absent."""
+    return cols.index(name) if name in cols else None
+
+
+def _stack_field(batch: list[FlightSample], name: str) -> torch.Tensor:
+    """Stack a mandatory tensor field across samples."""
+    return torch.stack([getattr(s, name) for s in batch])
+
+
+def _stack_optional_field(batch: list[FlightSample], name: str) -> torch.Tensor | None:
+    """Stack an optional tensor field, or ``None`` when absent."""
+    if getattr(batch[0], name) is None:
+        return None
+    return torch.stack([getattr(s, name) for s in batch if getattr(s, name) is not None])
+
+
 def _collate_flight_samples(
     batch: list[FlightSample],
 ) -> tuple[torch.Tensor, ...]:
@@ -115,19 +165,11 @@ def _collate_flight_samples(
     Returns a 4-tuple ``(x, u, e, dx)`` when no ``e1`` data is present,
     or a 5-tuple ``(x, u, e, dx, e1)`` when samples carry tracking targets.
     """
-    base: tuple[torch.Tensor, ...] = (
-        torch.stack([s.x for s in batch]),
-        torch.stack([s.u for s in batch]),
-        torch.stack([s.e for s in batch]),
-        torch.stack([s.dx for s in batch]),
+    base: tuple[torch.Tensor, ...] = tuple(
+        _stack_field(batch, name) for name in ("x", "u", "e", "dx")
     )
-    if batch[0].e1 is not None:
-        e1_stack = torch.stack([s.e1 for s in batch if s.e1 is not None])
-        base = (*base, e1_stack)
-    if batch[0].w is not None:
-        w_stack = torch.stack([s.w for s in batch if s.w is not None])
-        base = (*base, w_stack)
-    return base
+    optional = tuple(_stack_optional_field(batch, name) for name in _OPTIONAL_SAMPLE_FIELDS)
+    return (*base, *(t for t in optional if t is not None))
 
 
 class ODETrainer:
@@ -168,12 +210,7 @@ class ODETrainer:
         # source. Default (``None``) preserves prior non-deterministic
         # behavior; the DataLoader generator below stays at seed 0 only
         # when no explicit seed is requested.
-        if config.seed is not None:
-            random.seed(config.seed)
-            np.random.seed(config.seed)
-            torch.manual_seed(config.seed)
-            if torch.cuda.is_available():
-                torch.cuda.manual_seed_all(config.seed)
+        _seed_global_rngs(config.seed)
 
         self.spec: ArchitectureSpec = get(config.architecture_name)
         self.model_dir = model_dir / config.model_name
@@ -190,36 +227,14 @@ class ODETrainer:
         # fdm_gamma_target_known appear in input_cols but are not ODE
         # controls and must not enter compute_stats (which indexes the
         # u tensor by position, causing column misalignment).
-        u_ode_cols = list(getattr(self.spec, "u_ode_cols", []) or [])
-        dx_col_names = [col for _, col in self.spec.dx_cols]
-        e1_cols = self.spec.e1_cols if hasattr(self.spec, "e1_cols") else None
-        derived_output_cols = list(getattr(self.spec, "derived_output_cols", []) or [])
+        _stats_kwargs = _build_stats_kwargs(self.spec)
         _samples = list(train_dataset)  # type: ignore[call-overload]
-        _stats_args = {
-            "x_cols": self.spec.x_cols,
-            "u_cols": u_ode_cols,
-            "e_cols": self.spec.e0_cols,
-            "dx_cols": dx_col_names,
-        }
-        scale_floor = float(getattr(self.spec, "nn_output_scale_floor_ratio", 0.0) or 0.0)
-        self.stats_dict = compute_stats(
-            _samples,
-            **_stats_args,
-            e1_cols=e1_cols,
-            derived_cols=derived_output_cols,
-            derived_scale_floor_ratio=scale_floor,
-        )
+        self.stats_dict = compute_stats(_samples, **_stats_kwargs)
 
         # Model stats: include e1 so StructuredLayer inputs are normalized.
         # compute_stats skips e1 columns already covered by DX, so no
         # overwrite risk for overlapping columns like fdm_d_alt_ms.
-        model_stats = compute_stats(
-            _samples,
-            **_stats_args,
-            e1_cols=e1_cols,
-            derived_cols=derived_output_cols,
-            derived_scale_floor_ratio=scale_floor,
-        )
+        model_stats = compute_stats(_samples, **_stats_kwargs)
 
         self.model = FlightDynamicsModel(
             self.spec,
@@ -251,9 +266,7 @@ class ODETrainer:
         # Index of the heading state (lateral channel) — used by the
         # rollout loss to apply signed_wrap on the residual instead of the
         # raw difference.  ``None`` if the architecture has no heading.
-        self._heading_idx: int | None = None
-        if "fdm_heading_rad" in self.spec.x_cols:
-            self._heading_idx = self.spec.x_cols.index("fdm_heading_rad")
+        self._heading_idx: int | None = _optional_col_index(self.spec.x_cols, "fdm_heading_rad")
 
         self.save_meta()
 
