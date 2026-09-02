@@ -574,6 +574,7 @@ def download_fleet(
         CampaignGuardIncomplete,
         resolve_fleet_guard,
     )
+    from node_fdm_pipeline.commands._fleet_digest import ResumeDigestMismatch
     from node_fdm_pipeline.commands._fleet_fetch import download_fleet as run_fleet
     from node_fdm_pipeline.commands._fleet_plan import build_fleet_plan, discover_cohorts
     from node_fdm_pipeline.commands._trino_lease import (
@@ -613,8 +614,13 @@ def download_fleet(
             ]
             raise CampaignGuardIncomplete(missing)
 
-        fleet_config = None
-        acquisition_preflight = None
+        fleet_config, acquisition_preflight = None, None
+        (
+            campaign_digest,
+            campaign_selection,
+            campaign_resolved_config,
+            campaign_profile,
+        ) = (None, None, None, None)
         if decision.mode == "campaign":
             missing = []
             if lease_ttl_s is None:
@@ -633,6 +639,23 @@ def download_fleet(
                 lease_ttl_s=lease_ttl_s,
                 disk_min_gib=disk_min_gib,
             )
+            assert (
+                decision.resume_digest is not None
+                and selection is not None
+                and resolved_config is not None
+                and profile is not None
+            )
+            (
+                campaign_digest,
+                campaign_selection,
+                campaign_resolved_config,
+                campaign_profile,
+            ) = (
+                decision.resume_digest,
+                selection.read_text(encoding="utf-8"),
+                resolved_config.read_text(encoding="utf-8"),
+                profile.read_text(encoding="utf-8"),
+            )
 
         plan = build_fleet_plan(discover_cohorts(fleet_dir), data_root=data_root)
         root = next(iter(plan.cohorts)).cfg.paths.data_dir.parent
@@ -643,9 +666,17 @@ def download_fleet(
             dry_run=dry_run,
             manifest_path=root / "download-fleet.manifest.jsonl",
             fleet_config=fleet_config,
-            acquisition_preflight=acquisition_preflight,
+            recorded_digest=campaign_digest,
+            selection_digest=campaign_selection,
+            resolved_config=campaign_resolved_config,
+            profile=campaign_profile,
         )
-    except (CampaignGuardIncomplete, LeaseConfigError, LeaseUnavailable) as exc:
+    except (
+        CampaignGuardIncomplete,
+        LeaseConfigError,
+        LeaseUnavailable,
+        ResumeDigestMismatch,
+    ) as exc:
         print(str(exc), file=sys.stderr)  # noqa: T201
         raise SystemExit(1) from exc
 

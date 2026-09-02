@@ -474,17 +474,23 @@ def download_fleet(  # noqa: PLR0913
             or profile is None
         ):
             raise ValueError("fleet acquisition preflight inputs are required")
+        campaign_root = manifest_path.parent if isinstance(manifest_path, Path) else None
         acquisition_preflight = preflight_acquisition(
             recorded_digest=recorded_digest,
             selection_digest=selection_digest,
             resolved_config=resolved_config,
             profile=profile,
             fleet_config=fleet_config,
+            campaign_root=campaign_root,
         )
     if acquisition_preflight is not None and fleet_config is None:
         raise ValueError("fleet_config is required with an acquisition preflight")
 
-    run_key = _plan_digest(plan)
+    run_key = (
+        acquisition_preflight.resume_digest.composite
+        if acquisition_preflight is not None
+        else _plan_digest(plan)
+    )
 
     if workers != 1:
         raise ValueError(
