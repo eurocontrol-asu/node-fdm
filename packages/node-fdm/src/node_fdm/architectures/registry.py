@@ -176,40 +176,56 @@ ORIGINS: dict[str, ArchitectureOrigin] = {}
 _DISCOVERY_COMPLETE = False
 
 
-def _provider_entries(payload: object) -> dict[str, ArchitectureSpec]:
-    """Normalize a provider payload to an alias-to-spec mapping."""
+def _coerce_payload(payload: object) -> dict[Any, Any]:
+    """Coerce a provider payload to a raw alias-to-spec mapping."""
     from collections.abc import Iterable, Mapping
 
     if isinstance(payload, Mapping):
-        entries = dict(payload)
-    elif isinstance(payload, Iterable) and not isinstance(payload, (str, bytes)):
-        specs = list(payload)
-        entries = {spec.name: spec for spec in specs if isinstance(spec, ArchitectureSpec)}
-        if len(entries) != len(specs):
-            msg = "Architecture providers must return ArchitectureSpec values."
-            raise TypeError(msg)
-    else:
+        return dict(payload)
+    if not isinstance(payload, Iterable) or isinstance(payload, (str, bytes)):
         msg = "Architecture providers must return a mapping or iterable of ArchitectureSpec."
         raise TypeError(msg)
 
+    specs = list(payload)
+    entries = {spec.name: spec for spec in specs if isinstance(spec, ArchitectureSpec)}
+    if len(entries) != len(specs):
+        msg = "Architecture providers must return ArchitectureSpec values."
+        raise TypeError(msg)
+    return entries
+
+
+def _validate_entry(alias: object, spec: object) -> tuple[str, ArchitectureSpec]:
+    """Type-check one raw provider entry."""
+    if not isinstance(alias, str) or not alias:
+        msg = "Architecture aliases must be non-empty strings."
+        raise TypeError(msg)
+    if not isinstance(spec, ArchitectureSpec):
+        msg = f"Architecture alias {alias!r} does not reference an ArchitectureSpec."
+        raise TypeError(msg)
+    return alias, spec
+
+
+def _assign_key(
+    normalized: dict[str, ArchitectureSpec],
+    key: str,
+    spec: ArchitectureSpec,
+    label: str,
+) -> None:
+    """Bind key to spec, rejecting a conflicting existing binding."""
+    existing = normalized.get(key)
+    if existing is not None and existing != spec:
+        msg = f"Provider defines conflicting architecture {label} {key!r}."
+        raise ValueError(msg)
+    normalized[key] = spec
+
+
+def _provider_entries(payload: object) -> dict[str, ArchitectureSpec]:
+    """Normalize a provider payload to an alias-to-spec mapping."""
     normalized: dict[str, ArchitectureSpec] = {}
-    for alias, spec in entries.items():
-        if not isinstance(alias, str) or not alias:
-            msg = "Architecture aliases must be non-empty strings."
-            raise TypeError(msg)
-        if not isinstance(spec, ArchitectureSpec):
-            msg = f"Architecture alias {alias!r} does not reference an ArchitectureSpec."
-            raise TypeError(msg)
-        existing = normalized.get(alias)
-        if existing is not None and existing != spec:
-            msg = f"Provider defines conflicting architecture alias {alias!r}."
-            raise ValueError(msg)
-        normalized[alias] = spec
-        canonical = normalized.get(spec.name)
-        if canonical is not None and canonical != spec:
-            msg = f"Provider defines conflicting architecture name {spec.name!r}."
-            raise ValueError(msg)
-        normalized[spec.name] = spec
+    for raw_alias, raw_spec in _coerce_payload(payload).items():
+        alias, spec = _validate_entry(raw_alias, raw_spec)
+        _assign_key(normalized, alias, spec, "alias")
+        _assign_key(normalized, spec.name, spec, "name")
     return normalized
 
 
