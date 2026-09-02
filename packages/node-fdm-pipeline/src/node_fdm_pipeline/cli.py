@@ -708,6 +708,30 @@ def decode_fleet(
         bool,
         cyclopts.Parameter(name="--dry-run", help="List the spans without decoding"),
     ] = False,
+    selection: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--selection", help="Recorded campaign selection digest"),
+    ] = None,
+    resolved_config: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--resolved-config", help="Recorded resolved configuration"),
+    ] = None,
+    profile: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--profile", help="Recorded campaign profile"),
+    ] = None,
+    lease_path: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--lease-path", help="Shared acquisition lease record"),
+    ] = None,
+    lease_ttl_s: Annotated[
+        int | None,
+        cyclopts.Parameter(name="--lease-ttl-s", help="Shared lease lifetime in seconds"),
+    ] = None,
+    disk_min_gib: Annotated[
+        float | None,
+        cyclopts.Parameter(name="--disk-min-gib", help="Minimum free disk space in GiB"),
+    ] = None,
 ) -> None:
     """Decode every cohort's raw cache into its Delta table, several at a time.
 
@@ -721,9 +745,108 @@ def decode_fleet(
     largest is 1.68x that, so ``--workers`` is a RAM budget — it defaults to 1 and
     the command warns when the estimate exceeds what is free.
     """
-    from node_fdm_pipeline.commands._fleet_decode import decode_fleet as run_decode_fleet
+    import sys
 
-    run_decode_fleet(fleet_dir, workers=workers, dry_run=dry_run)
+    from node_fdm_pipeline.commands._fleet_boundary import (
+        CampaignGuardIncomplete,
+        preflight_acquisition,
+        resolve_fleet_guard,
+    )
+    from node_fdm_pipeline.commands._fleet_decode import decode_fleet as run_decode_fleet
+    from node_fdm_pipeline.commands._fleet_digest import (
+        ResumeDigest,
+        ResumeDigestMismatch,
+    )
+    from node_fdm_pipeline.commands._trino_lease import (
+        LeaseConfigError,
+        LeaseUnavailable,
+    )
+    from node_fdm_pipeline.config import FleetRunConfig
+
+    try:
+        try:
+            decision = resolve_fleet_guard(
+                selection=selection,
+                resolved_config=resolved_config,
+                profile=profile,
+                lease_path=lease_path,
+            )
+        except CampaignGuardIncomplete as exc:
+            missing = list(exc.missing)
+            if lease_ttl_s is None:
+                missing.append("lease_ttl_s")
+            if disk_min_gib is None:
+                missing.append("disk_min_gib")
+            raise CampaignGuardIncomplete(missing) from exc
+
+        campaign_values = (
+            ("selection", selection),
+            ("resolved_config", resolved_config),
+            ("profile", profile),
+            ("lease_path", lease_path),
+            ("lease_ttl_s", lease_ttl_s),
+            ("disk_min_gib", disk_min_gib),
+        )
+        if decision.mode == "historical":
+            missing = [name for name, value in campaign_values if value is None]
+            if len(missing) != len(campaign_values):
+                raise CampaignGuardIncomplete(missing)
+            run_decode_fleet(
+                fleet_dir,
+                workers=workers,
+                dry_run=dry_run,
+                decision=decision,
+            )
+            return
+
+        missing = [name for name, value in campaign_values if value is None]
+        if missing:
+            raise CampaignGuardIncomplete(missing)
+        assert selection is not None
+        assert resolved_config is not None
+        assert profile is not None
+        assert lease_ttl_s is not None
+        assert disk_min_gib is not None
+        assert decision.resume_digest is not None
+        assert decision.preflight is not None
+
+        fleet_config = FleetRunConfig(
+            lease_path=decision.preflight.lease_path,
+            lease_ttl_s=lease_ttl_s,
+            disk_min_gib=disk_min_gib,
+        )
+        resume_digest_path = fleet_dir / "decode-fleet.resume.json"
+        recorded_digest = decision.resume_digest
+        if resume_digest_path.exists():
+            recorded_digest = ResumeDigest.model_validate_json(
+                resume_digest_path.read_text(encoding="utf-8")
+            )
+        acquisition_preflight = preflight_acquisition(
+            recorded_digest=recorded_digest,
+            selection_digest=selection.read_text(encoding="utf-8"),
+            resolved_config=resolved_config.read_text(encoding="utf-8"),
+            profile=profile.read_text(encoding="utf-8"),
+            fleet_config=fleet_config,
+        )
+        run_decode_fleet(
+            fleet_dir,
+            workers=workers,
+            dry_run=dry_run,
+            decision=decision,
+            fleet_config=fleet_config,
+            acquisition_preflight=acquisition_preflight,
+            journal_path=fleet_dir / "decode-fleet.journal.jsonl",
+            receipt_dir=fleet_dir / "decode-fleet-receipts",
+            resume_digest_path=resume_digest_path,
+        )
+    except (
+        CampaignGuardIncomplete,
+        LeaseConfigError,
+        LeaseUnavailable,
+        ResumeDigestMismatch,
+    ) as exc:
+        print(str(exc), file=sys.stderr)  # noqa: T201
+        raise SystemExit(1) from exc
 
 
 @app.command

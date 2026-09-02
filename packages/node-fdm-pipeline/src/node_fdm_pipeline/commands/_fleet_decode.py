@@ -47,8 +47,11 @@ from pathlib import Path
 import structlog
 
 from node_fdm_pipeline.commands._fleet_boundary import (
+    AcquisitionPreflight,
+    FleetGuardDecision,
     acquisition_section,
     preflight_acquisition,
+    resolve_fleet_guard,
 )
 from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
 from node_fdm_pipeline.config import FleetRunConfig
@@ -132,32 +135,45 @@ def decode_fleet(  # noqa: PLR0913
     profile: DigestInput | None = None,
     journal_path: Path | None = None,
     receipt_dir: Path | None = None,
+    decision: FleetGuardDecision | None = None,
+    acquisition_preflight: AcquisitionPreflight | None = None,
+    resume_digest_path: Path | None = None,
 ) -> list[DecodeOutcome]:
     """Decode a fleet after validating its resume identity and shared lease."""
-    if (
-        fleet_config is None
-        and recorded_digest is None
-        and selection_digest is None
-        and resolved_config is None
-        and profile is None
-    ):
-        return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=dry_run)
-    if (
-        fleet_config is None
-        or recorded_digest is None
-        or selection_digest is None
-        or resolved_config is None
-        or profile is None
-    ):
-        raise ValueError("fleet acquisition preflight inputs must be provided together")
+    guard = decision
+    preflight = acquisition_preflight
+    if guard is None:
+        if (
+            fleet_config is not None
+            and recorded_digest is not None
+            and selection_digest is not None
+            and resolved_config is not None
+            and profile is not None
+        ):
+            preflight = preflight_acquisition(
+                recorded_digest=recorded_digest,
+                selection_digest=selection_digest,
+                resolved_config=resolved_config,
+                profile=profile,
+                fleet_config=fleet_config,
+            )
+            guard = FleetGuardDecision(
+                mode="campaign",
+                preflight=preflight,
+                resume_digest=preflight.resume_digest,
+            )
+        else:
+            guard = resolve_fleet_guard(
+                selection=None,
+                resolved_config=None,
+                profile=None,
+                lease_path=None,
+            )
 
-    preflight = preflight_acquisition(
-        recorded_digest=recorded_digest,
-        selection_digest=selection_digest,
-        resolved_config=resolved_config,
-        profile=profile,
-        fleet_config=fleet_config,
-    )
+    if guard.mode == "historical":
+        return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=dry_run)
+    if fleet_config is None or preflight is None:
+        raise ValueError("campaign decode requires fleet configuration and preflight")
     if dry_run:
         return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=True)
 
@@ -170,7 +186,24 @@ def decode_fleet(  # noqa: PLR0913
         receipt_dir=receipt_dir,
         acquisition_key=run_key,
     ):
+        if resume_digest_path is not None:
+            _record_resume_digest(resume_digest_path, preflight.resume_digest)
         return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=False)
+
+
+def _record_resume_digest(path: Path, digest: ResumeDigest) -> None:
+    """Atomically record the campaign identity while its shared lease is held."""
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
+    try:
+        with temporary.open("x", encoding="utf-8") as handle:
+            handle.write(digest.model_dump_json())
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary, path)
+    finally:
+        temporary.unlink(missing_ok=True)
 
 
 def plan_decodes(fleet_dir: Path) -> list[CohortDecode]:

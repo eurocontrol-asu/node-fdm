@@ -9,11 +9,13 @@ from typing import Any
 import pytest
 from pytest_mock import MockerFixture
 
+from node_fdm_pipeline import cli
 from node_fdm_pipeline.commands import _fleet_decode, _fleet_journal, _fleet_manifest
 from node_fdm_pipeline.commands._fleet_digest import (
     DigestInput,
     compute_resume_digest,
 )
+from node_fdm_pipeline.commands._trino_lease import acquire_lease
 from node_fdm_pipeline.config import FleetRunConfig
 
 _SELECTION_DIGEST = "recorded-offline-selection"
@@ -94,3 +96,117 @@ def test_decode_fleet_records_lifecycle_and_releases_lease(
         is _fleet_journal.RunState.PROCESSING
     )
     assert not lease_path.exists()
+
+
+def _campaign_files(tmp_path: Path) -> tuple[Path, Path, Path, Path, Path]:
+    fleet_dir = tmp_path / "fleet"
+    output_dir = fleet_dir / "decoded"
+    shared_dir = tmp_path / "shared"
+    fleet_dir.mkdir()
+    output_dir.mkdir()
+    shared_dir.mkdir()
+    selection = tmp_path / "selection.txt"
+    resolved_config = tmp_path / "resolved-config.json"
+    profile = tmp_path / "profile.json"
+    selection.write_text("selection-v1", encoding="utf-8")
+    resolved_config.write_text('{"workers": 1}', encoding="utf-8")
+    profile.write_bytes(b"A")
+    return fleet_dir, output_dir, selection, resolved_config, profile
+
+
+@pytest.mark.integration
+def test_decode_fleet_campaign_rejects_held_shared_lease(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC1: a held shared lease aborts campaign decode before any artefact is written."""
+    fleet_dir, output_dir, selection, resolved_config, profile = _campaign_files(tmp_path)
+    lease_path = tmp_path / "shared" / "decode-fleet.lease"
+
+    def write_decoded_artefact(*args: object, **kwargs: object) -> list[object]:
+        del args, kwargs
+        (output_dir / "unexpected.parquet").write_bytes(b"decoded")
+        return []
+
+    decode_impl = mocker.patch.object(
+        _fleet_decode,
+        "_decode_fleet_impl",
+        side_effect=write_decoded_artefact,
+    )
+    held_lease = acquire_lease(
+        lease_path,
+        owner="other-owner",
+        ttl_s=60,
+        now=1_000_000_000_000.0,
+    )
+    try:
+        with pytest.raises(SystemExit) as exit_info:
+            cli.decode_fleet(
+                fleet_dir=fleet_dir,
+                workers=1,
+                dry_run=False,
+                selection=selection,
+                resolved_config=resolved_config,
+                profile=profile,
+                lease_path=lease_path,
+                lease_ttl_s=60,
+                disk_min_gib=1.0,
+            )
+        stderr = capsys.readouterr().err
+    finally:
+        held_lease.release()
+
+    assert exit_info.value.code != 0
+    assert "Lease is held by other-owner" in stderr
+    decode_impl.assert_not_called()
+    assert not list(output_dir.iterdir())
+
+
+@pytest.mark.integration
+def test_decode_fleet_campaign_rejects_profile_digest_mismatch(
+    tmp_path: Path,
+    mocker: MockerFixture,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC3: a one-byte profile change aborts resume before another decode artefact."""
+    fleet_dir, output_dir, selection, resolved_config, profile = _campaign_files(tmp_path)
+    lease_path = tmp_path / "shared" / "decode-fleet.lease"
+
+    def write_decoded_artefact(*args: object, **kwargs: object) -> list[object]:
+        del args, kwargs
+        sequence = len(list(output_dir.glob("*.parquet"))) + 1
+        (output_dir / f"decoded-{sequence}.parquet").write_bytes(b"decoded")
+        return []
+
+    decode_impl = mocker.patch.object(
+        _fleet_decode,
+        "_decode_fleet_impl",
+        side_effect=write_decoded_artefact,
+    )
+
+    def run_campaign() -> None:
+        cli.decode_fleet(
+            fleet_dir=fleet_dir,
+            workers=1,
+            dry_run=False,
+            selection=selection,
+            resolved_config=resolved_config,
+            profile=profile,
+            lease_path=lease_path,
+            lease_ttl_s=60,
+            disk_min_gib=1.0,
+        )
+
+    run_campaign()
+    artefacts_after_first_run = sorted(output_dir.glob("*.parquet"))
+    profile.write_bytes(b"B")
+    capsys.readouterr()
+
+    with pytest.raises(SystemExit) as exit_info:
+        run_campaign()
+
+    assert exit_info.value.code != 0
+    assert "Resume digest mismatch: profile changed" in capsys.readouterr().err
+    assert sorted(output_dir.glob("*.parquet")) == artefacts_after_first_run
+    assert decode_impl.call_count == 1

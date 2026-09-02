@@ -60,6 +60,33 @@ input before creating a lease, constructing the provider, or writing payloads. A
 set validates the recorded digests and acquires the shared lease before remote acquisition;
 if another owner holds that lease, the command exits non-zero without publishing payloads.
 
+### Fleet decoding
+
+The historical decoder remains available without campaign options:
+
+```bash
+fdm decode-fleet --fleet-dir fleet
+```
+
+For a coordinated campaign, pass the same six inputs as one atomic set:
+
+```bash
+fdm decode-fleet \
+  --fleet-dir fleet \
+  --selection run/selection.digest \
+  --resolved-config run/resolved-config.json \
+  --profile run/profile.json \
+  --lease-path /shared/node-fdm/decode-fleet.lease \
+  --lease-ttl-s 120 \
+  --disk-min-gib 8.5
+```
+
+A partial set exits non-zero and reports every missing input before creating a shared
+lease or local fallback lock. A complete set validates the resume identity, acquires
+the supplied shared lease, then starts decoding. The command records that identity in
+`fleet/decode-fleet.resume.json`; a later run whose selection, resolved configuration,
+or profile differs exits before producing another decoded artefact.
+
 Commands that load coordinated settings from pipeline YAML use the equivalent
 deployment-owned model:
 
@@ -79,6 +106,7 @@ an absolute path.
 | Command | Description | Status |
 |---|---|---|
 | `fdm download-fleet` | Plan historical fleet downloads or run a coordinated campaign behind a shared lease | ✅ Implemented |
+| `fdm decode-fleet` | Decode historical fleets or resume a digest-checked campaign behind a shared lease | ✅ Implemented |
 | `fdm preprocess` | Resample flights: subsegment detection, position smoothing, fixed-rate resampling | ✅ Implemented |
 | `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
 | `fdm derive` | Compute derived physics columns (gamma, wind, distance) — étape 4 | ✅ Implemented |
