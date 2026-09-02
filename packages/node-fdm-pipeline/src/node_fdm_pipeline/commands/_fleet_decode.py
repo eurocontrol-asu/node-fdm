@@ -127,6 +127,59 @@ def _available_gib() -> float:
     return pages * os.sysconf("SC_PAGE_SIZE") / 2**30
 
 
+type _CampaignInputs = tuple[
+    FleetRunConfig | None,
+    ResumeDigest | None,
+    str | None,
+    DigestInput | None,
+    DigestInput | None,
+]
+
+
+def _resolve_decode_guard(
+    decision: FleetGuardDecision | None,
+    acquisition_preflight: AcquisitionPreflight | None,
+    campaign: _CampaignInputs,
+) -> tuple[FleetGuardDecision, AcquisitionPreflight | None]:
+    """Resolve historical or campaign execution without nesting the entrypoint."""
+    if decision is not None:
+        return decision, acquisition_preflight
+
+    fleet_config, recorded_digest, selection_digest, resolved_config, profile = campaign
+    if (
+        fleet_config is None
+        or recorded_digest is None
+        or selection_digest is None
+        or resolved_config is None
+        or profile is None
+    ):
+        return (
+            resolve_fleet_guard(
+                selection=None,
+                resolved_config=None,
+                profile=None,
+                lease_path=None,
+            ),
+            acquisition_preflight,
+        )
+
+    preflight = preflight_acquisition(
+        recorded_digest=recorded_digest,
+        selection_digest=selection_digest,
+        resolved_config=resolved_config,
+        profile=profile,
+        fleet_config=fleet_config,
+    )
+    return (
+        FleetGuardDecision(
+            mode="campaign",
+            preflight=preflight,
+            resume_digest=preflight.resume_digest,
+        ),
+        preflight,
+    )
+
+
 def decode_fleet(  # noqa: PLR0913
     fleet_dir: Path,
     *,
@@ -144,35 +197,11 @@ def decode_fleet(  # noqa: PLR0913
     resume_digest_path: Path | None = None,
 ) -> list[DecodeOutcome]:
     """Decode a fleet after validating its resume identity and shared lease."""
-    guard = decision
-    preflight = acquisition_preflight
-    if guard is None:
-        if (
-            fleet_config is not None
-            and recorded_digest is not None
-            and selection_digest is not None
-            and resolved_config is not None
-            and profile is not None
-        ):
-            preflight = preflight_acquisition(
-                recorded_digest=recorded_digest,
-                selection_digest=selection_digest,
-                resolved_config=resolved_config,
-                profile=profile,
-                fleet_config=fleet_config,
-            )
-            guard = FleetGuardDecision(
-                mode="campaign",
-                preflight=preflight,
-                resume_digest=preflight.resume_digest,
-            )
-        else:
-            guard = resolve_fleet_guard(
-                selection=None,
-                resolved_config=None,
-                profile=None,
-                lease_path=None,
-            )
+    guard, preflight = _resolve_decode_guard(
+        decision,
+        acquisition_preflight,
+        (fleet_config, recorded_digest, selection_digest, resolved_config, profile),
+    )
 
     if guard.mode == "historical":
         return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=dry_run)
@@ -259,23 +288,13 @@ def _run_one(job: CohortDecode) -> DecodeOutcome:
     return DecodeOutcome(name=job.name, seconds=time.perf_counter() - t0)
 
 
-def _decode_fleet_impl(
-    fleet_dir: Path,
-    *,
-    workers: int = DEFAULT_WORKERS,
-    dry_run: bool = False,
-) -> list[DecodeOutcome]:
-    """Decode every cohort under *fleet_dir*, *workers* at a time."""
-    jobs = plan_decodes(fleet_dir)
-    # Largest first: the long tail of small cohorts then fills the workers that
-    # finish early, instead of one big cohort running alone at the end.
-    jobs.sort(key=lambda j: j.days, reverse=True)
-
+def _log_decode_plan(jobs: list[CohortDecode], workers: int) -> None:
+    """Log the scheduled work and warn when its memory estimate is tight."""
     budget_gib = workers * DECODE_RSS_GIB
     log.info(
         "decode_fleet_plan",
         cohorts=len(jobs),
-        cohort_days=sum(j.days for j in jobs),
+        cohort_days=sum(job.days for job in jobs),
         workers=workers,
         est_peak_gib=budget_gib,
     )
@@ -287,20 +306,24 @@ def _decode_fleet_impl(
             available_gib=round(available_gib),
             msg="lower --workers or decode in two passes",
         )
-    if dry_run:
-        for job in jobs:
-            log.info(
-                "decode_fleet_would_run",
-                cohort=job.name,
-                start=job.start_date,
-                end=job.end_date,
-                days=job.days,
-            )
-        return []
 
+
+def _log_dry_run(jobs: list[CohortDecode]) -> None:
+    """Log every job that a dry run would execute."""
+    for job in jobs:
+        log.info(
+            "decode_fleet_would_run",
+            cohort=job.name,
+            start=job.start_date,
+            end=job.end_date,
+            days=job.days,
+        )
+
+
+def _execute_decodes(jobs: list[CohortDecode], workers: int) -> list[DecodeOutcome]:
+    """Run planned jobs in spawned worker processes."""
     outcomes: list[DecodeOutcome] = []
     done = 0
-    # spawn, never the Linux default fork — see the module docstring.
     ctx = multiprocessing.get_context("spawn")
     with ProcessPoolExecutor(max_workers=workers, mp_context=ctx) as pool:
         futures = {pool.submit(_run_one, job): job for job in jobs}
@@ -310,21 +333,46 @@ def _decode_fleet_impl(
             done += 1
             if outcome.error:
                 log.error("decode_fleet_failed", cohort=outcome.name, error=outcome.error)
-            else:
-                log.info(
-                    "decode_fleet_done",
-                    cohort=outcome.name,
-                    seconds=round(outcome.seconds, 1),
-                    progress=f"{done}/{len(jobs)}",
-                )
+                continue
+            log.info(
+                "decode_fleet_done",
+                cohort=outcome.name,
+                seconds=round(outcome.seconds, 1),
+                progress=f"{done}/{len(jobs)}",
+            )
+    return outcomes
 
-    failed = [o for o in outcomes if o.error]
+
+def _log_decode_summary(outcomes: list[DecodeOutcome]) -> None:
+    """Log aggregate decode results and failed cohort names."""
+    failed = [outcome for outcome in outcomes if outcome.error]
     log.info(
         "decode_fleet_complete",
         cohorts=len(outcomes),
         failed=len(failed),
-        seconds=round(sum(o.seconds for o in outcomes), 1),
+        seconds=round(sum(outcome.seconds for outcome in outcomes), 1),
     )
     if failed:
-        log.warning("decode_fleet_failed_cohorts", cohorts=[o.name for o in failed])
+        log.warning("decode_fleet_failed_cohorts", cohorts=[outcome.name for outcome in failed])
+
+
+def _decode_fleet_impl(
+    fleet_dir: Path,
+    *,
+    workers: int = DEFAULT_WORKERS,
+    dry_run: bool = False,
+) -> list[DecodeOutcome]:
+    """Decode every cohort under *fleet_dir*, *workers* at a time."""
+    jobs = plan_decodes(fleet_dir)
+    # Largest first: the long tail of small cohorts then fills the workers that
+    # finish early, instead of one big cohort running alone at the end.
+    jobs.sort(key=lambda job: job.days, reverse=True)
+
+    _log_decode_plan(jobs, workers)
+    if dry_run:
+        _log_dry_run(jobs)
+        return []
+
+    outcomes = _execute_decodes(jobs, workers)
+    _log_decode_summary(outcomes)
     return outcomes
