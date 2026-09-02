@@ -54,6 +54,7 @@ node-fdm-pipeline = { workspace = true }
 dev = [
     "prek>=0.4.9",
     "mypy>=1.13",
+    "pytest-xdist>=3.8.0",
     "scikit-learn>=1.8.0",
     "optuna>=4.8.0",
 ]
