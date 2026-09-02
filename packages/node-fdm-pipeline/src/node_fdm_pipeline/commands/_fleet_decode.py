@@ -53,7 +53,11 @@ from node_fdm_pipeline.commands._fleet_boundary import (
     preflight_acquisition,
     resolve_fleet_guard,
 )
-from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
+from node_fdm_pipeline.commands._fleet_digest import (
+    DigestInput,
+    ResumeDigest,
+    record_campaign_identity,
+)
 from node_fdm_pipeline.config import FleetRunConfig
 
 log = structlog.get_logger()
@@ -193,17 +197,7 @@ def decode_fleet(  # noqa: PLR0913
 
 def _record_resume_digest(path: Path, digest: ResumeDigest) -> None:
     """Atomically record the campaign identity while its shared lease is held."""
-    path.parent.mkdir(parents=True, exist_ok=True)
-    temporary = path.with_name(f".{path.name}.{os.getpid()}.tmp")
-    try:
-        with temporary.open("x", encoding="utf-8") as handle:
-            handle.write(digest.model_dump_json())
-            handle.write("\n")
-            handle.flush()
-            os.fsync(handle.fileno())
-        os.replace(temporary, path)
-    finally:
-        temporary.unlink(missing_ok=True)
+    record_campaign_identity(path.parent, digest)
 
 
 def plan_decodes(fleet_dir: Path) -> list[CohortDecode]:

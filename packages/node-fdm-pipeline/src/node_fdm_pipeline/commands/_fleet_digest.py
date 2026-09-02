@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import hashlib
 import json
+import os
+import tempfile
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
@@ -12,6 +14,8 @@ __all__ = [
     "ResumeDigestMismatch",
     "check_resume_compatible",
     "compute_resume_digest",
+    "load_campaign_identity",
+    "record_campaign_identity",
 ]
 
 type CanonicalScalar = None | bool | int | float | str
@@ -82,6 +86,42 @@ def compute_resume_digest(
         profile=profile_digest,
         composite=composite,
     )
+
+
+_CAMPAIGN_IDENTITY_NAME = "decode-fleet.resume.json"
+
+
+def record_campaign_identity(root: Path, digest: ResumeDigest) -> None:
+    """Atomically persist a campaign identity under its campaign root."""
+    root.mkdir(parents=True, exist_ok=True)
+    identity_path = root / _CAMPAIGN_IDENTITY_NAME
+    descriptor, raw_path = tempfile.mkstemp(
+        dir=root,
+        prefix=f".{identity_path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary_path = Path(raw_path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(digest.model_dump_json())
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, identity_path)
+        directory_descriptor = os.open(root, os.O_RDONLY)
+        try:
+            os.fsync(directory_descriptor)
+        finally:
+            os.close(directory_descriptor)
+    finally:
+        temporary_path.unlink(missing_ok=True)
+
+
+def load_campaign_identity(root: Path) -> ResumeDigest:
+    """Load a campaign identity exclusively from its durable record."""
+    identity_path = root / _CAMPAIGN_IDENTITY_NAME
+    return ResumeDigest.model_validate_json(identity_path.read_text(encoding="utf-8"))
 
 
 def check_resume_compatible(recorded: ResumeDigest, current: ResumeDigest) -> None:
