@@ -26,13 +26,21 @@ from __future__ import annotations
 import random
 import threading
 import time
+from collections.abc import Callable
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from node_fdm_pipeline.commands import _raw_cache
+from node_fdm_pipeline.commands._fleet_boundary import (
+    acquisition_section,
+    preflight_acquisition,
+)
+from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
+from node_fdm_pipeline.config import FleetRunConfig
 
 if TYPE_CHECKING:
     from node_fdm_pipeline.commands._fleet_plan import Cohort, FleetPlan
@@ -427,15 +435,41 @@ def _run_summary(outcomes: list[DateOutcome]) -> tuple[list[DateOutcome], dict[s
     return failed, event
 
 
-def download_fleet(
+def download_fleet(  # noqa: PLR0913
     plan: FleetPlan,
     *,
     workers: int = DEFAULT_WORKERS,
     force: bool = False,
     dry_run: bool = False,
     manifest_path: Any | None = None,
+    fleet_config: FleetRunConfig | None = None,
+    recorded_digest: ResumeDigest | None = None,
+    selection_digest: str | None = None,
+    resolved_config: DigestInput | None = None,
+    profile: DigestInput | None = None,
+    journal_path: Path | None = None,
+    receipt_dir: Path | None = None,
+    fetch_boundary: Callable[..., DateOutcome] | None = None,
 ) -> list[DateOutcome]:
     """Download every date in *plan* through one strictly sequential stream."""
+    if (
+        fleet_config is None
+        or recorded_digest is None
+        or selection_digest is None
+        or resolved_config is None
+        or profile is None
+    ):
+        raise ValueError("fleet acquisition preflight inputs are required")
+
+    preflight = preflight_acquisition(
+        recorded_digest=recorded_digest,
+        selection_digest=selection_digest,
+        resolved_config=resolved_config,
+        profile=profile,
+        fleet_config=fleet_config,
+    )
+    run_key = _plan_digest(plan)
+
     if workers != 1:
         raise ValueError(
             "download-fleet is deliberately sequential; --workers must be 1 "
@@ -463,22 +497,30 @@ def download_fleet(
             "cohorts": len(plan.cohorts),
             "dates": len(plan.dates),
             "aircraft_days": plan.aircraft_days,
-            "plan_sha256": _plan_digest(plan),
+            "plan_sha256": run_key,
             "force": force,
         },
     )
 
-    _get_opensky()  # resolve the lazy import once, before any worker touches it
-
+    fetch_date = fetch_boundary or fetch_one_date
     outcomes: list[DateOutcome] = []
     done = 0
     total = len(plan.dates)
-    for date_str in plan.dates:
-        outcome = fetch_one_date(plan, date_str, force=force)
-        outcomes.append(outcome)
-        done += 1
-        _append_manifest(manifest_path, _date_event(outcome))
-        _log_date_outcome(outcome, done, total)
+    with acquisition_section(
+        preflight.lease_path,
+        owner=run_key,
+        ttl_s=fleet_config.lease_ttl_s,
+        journal_path=journal_path,
+        receipt_dir=receipt_dir,
+        acquisition_key=run_key,
+    ):
+        _get_opensky()  # resolve the lazy import before the remote span starts
+        for date_str in plan.dates:
+            outcome = fetch_date(plan, date_str, force=force)
+            outcomes.append(outcome)
+            done += 1
+            _append_manifest(manifest_path, _date_event(outcome))
+            _log_date_outcome(outcome, done, total)
 
     failed, summary = _run_summary(outcomes)
     log.info(
