@@ -1,0 +1,100 @@
+contract_version: 1.1.0
+result:
+  kind: measure
+  name: vertical_cascade_committed_coverage
+  value: 73.9448
+  unit: '%'
+  protocol: share of the cohort's finite samples committed to a plateau by the vertical
+    cascade at its retained operating points — altitude first, then the flight-path
+    angle over what altitude left, then vertical speed over what both left. Each point
+    is the most covering setting whose worst committed segment's mean absolute deviation
+    from its own announced value stays within the channel's budget, on every segment
+    of every flight
+  source: outputs/retained.csv
+context:
+- name: speed_cascade_coverage_pct
+  value: 85.2183
+- name: channels_served
+  value: 5
+- name: channels_empty
+  value: 0
+- name: candidates_scored
+  value: 27414
+- name: alt_coverage_pct
+  value: 62.0976
+- name: alt_budget_used_pct
+  value: 96.88
+- name: alt_segments_per_flight
+  value: 4.153
+- name: alt_median_duration_s
+  value: 204.0
+- name: alt_worst_drift_over_budget
+  value: 3.0
+- name: alt_n_admissible
+  value: 260
+- name: vz_coverage_pct
+  value: 4.9299
+- name: vz_budget_used_pct
+  value: 97.69
+- name: vz_segments_per_flight
+  value: 4.261
+- name: vz_median_duration_s
+  value: 40.0
+- name: vz_worst_drift_over_budget
+  value: 2.556
+- name: vz_n_admissible
+  value: 257
+- name: gamma_coverage_pct
+  value: 6.9172
+- name: gamma_budget_used_pct
+  value: 95.66
+- name: gamma_segments_per_flight
+  value: 3.705
+- name: gamma_median_duration_s
+  value: 60.0
+- name: gamma_worst_drift_over_budget
+  value: 2.672
+- name: gamma_n_admissible
+  value: 347
+- name: cas_coverage_pct
+  value: 32.4201
+- name: cas_budget_used_pct
+  value: 96.96
+- name: cas_segments_per_flight
+  value: 14.001
+- name: cas_median_duration_s
+  value: 48.0
+- name: cas_worst_drift_over_budget
+  value: 2.509
+- name: cas_n_admissible
+  value: 553
+- name: mach_coverage_pct
+  value: 52.7982
+- name: mach_budget_used_pct
+  value: 70.15
+- name: mach_segments_per_flight
+  value: 7.45
+- name: mach_median_duration_s
+  value: 152.0
+- name: mach_worst_drift_over_budget
+  value: 1.879
+- name: mach_n_admissible
+  value: 581
+- name: alt_share_of_residual_pct
+  value: 62.1
+- name: gamma_share_of_residual_pct
+  value: 18.25
+- name: vz_share_of_residual_pct
+  value: 15.91
+- name: mach_share_of_residual_pct
+  value: 52.8
+- name: cas_share_of_residual_pct
+  value: 68.68
+- name: candidates_at_cutoff_0
+  value: 6846
+- name: candidates_at_cutoff_120
+  value: 6857
+- name: candidates_at_cutoff_180
+  value: 6857
+- name: candidates_at_cutoff_300
+  value: 6854

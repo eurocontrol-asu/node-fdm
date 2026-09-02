@@ -20,6 +20,7 @@ dependencies = [
     "scipy>=1.13",
     "deltalake>=0.18",
     "pydantic>=2.0",
+    "PyYAML>=6.0",
     "pygeomag>=1.1.0",
     "structlog>=24.1",
 ]
@@ -46,6 +47,7 @@ raw-options = { root = "../.." }
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/node_fdm_data"]
+artifacts = ["src/node_fdm_data/qualification/opensky26_exp03_v1/*"]
 
 [dependency-groups]
 dev = [
