@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import importlib
 from pathlib import Path
 
 import pytest
@@ -24,8 +23,9 @@ def test_decode_writer_records_loadable_campaign_identity(tmp_path: Path) -> Non
     identity_path = campaign_root / "decode-fleet.resume.json"
 
     _fleet_decode._record_resume_digest(identity_path, digest)
-    digest_module = importlib.reload(_fleet_digest)
 
-    loaded = digest_module.load_campaign_identity(campaign_root)
-    assert isinstance(loaded, digest_module.ResumeDigest)
+    # Read back from disk only: the loader must rebuild the identity from the
+    # recorded file, never from in-process state.
+    loaded = _fleet_digest.load_campaign_identity(campaign_root)
+    assert isinstance(loaded, _fleet_digest.ResumeDigest)
     assert loaded.model_dump() == digest.model_dump()

@@ -47,8 +47,9 @@ def test_recorded_identity_survives_disk_only_reload(tmp_path: Path) -> None:
 
     record(campaign_root, digest)
     del digest
-    digest_module = importlib.reload(_fleet_digest)
 
+    # Read back from disk only: nothing of the recorded digest is kept in
+    # process, so a successful load proves the file alone carries the identity.
     loaded = digest_module.load_campaign_identity(campaign_root)
 
     assert isinstance(loaded, digest_module.ResumeDigest)
@@ -79,7 +80,6 @@ def test_interrupted_overwrite_preserves_original_identity(
     with pytest.raises(OSError, match="injected failure before atomic rename"):
         record(campaign_root, mutated)
 
-    digest_module = importlib.reload(_fleet_digest)
     loaded = load(campaign_root)
     assert (loaded.selection, loaded.config, loaded.profile) == original_dimensions
 
