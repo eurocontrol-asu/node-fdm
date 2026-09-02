@@ -28,7 +28,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
@@ -293,83 +293,154 @@ def _write_flightlist(collected: dict[str, tuple[Cohort, list[Any]]], date_str: 
     return written
 
 
+@dataclass(frozen=True)
+class _KindFetch:
+    plan: FleetPlan
+    kind: _raw_cache.Kind
+    date: str
+    aircraft: list[str]
+    start: datetime
+    end: datetime
+    force: bool
+    fetcher: Callable[..., object]
+
+
+@dataclass
+class _KindCounters:
+    written: int = 0
+    requests: int = 0
+    empty: list[str] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class _ChunkFetch:
+    result: object | None = None
+    split: tuple[list[str], list[str]] | None = None
+
+
+def _fetch_or_split(context: _KindFetch, chunk: list[str]) -> _ChunkFetch:
+    try:
+        result = _fetch_with_retry(
+            context.fetcher,
+            context.start,
+            context.end,
+            chunk,
+            date_str=context.date,
+        )
+    except Exception as exc:
+        if not _is_too_large(exc) or len(chunk) <= MIN_CHUNK:
+            raise
+        half = len(chunk) // 2
+        log.warning(
+            "fleet_chunk_split",
+            date=context.date,
+            kind=context.kind,
+            n=len(chunk),
+            into=(half, len(chunk) - half),
+        )
+        return _ChunkFetch(split=(chunk[:half], chunk[half:]))
+    return _ChunkFetch(result=result)
+
+
+def _dispatch_chunk(
+    context: _KindFetch,
+    chunk: list[str],
+    wanted: dict[str, Cohort],
+    result: object,
+    flightlist_rows: dict[str, tuple[Cohort, list[object]]],
+) -> int:
+    chunk_wanted = {aircraft: wanted[aircraft] for aircraft in chunk}
+    pdf = getattr(result, "data", result)
+    if context.kind == "flightlist":
+        _collect_flightlist(pdf, chunk_wanted, flightlist_rows)
+        return 0
+    return _dispatch_history(pdf, chunk_wanted, context.kind, context.date)
+
+
+def _fetch_kind(context: _KindFetch) -> _KindCounters:
+    wanted = _missing_by_owner(
+        context.plan,
+        context.kind,
+        context.date,
+        context.aircraft,
+        force=context.force,
+    )
+    counters = _KindCounters()
+    if not wanted:
+        return counters
+
+    aircraft = sorted(wanted)
+    pending = [aircraft[index : index + CHUNK] for index in range(0, len(aircraft), CHUNK)]
+    flightlist_rows: dict[str, tuple[Cohort, list[object]]] = {}
+    while pending:
+        chunk = pending.pop()
+        fetched = _fetch_or_split(context, chunk)
+        if fetched.split is not None:
+            pending.extend(fetched.split)
+            continue
+        counters.requests += 1
+        if fetched.result is None:
+            counters.empty.append(context.kind)
+            continue
+        counters.written += _dispatch_chunk(
+            context,
+            chunk,
+            wanted,
+            fetched.result,
+            flightlist_rows,
+        )
+
+    if flightlist_rows:
+        counters.written += _write_flightlist(flightlist_rows, context.date)
+    return counters
+
+
+@dataclass(frozen=True)
+class _DateOutcomeInput:
+    date: str
+    aircraft: list[str]
+    written: int
+    requests: int
+    empty: list[str]
+    error: Exception | None = None
+
+
+def _date_outcome(values: _DateOutcomeInput) -> DateOutcome:
+    detail = (
+        None if values.error is None else f"{type(values.error).__name__}: {values.error}"[:200]
+    )
+    return DateOutcome(
+        date=values.date,
+        requested=len(values.aircraft),
+        written=values.written,
+        requests=values.requests,
+        empty_kinds=tuple(values.empty),
+        error=detail,
+    )
+
+
 def fetch_one_date(plan: FleetPlan, date_str: str, *, force: bool = False) -> DateOutcome:
     """Fetch every kind for one date, mutualised, and dispatch into the silos."""
     aircraft = plan.dates[date_str]
     start = datetime.strptime(date_str, "%Y%m%d")
     end = start + timedelta(hours=24)
-
     api = _get_opensky()
     written = requests = 0
     empty: list[str] = []
 
     try:
         for kind in _KINDS:
-            wanted = _missing_by_owner(plan, kind, date_str, aircraft, force=force)
-            if not wanted:
-                continue
-
-            icao_list = sorted(wanted)
             fetcher = api.flightlist if kind == "flightlist" else getattr(api, kind)
-            # flightlist has no icao24 in its cache path, so its slices are merged
-            # across chunks and written once, after the loop.
-            flightlist_rows: dict[str, tuple[Cohort, list[Any]]] = {}
-
-            # A stack, not a for-loop: a chunk the cluster judges too large is
-            # replaced by its two halves and retried, so the effective size adapts
-            # to what this particular day's traffic allows.
-            pending: list[list[str]] = [
-                icao_list[i : i + CHUNK] for i in range(0, len(icao_list), CHUNK)
-            ]
-            while pending:
-                chunk = pending.pop()
-                try:
-                    result = _fetch_with_retry(fetcher, start, end, chunk, date_str=date_str)
-                except Exception as exc:
-                    if not _is_too_large(exc) or len(chunk) <= MIN_CHUNK:
-                        raise
-                    half = len(chunk) // 2
-                    log.warning(
-                        "fleet_chunk_split",
-                        date=date_str,
-                        kind=kind,
-                        n=len(chunk),
-                        into=(half, len(chunk) - half),
-                    )
-                    pending.extend((chunk[:half], chunk[half:]))
-                    continue
-
-                requests += 1
-                if result is None:
-                    empty.append(kind)
-                    continue
-
-                chunk_wanted = {a: wanted[a] for a in chunk}
-                pdf = result.data if hasattr(result, "data") else result
-                if kind == "flightlist":
-                    _collect_flightlist(pdf, chunk_wanted, flightlist_rows)
-                else:
-                    written += _dispatch_history(pdf, chunk_wanted, kind, date_str)
-
-            if flightlist_rows:
-                written += _write_flightlist(flightlist_rows, date_str)
+            counters = _fetch_kind(
+                _KindFetch(plan, kind, date_str, aircraft, start, end, force, fetcher)
+            )
+            written += counters.written
+            requests += counters.requests
+            empty.extend(counters.empty)
     except Exception as exc:  # noqa: BLE001 - one bad date must not kill the fleet run
-        return DateOutcome(
-            date=date_str,
-            requested=len(aircraft),
-            written=written,
-            requests=requests,
-            empty_kinds=tuple(empty),
-            error=f"{type(exc).__name__}: {exc}"[:200],
-        )
+        return _date_outcome(_DateOutcomeInput(date_str, aircraft, written, requests, empty, exc))
 
-    return DateOutcome(
-        date=date_str,
-        requested=len(aircraft),
-        written=written,
-        requests=requests,
-        empty_kinds=tuple(empty),
-    )
+    return _date_outcome(_DateOutcomeInput(date_str, aircraft, written, requests, empty))
 
 
 def _append_manifest(manifest_path: Any | None, event: dict[str, Any]) -> None:
@@ -437,6 +508,150 @@ def _run_summary(outcomes: list[DateOutcome]) -> tuple[list[DateOutcome], dict[s
     return failed, event
 
 
+@dataclass(frozen=True)
+class _PreflightInputs:
+    fleet_config: FleetRunConfig | None
+    recorded_digest: ResumeDigest | None
+    selection_digest: str | None
+    resolved_config: DigestInput | None
+    profile: DigestInput | None
+    manifest_path: object | None
+
+
+@dataclass(frozen=True)
+class _DownloadContext:
+    plan: FleetPlan
+    force: bool
+    manifest_path: object | None
+    fleet_config: FleetRunConfig | None
+    preflight: AcquisitionPreflight | None
+    journal_path: Path | None
+    receipt_dir: Path | None
+    fetch_date: Callable[..., DateOutcome]
+
+
+def _preflight_supplied(inputs: _PreflightInputs) -> bool:
+    return any(
+        value is not None
+        for value in (
+            inputs.fleet_config,
+            inputs.recorded_digest,
+            inputs.selection_digest,
+            inputs.resolved_config,
+            inputs.profile,
+        )
+    )
+
+
+def _required[T](value: T | None) -> T:
+    if value is None:
+        raise ValueError("fleet acquisition preflight inputs are required")
+    return value
+
+
+def _build_preflight(inputs: _PreflightInputs) -> AcquisitionPreflight:
+    campaign_root = inputs.manifest_path.parent if isinstance(inputs.manifest_path, Path) else None
+    return preflight_acquisition(
+        recorded_digest=_required(inputs.recorded_digest),
+        selection_digest=_required(inputs.selection_digest),
+        resolved_config=_required(inputs.resolved_config),
+        profile=_required(inputs.profile),
+        fleet_config=_required(inputs.fleet_config),
+        campaign_root=campaign_root,
+    )
+
+
+def _resolve_preflight(
+    current: AcquisitionPreflight | None,
+    inputs: _PreflightInputs,
+) -> AcquisitionPreflight | None:
+    if current is None and _preflight_supplied(inputs):
+        current = _build_preflight(inputs)
+    if current is not None and inputs.fleet_config is None:
+        raise ValueError("fleet_config is required with an acquisition preflight")
+    return current
+
+
+def _download_run_key(plan: FleetPlan, preflight: AcquisitionPreflight | None) -> str:
+    if preflight is None:
+        return _plan_digest(plan)
+    return preflight.resume_digest.composite
+
+
+def _validate_workers(workers: int) -> None:
+    if workers == 1:
+        return
+    raise ValueError(
+        "download-fleet is deliberately sequential; --workers must be 1 "
+        "because two Trino queries time out instead of increasing throughput"
+    )
+
+
+def _log_plan(plan: FleetPlan, workers: int) -> None:
+    per_cohort, mutualised = plan.requests_saved()
+    log.info(
+        "fleet_plan",
+        cohorts=len(plan.cohorts),
+        dates=len(plan.dates),
+        aircraft_days=plan.aircraft_days,
+        requests_per_cohort=per_cohort,
+        requests_mutualised=mutualised,
+        workers=workers,
+    )
+    log.info("fleet_planned_dates", dates=sorted(plan.dates))
+
+
+def _run_started_event(plan: FleetPlan, run_key: str, force: bool) -> dict[str, object]:
+    return {
+        "event": "run_started",
+        "cohorts": len(plan.cohorts),
+        "dates": len(plan.dates),
+        "aircraft_days": plan.aircraft_days,
+        "plan_sha256": run_key,
+        "force": force,
+    }
+
+
+def _run_dates(context: _DownloadContext, run_key: str) -> list[DateOutcome]:
+    outcomes: list[DateOutcome] = []
+    acquisition = (
+        acquisition_section(
+            context.preflight.lease_path,
+            owner=run_key,
+            ttl_s=context.fleet_config.lease_ttl_s,
+            journal_path=context.journal_path,
+            receipt_dir=context.receipt_dir,
+            acquisition_key=run_key
+            if context.journal_path is not None and context.receipt_dir is not None
+            else None,
+        )
+        if context.preflight is not None and context.fleet_config is not None
+        else nullcontext()
+    )
+    with acquisition:
+        _get_opensky()
+        for done, date_str in enumerate(context.plan.dates, start=1):
+            outcome = context.fetch_date(context.plan, date_str, force=context.force)
+            outcomes.append(outcome)
+            _append_manifest(context.manifest_path, _date_event(outcome))
+            _log_date_outcome(outcome, done, len(context.plan.dates))
+    return outcomes
+
+
+def _finish_run(manifest_path: object | None, outcomes: list[DateOutcome]) -> None:
+    failed, summary = _run_summary(outcomes)
+    log.info(
+        "fleet_done",
+        dates=summary["dates"],
+        failed=summary["failed"],
+        written=summary["written"],
+        requests=summary["requests"],
+    )
+    if failed:
+        log.warning("fleet_failed_dates", dates=[outcome.date for outcome in failed][:20])
+    _append_manifest(manifest_path, summary)
+
+
 def download_fleet(  # noqa: PLR0913
     plan: FleetPlan,
     *,
@@ -455,112 +670,37 @@ def download_fleet(  # noqa: PLR0913
     acquisition_preflight: AcquisitionPreflight | None = None,
 ) -> list[DateOutcome]:
     """Download every date in *plan* through one strictly sequential stream."""
-    legacy_preflight_supplied = any(
-        value is not None
-        for value in (
+    acquisition_preflight = _resolve_preflight(
+        acquisition_preflight,
+        _PreflightInputs(
             fleet_config,
             recorded_digest,
             selection_digest,
             resolved_config,
             profile,
-        )
+            manifest_path,
+        ),
     )
-    if acquisition_preflight is None and legacy_preflight_supplied:
-        if (
-            fleet_config is None
-            or recorded_digest is None
-            or selection_digest is None
-            or resolved_config is None
-            or profile is None
-        ):
-            raise ValueError("fleet acquisition preflight inputs are required")
-        campaign_root = manifest_path.parent if isinstance(manifest_path, Path) else None
-        acquisition_preflight = preflight_acquisition(
-            recorded_digest=recorded_digest,
-            selection_digest=selection_digest,
-            resolved_config=resolved_config,
-            profile=profile,
-            fleet_config=fleet_config,
-            campaign_root=campaign_root,
-        )
-    if acquisition_preflight is not None and fleet_config is None:
-        raise ValueError("fleet_config is required with an acquisition preflight")
-
-    run_key = (
-        acquisition_preflight.resume_digest.composite
-        if acquisition_preflight is not None
-        else _plan_digest(plan)
-    )
-
-    if workers != 1:
-        raise ValueError(
-            "download-fleet is deliberately sequential; --workers must be 1 "
-            "because two Trino queries time out instead of increasing throughput"
-        )
-
-    per_cohort, mutualised = plan.requests_saved()
-    log.info(
-        "fleet_plan",
-        cohorts=len(plan.cohorts),
-        dates=len(plan.dates),
-        aircraft_days=plan.aircraft_days,
-        requests_per_cohort=per_cohort,
-        requests_mutualised=mutualised,
-        workers=workers,
-    )
-    log.info("fleet_planned_dates", dates=sorted(plan.dates))
+    run_key = _download_run_key(plan, acquisition_preflight)
+    _validate_workers(workers)
+    _log_plan(plan, workers)
     if dry_run:
         log.info("fleet_dry_run", msg="Plan valid, would download")
         return []
 
-    _append_manifest(
-        manifest_path,
-        {
-            "event": "run_started",
-            "cohorts": len(plan.cohorts),
-            "dates": len(plan.dates),
-            "aircraft_days": plan.aircraft_days,
-            "plan_sha256": run_key,
-            "force": force,
-        },
+    _append_manifest(manifest_path, _run_started_event(plan, run_key, force))
+    outcomes = _run_dates(
+        _DownloadContext(
+            plan,
+            force,
+            manifest_path,
+            fleet_config,
+            acquisition_preflight,
+            journal_path,
+            receipt_dir,
+            fetch_boundary or fetch_one_date,
+        ),
+        run_key,
     )
-
-    fetch_date = fetch_boundary or fetch_one_date
-    outcomes: list[DateOutcome] = []
-    done = 0
-    total = len(plan.dates)
-    acquisition = (
-        acquisition_section(
-            acquisition_preflight.lease_path,
-            owner=run_key,
-            ttl_s=fleet_config.lease_ttl_s,
-            journal_path=journal_path,
-            receipt_dir=receipt_dir,
-            acquisition_key=run_key
-            if journal_path is not None and receipt_dir is not None
-            else None,
-        )
-        if acquisition_preflight is not None and fleet_config is not None
-        else nullcontext()
-    )
-    with acquisition:
-        _get_opensky()  # resolve the lazy import before the remote span starts
-        for date_str in plan.dates:
-            outcome = fetch_date(plan, date_str, force=force)
-            outcomes.append(outcome)
-            done += 1
-            _append_manifest(manifest_path, _date_event(outcome))
-            _log_date_outcome(outcome, done, total)
-
-    failed, summary = _run_summary(outcomes)
-    log.info(
-        "fleet_done",
-        dates=summary["dates"],
-        failed=summary["failed"],
-        written=summary["written"],
-        requests=summary["requests"],
-    )
-    if failed:
-        log.warning("fleet_failed_dates", dates=[o.date for o in failed][:20])
-    _append_manifest(manifest_path, summary)
+    _finish_run(manifest_path, outcomes)
     return outcomes
