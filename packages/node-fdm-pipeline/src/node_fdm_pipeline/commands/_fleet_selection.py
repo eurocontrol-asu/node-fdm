@@ -7,7 +7,7 @@ import json
 from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta
 
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, field_validator
 
 __all__ = [
     "SelectedFlight",
@@ -16,7 +16,7 @@ __all__ = [
     "utc_days_for_interval",
 ]
 
-type FlightIdentity = tuple[str, str, int, int, str, str]
+type FlightIdentity = tuple[str, str, str, int, int, str, str]
 
 
 class _SelectionRow(BaseModel):
@@ -29,6 +29,19 @@ class _SelectionRow(BaseModel):
     msn: str
     split: str
     cohort: str
+    selection_id: str
+
+    @field_validator("selection_id")
+    @classmethod
+    def _validate_selection_id(cls, value: str) -> str:
+        if not value.strip():
+            raise ValueError("selection_id must be a non-empty string")
+        return value
+
+    @field_validator("callsign")
+    @classmethod
+    def _normalize_callsign(cls, value: str) -> str:
+        return value.strip().upper()
 
 
 class SelectedFlight(BaseModel):
@@ -43,6 +56,7 @@ class SelectedFlight(BaseModel):
     msn: str
     split: str
     cohorts: frozenset[str]
+    selection_id: str
     utc_days: tuple[str, ...]
     acquisition_key: str
 
@@ -69,12 +83,13 @@ def utc_days_for_interval(firstseen: int, lastseen: int) -> tuple[str, ...]:
 def _iso_days(first_day: date, last_day: date) -> Iterable[str]:
     day = first_day
     while day <= last_day:
-        yield day.isoformat()
+        yield day.strftime("%Y%m%d")
         day += timedelta(days=1)
 
 
 def _identity(row: _SelectionRow | SelectedFlight) -> FlightIdentity:
     return (
+        row.selection_id,
         row.icao24,
         row.callsign,
         row.firstseen,
@@ -85,8 +100,9 @@ def _identity(row: _SelectionRow | SelectedFlight) -> FlightIdentity:
 
 
 def _identity_payload(identity: FlightIdentity) -> dict[str, str | int]:
-    icao24, callsign, firstseen, lastseen, msn, split = identity
+    selection_id, icao24, callsign, firstseen, lastseen, msn, split = identity
     return {
+        "selection_id": selection_id,
         "icao24": icao24,
         "callsign": callsign,
         "firstseen": firstseen,
@@ -101,7 +117,11 @@ def _canonical_json(payload: object) -> str:
 
 
 def _acquisition_key(identity: FlightIdentity) -> str:
-    canonical_identity = _canonical_json(_identity_payload(identity))
+    identity_payload = _identity_payload(identity)
+    acquisition_payload = {
+        key: value for key, value in identity_payload.items() if key != "selection_id"
+    }
+    canonical_identity = _canonical_json(acquisition_payload)
     return hashlib.sha256(canonical_identity.encode()).hexdigest()
 
 
@@ -131,8 +151,9 @@ def _selection_digest(flights: tuple[SelectedFlight, ...]) -> str:
 
 
 def _selected_flight(identity: FlightIdentity, cohorts: set[str]) -> SelectedFlight:
-    icao24, callsign, firstseen, lastseen, msn, split = identity
+    selection_id, icao24, callsign, firstseen, lastseen, msn, split = identity
     return SelectedFlight(
+        selection_id=selection_id,
         icao24=icao24,
         callsign=callsign,
         firstseen=firstseen,

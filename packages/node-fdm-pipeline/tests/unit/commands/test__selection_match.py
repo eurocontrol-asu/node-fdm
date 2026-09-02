@@ -18,10 +18,13 @@ def _plan(
     callsign: str,
     firstseen: int,
     lastseen: int,
+    *,
+    selection_id: str | None = None,
 ) -> _fleet_selection.SelectionPlan:
     return _fleet_selection.compile_selection(
         [
             {
+                "selection_id": selection_id or f"selection-{icao24}",
                 "icao24": icao24,
                 "callsign": callsign,
                 "firstseen": firstseen,
@@ -80,7 +83,7 @@ def test_match_selections_indexes_absent_rejection_by_selection_id() -> None:
     """AC3: a selection without a candidate has an indexed absent rejection."""
     selection_match = _load_selection_match()
     plan = _plan("a002", "FLT2", 100, 200)
-    selection_id = plan.flights[0].acquisition_key
+    selection_id = plan.flights[0].selection_id
     unrelated = _rotation("rotation-unrelated", "a999", "FLT2", 120, 180)
 
     result = selection_match.match_selections(plan, [unrelated])
@@ -90,11 +93,23 @@ def test_match_selections_indexes_absent_rejection_by_selection_id() -> None:
     assert result.rejections[selection_id].kind == "absent"
 
 
+def test_match_selections_keys_rejection_by_selection_id() -> None:
+    """AC3: rejection keys retain the campaign selection identity."""
+    selection_match = _load_selection_match()
+    plan = _plan("z00002", "ZULU2", 100, 200, selection_id="sel-zulu")
+
+    result = selection_match.match_selections(plan, ())
+
+    assert tuple(result.rejections) == ("sel-zulu",)
+    assert result.rejections["sel-zulu"].kind == "absent"
+    assert result.rejections["sel-zulu"].selection_id == "sel-zulu"
+
+
 def test_match_selections_rejects_all_ambiguous_candidates() -> None:
     """AC4: two overlapping candidates are listed as ambiguous and none is admitted."""
     selection_match = _load_selection_match()
     plan = _plan("a003", "FLT3", 100, 200)
-    selection_id = plan.flights[0].acquisition_key
+    selection_id = plan.flights[0].selection_id
     first = _rotation("rotation-first", "a003", "FLT3", 110, 150)
     second = _rotation("rotation-second", "a003", "FLT3", 140, 220)
 

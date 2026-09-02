@@ -72,7 +72,7 @@ def match_selections(plan: SelectionPlan, rotations: Iterable[Rotation]) -> Matc
 
     for selection in plan.flights:
         candidates = tuple(rotation for rotation in available if _matches(selection, rotation))
-        selection_id = selection.acquisition_key
+        selection_id = selection.selection_id
         if len(candidates) == 1:
             admitted.append(candidates[0])
             continue
