@@ -72,3 +72,6 @@ scripts/debug/wmm_vec.py
 
 # Fleet download logs — run artefacts, not source
 download-fleet.log*
+
+# Local implementation specifications and plans
+/improvements/
