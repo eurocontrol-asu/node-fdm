@@ -131,11 +131,20 @@ fleet_run:
   lease_path: ~/shared/trino.lease
   lease_ttl_s: 120
   disk_min_gib: 8.5
+  retry_min_delay_s: 10.0
+  retry_max_delay_s: 960.0
+  retry_max_retries: 6
+  retry_base_s: 20.0
+  bisection_floor: 5
 ```
 
-When present, all three `fleet_run` values are required, `lease_ttl_s` and
+When present, the three lease and disk values are required, `lease_ttl_s` and
 `disk_min_gib` must be strictly positive, and `lease_path` is expanded and resolved to
-an absolute path.
+an absolute path. The retry and bisection values shown above are optional defaults:
+queue saturation retries the same batch with bounded exponential jitter, while time or
+memory limits split the batch without resubmitting its parent. Splitting stops at
+`bisection_floor`; every attempt, delay, branch, and terminal outcome is appended to the
+acquisition journal.
 
 ## Commands
 

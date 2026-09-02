@@ -384,6 +384,18 @@ class FleetRunConfig(BaseModel, frozen=True):
     lease_path: Path
     lease_ttl_s: int = Field(gt=0)
     disk_min_gib: float = Field(gt=0)
+    retry_min_delay_s: float = Field(default=10.0, ge=0.0)
+    retry_max_delay_s: float = Field(default=960.0, gt=0.0)
+    retry_max_retries: int = Field(default=6, ge=0)
+    retry_base_s: float = Field(default=20.0, gt=0.0)
+    bisection_floor: int = Field(default=5, gt=0)
+
+    @model_validator(mode="after")
+    def _validate_retry_delay_bounds(self) -> Self:
+        if self.retry_min_delay_s > self.retry_max_delay_s:
+            msg = "retry_min_delay_s must be less than or equal to retry_max_delay_s"
+            raise ValueError(msg)
+        return self
 
     @field_validator("lease_path", mode="after")
     @classmethod

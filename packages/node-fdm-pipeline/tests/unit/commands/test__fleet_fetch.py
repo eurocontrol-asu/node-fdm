@@ -24,6 +24,23 @@ _RESOLVED_CONFIG: DigestInput = {"workers": 1, "mode": "fleet"}
 _PROFILE: DigestInput = {"aircraft": "A320", "version": 1}
 
 
+def test_fetch_action_returns_classification_kind() -> None:
+    """AC1: fetch routing delegates all Trino codes to the typed taxonomy."""
+    errors = [
+        RuntimeError("EXCEEDED_TIME_LIMIT: query too large"),
+        RuntimeError("EXCEEDED_MEMORY_LIMIT: allocation refused"),
+        RuntimeError("QUERY_QUEUE_FULL: retry later"),
+        RuntimeError("SYNTAX_ERROR: malformed query"),
+    ]
+
+    assert [_fleet_fetch.fetch_action(error) for error in errors] == [
+        "split",
+        "split",
+        "retry_later",
+        "terminal",
+    ]
+
+
 def _download_kwargs(lease_path: Path, run_dir: Path) -> dict[str, Any]:
     return {
         "fleet_config": FleetRunConfig(
@@ -86,7 +103,15 @@ def test_download_fleet_is_ordered_and_appends_manifest(
 ) -> None:
     seen: list[str] = []
 
-    def fetch_one_date(plan: Any, date: str, *, force: bool = False) -> Any:
+    def fetch_one_date(
+        plan: object,
+        date: str,
+        *,
+        force: bool = False,
+        manifest_path: object | None = None,
+        fleet_config: FleetRunConfig | None = None,
+    ) -> object:
+        del plan, force, manifest_path, fleet_config
         seen.append(date)
         return SimpleNamespace(
             date=date,

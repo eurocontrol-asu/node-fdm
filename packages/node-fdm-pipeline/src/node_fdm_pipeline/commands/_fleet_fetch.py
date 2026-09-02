@@ -30,18 +30,22 @@ from collections.abc import Callable
 from contextlib import nullcontext
 from dataclasses import dataclass, field
 from datetime import datetime, timedelta
+from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any
 
 import structlog
 
 from node_fdm_pipeline.commands import _raw_cache
+from node_fdm_pipeline.commands._fetch_backoff import BackoffPolicy, next_delay, retry_policy_for
+from node_fdm_pipeline.commands._fetch_bisect import plan_bisection
 from node_fdm_pipeline.commands._fleet_boundary import (
     AcquisitionPreflight,
     acquisition_section,
     preflight_acquisition,
 )
 from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
+from node_fdm_pipeline.commands._trino_errors import classify_trino_failure
 from node_fdm_pipeline.config import FleetRunConfig
 
 if TYPE_CHECKING:
@@ -49,7 +53,7 @@ if TYPE_CHECKING:
 
 log = structlog.get_logger()
 
-__all__ = ["DateOutcome", "download_fleet", "fetch_one_date"]
+__all__ = ["DateOutcome", "download_fleet", "fetch_action", "fetch_one_date"]
 
 #: Concurrent Trino queries. **One**, and the quota is not the reason — the
 #: account permits 2 running plus 2 queued. Two queries of this shape do not
@@ -158,6 +162,11 @@ def _get_opensky() -> Any:
     return _opensky
 
 
+def fetch_action(error: BaseException) -> str:
+    """Return the typed acquisition action for a Trino failure."""
+    return classify_trino_failure(error).kind
+
+
 def _is_retryable(exc: Exception) -> bool:
     """Is this a capacity refusal — worth retrying the *same* query later?
 
@@ -168,20 +177,65 @@ def _is_retryable(exc: Exception) -> bool:
     query that cannot succeed — six times, then fail the date — instead of
     splitting it. So a size marker disqualifies a refusal from being retryable.
     """
-    text = str(exc)
-    if _is_too_large(exc):
-        return False
-    return any(marker in text for marker in _RETRYABLE)
+    return fetch_action(exc) == "retry_later"
 
 
 def _is_too_large(exc: Exception) -> bool:
     """Did the cluster refuse this because the request itself was too big?"""
-    text = str(exc)
-    return any(marker in text for marker in _TOO_LARGE)
+    return fetch_action(exc) == "split"
 
 
-def _fetch_with_retry(
-    fetcher: Any, start: datetime, end: datetime, icao: list[str], *, date_str: str
+def _default_backoff_policy() -> BackoffPolicy:
+    return BackoffPolicy(
+        min_delay_s=QUEUE_BACKOFF_S / 2,
+        max_delay_s=QUEUE_BACKOFF_S * (2 ** (QUEUE_RETRIES - 1)) * 1.5,
+        max_retries=QUEUE_RETRIES,
+        base_s=QUEUE_BACKOFF_S,
+    )
+
+
+def _backoff_policy(config: FleetRunConfig | None) -> BackoffPolicy:
+    if config is None:
+        return _default_backoff_policy()
+    return BackoffPolicy(
+        min_delay_s=config.retry_min_delay_s,
+        max_delay_s=config.retry_max_delay_s,
+        max_retries=config.retry_max_retries,
+        base_s=config.retry_base_s,
+    )
+
+
+def _attempt_event(  # noqa: PLR0913
+    *,
+    date_str: str,
+    kind: _raw_cache.Kind,
+    batch: list[str],
+    attempt: int,
+    outcome: str,
+    observed_delay_s: float,
+) -> dict[str, object]:
+    return {
+        "event": "fetch_attempt",
+        "date": date_str,
+        "kind": kind,
+        "batch": batch,
+        "attempt": attempt,
+        "outcome": outcome,
+        "observed_delay_s": observed_delay_s,
+    }
+
+
+def _fetch_with_retry(  # noqa: PLR0913
+    fetcher: Any,
+    start: datetime,
+    end: datetime,
+    icao: list[str],
+    *,
+    date_str: str,
+    kind: _raw_cache.Kind = "history",
+    manifest_path: object | None = None,
+    policy: BackoffPolicy | None = None,
+    rng: random.Random | None = None,
 ) -> Any:
     """Call *fetcher*, waiting out capacity refusals.
 
@@ -190,23 +244,59 @@ def _fetch_with_retry(
             :data:`QUEUE_RETRIES` attempts, or immediately for any error that is
             not a capacity refusal.
     """
-    for attempt in range(1, QUEUE_RETRIES + 1):
+    resolved_policy = policy or _default_backoff_policy()
+    resolved_rng = rng or random.Random()  # noqa: S311 - retry jitter is not cryptographic
+    attempt = 0
+    while True:
+        attempt += 1
         try:
             # The pipeline raw store is the sole durable cache. pyopensky's
             # query cache duplicates the payload without helping resume.
-            return fetcher(start, end, icao24=icao, cached=False)
+            result = fetcher(start, end, icao24=icao, cached=False)
         except Exception as exc:
-            if not _is_retryable(exc) or attempt == QUEUE_RETRIES:
+            failure = classify_trino_failure(exc)
+            if failure.kind == "split":
                 raise
-            delay = QUEUE_BACKOFF_S * (2 ** (attempt - 1)) * (0.5 + random.random())  # noqa: S311
+            decision = retry_policy_for(failure, resolved_policy)
+            outcome = "retry_later" if decision.allowed else "terminal"
+            delay = (
+                next_delay(attempt=attempt, policy=resolved_policy, rng=resolved_rng)
+                if decision.allowed
+                else 0.0
+            )
+            _append_manifest(
+                manifest_path,
+                _attempt_event(
+                    date_str=date_str,
+                    kind=kind,
+                    batch=icao,
+                    attempt=attempt,
+                    outcome=outcome,
+                    observed_delay_s=delay,
+                ),
+            )
+            if not decision.allowed or attempt >= decision.max_attempts:
+                raise
             log.warning(
                 "fleet_queue_full",
                 date=date_str,
-                attempt=f"{attempt}/{QUEUE_RETRIES}",
+                attempt=f"{attempt}/{decision.max_attempts}",
                 sleep_s=round(delay, 1),
             )
-        time.sleep(delay)
-    raise AssertionError("unreachable")  # pragma: no cover
+            time.sleep(delay)
+            continue
+        _append_manifest(
+            manifest_path,
+            _attempt_event(
+                date_str=date_str,
+                kind=kind,
+                batch=icao,
+                attempt=attempt,
+                outcome="success",
+                observed_delay_s=0.0,
+            ),
+        )
+        return result
 
 
 @dataclass(frozen=True)
@@ -303,6 +393,9 @@ class _KindFetch:
     end: datetime
     force: bool
     fetcher: Callable[..., object]
+    manifest_path: object | None = None
+    backoff_policy: BackoffPolicy | None = None
+    bisection_floor: int = MIN_CHUNK
 
 
 @dataclass
@@ -318,6 +411,18 @@ class _ChunkFetch:
     split: tuple[list[str], list[str]] | None = None
 
 
+def _branch_event(
+    context: _KindFetch, parent: list[str], child: tuple[str, ...]
+) -> dict[str, object]:
+    return {
+        "event": "fetch_branch",
+        "date": context.date,
+        "kind": context.kind,
+        "batch": list(child),
+        "parent_batch": parent,
+    }
+
+
 def _fetch_or_split(context: _KindFetch, chunk: list[str]) -> _ChunkFetch:
     try:
         result = _fetch_with_retry(
@@ -326,19 +431,38 @@ def _fetch_or_split(context: _KindFetch, chunk: list[str]) -> _ChunkFetch:
             context.end,
             chunk,
             date_str=context.date,
+            kind=context.kind,
+            manifest_path=context.manifest_path,
+            policy=context.backoff_policy,
         )
     except Exception as exc:
-        if not _is_too_large(exc) or len(chunk) <= MIN_CHUNK:
+        if fetch_action(exc) != "split":
             raise
-        half = len(chunk) // 2
+        plan = plan_bisection(chunk, floor=context.bisection_floor)
+        _append_manifest(
+            context.manifest_path,
+            _attempt_event(
+                date_str=context.date,
+                kind=context.kind,
+                batch=chunk,
+                attempt=1,
+                outcome=plan.kind,
+                observed_delay_s=0.0,
+            ),
+        )
+        if plan.kind == "terminal_floor":
+            raise
+        for child in plan.children:
+            _append_manifest(context.manifest_path, _branch_event(context, chunk, child))
+        left, right = plan.children
         log.warning(
             "fleet_chunk_split",
             date=context.date,
             kind=context.kind,
             n=len(chunk),
-            into=(half, len(chunk) - half),
+            into=(len(left), len(right)),
         )
-        return _ChunkFetch(split=(chunk[:half], chunk[half:]))
+        return _ChunkFetch(split=(list(left), list(right)))
     return _ChunkFetch(result=result)
 
 
@@ -419,7 +543,14 @@ def _date_outcome(values: _DateOutcomeInput) -> DateOutcome:
     )
 
 
-def fetch_one_date(plan: FleetPlan, date_str: str, *, force: bool = False) -> DateOutcome:
+def fetch_one_date(
+    plan: FleetPlan,
+    date_str: str,
+    *,
+    force: bool = False,
+    manifest_path: object | None = None,
+    fleet_config: FleetRunConfig | None = None,
+) -> DateOutcome:
     """Fetch every kind for one date, mutualised, and dispatch into the silos."""
     aircraft = plan.dates[date_str]
     start = datetime.strptime(date_str, "%Y%m%d")
@@ -432,7 +563,19 @@ def fetch_one_date(plan: FleetPlan, date_str: str, *, force: bool = False) -> Da
         for kind in _KINDS:
             fetcher = api.flightlist if kind == "flightlist" else getattr(api, kind)
             counters = _fetch_kind(
-                _KindFetch(plan, kind, date_str, aircraft, start, end, force, fetcher)
+                _KindFetch(
+                    plan,
+                    kind,
+                    date_str,
+                    aircraft,
+                    start,
+                    end,
+                    force,
+                    fetcher,
+                    manifest_path,
+                    _backoff_policy(fleet_config),
+                    fleet_config.bisection_floor if fleet_config is not None else MIN_CHUNK,
+                )
             )
             written += counters.written
             requests += counters.requests
@@ -698,7 +841,12 @@ def download_fleet(  # noqa: PLR0913
             acquisition_preflight,
             journal_path,
             receipt_dir,
-            fetch_boundary or fetch_one_date,
+            fetch_boundary
+            or partial(
+                fetch_one_date,
+                manifest_path=manifest_path,
+                fleet_config=fleet_config,
+            ),
         ),
         run_key,
     )
