@@ -127,6 +127,75 @@ def _bounded(days: Iterable[str], start_date: str, end_date: str) -> tuple[str, 
     )
 
 
+type _LegacyAcquisitionInputs = tuple[
+    FleetRunConfig | None,
+    ResumeDigest | None,
+    str | None,
+    DigestInput | None,
+    DigestInput | None,
+]
+
+
+def _missing_legacy_inputs(
+    values: _LegacyAcquisitionInputs,
+) -> tuple[bool, bool, bool, bool, bool]:
+    fleet_config, recorded_digest, selection_digest, resolved_config, profile = values
+    return (
+        fleet_config is None,
+        recorded_digest is None,
+        selection_digest is None,
+        resolved_config is None,
+        profile is None,
+    )
+
+
+def _resolve_enrichment_guard(
+    guard: FleetGuardDecision | None,
+    preflight: AcquisitionPreflight | None,
+    legacy_values: _LegacyAcquisitionInputs,
+    manifest_path: Path | None,
+) -> tuple[FleetGuardDecision, AcquisitionPreflight | None]:
+    if guard is not None:
+        return guard, preflight
+    missing = _missing_legacy_inputs(legacy_values)
+    if all(missing):
+        return (
+            resolve_fleet_guard(
+                selection=None,
+                resolved_config=None,
+                profile=None,
+                lease_path=None,
+            ),
+            preflight,
+        )
+    if any(missing):
+        raise ValueError("fleet acquisition preflight inputs must be provided together")
+
+    fleet_config, recorded_digest, selection_digest, resolved_config, profile = legacy_values
+    assert fleet_config is not None
+    assert recorded_digest is not None
+    assert selection_digest is not None
+    assert resolved_config is not None
+    assert profile is not None
+    campaign_root = manifest_path.parent if manifest_path is not None else None
+    preflight = preflight_acquisition(
+        recorded_digest=recorded_digest,
+        selection_digest=selection_digest,
+        resolved_config=resolved_config,
+        profile=profile,
+        fleet_config=fleet_config,
+        campaign_root=campaign_root,
+    )
+    return (
+        FleetGuardDecision(
+            mode="campaign",
+            preflight=preflight,
+            resume_digest=preflight.resume_digest,
+        ),
+        preflight,
+    )
+
+
 def enrich_fleet(  # noqa: PLR0913
     plan: EnrichmentPlan,
     *,
@@ -144,45 +213,19 @@ def enrich_fleet(  # noqa: PLR0913
     acquisition_preflight: AcquisitionPreflight | None = None,
 ) -> list[DateEnrichmentOutcome]:
     """Enrich a fleet after validating its resume identity and shared lease."""
-    guard = decision
-    preflight = acquisition_preflight
-    legacy_values = (
+    legacy_values: _LegacyAcquisitionInputs = (
         fleet_config,
         recorded_digest,
         selection_digest,
         resolved_config,
         profile,
     )
-    if guard is None:
-        if all(value is None for value in legacy_values):
-            guard = resolve_fleet_guard(
-                selection=None,
-                resolved_config=None,
-                profile=None,
-                lease_path=None,
-            )
-        elif all(value is not None for value in legacy_values):
-            assert fleet_config is not None
-            assert recorded_digest is not None
-            assert selection_digest is not None
-            assert resolved_config is not None
-            assert profile is not None
-            campaign_root = manifest_path.parent if manifest_path is not None else None
-            preflight = preflight_acquisition(
-                recorded_digest=recorded_digest,
-                selection_digest=selection_digest,
-                resolved_config=resolved_config,
-                profile=profile,
-                fleet_config=fleet_config,
-                campaign_root=campaign_root,
-            )
-            guard = FleetGuardDecision(
-                mode="campaign",
-                preflight=preflight,
-                resume_digest=preflight.resume_digest,
-            )
-        else:
-            raise ValueError("fleet acquisition preflight inputs must be provided together")
+    guard, preflight = _resolve_enrichment_guard(
+        decision,
+        acquisition_preflight,
+        legacy_values,
+        manifest_path,
+    )
 
     if guard.mode == "historical":
         return _enrich_fleet_impl(
@@ -280,6 +323,7 @@ def _close_provider(provider: Any | None) -> None:
 
 
 def weather_status(cohort: EnrichmentCohort, day: str) -> tuple[bool, int, float]:
+    """Return completeness, row count, and maximum null fraction for one cohort day."""
     import polars as pl
 
     table_path = cohort.cfg.paths.resolve("delta_table")

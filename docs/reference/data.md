@@ -35,8 +35,12 @@ Haversine distance, TAS recomputation from wind + groundspeed, Mach/CAS derivati
 ::: node_fdm_data.meteo
     options:
       show_root_heading: true
-      show_root_full_path: false
-      show_source: true
+       show_root_full_path: false
+       show_source: true
+
+### Fleet enrichment status
+
+`weather_status(cohort, day)` inspects one fleet cohort's Delta table for an enrichment day. It returns `(complete, row_count, max_null_fraction)`: missing ERA5 columns or an absent day produce `(False, 0, 0.0)`, while a day that fails enriched-frame validation preserves its row count and returns `(False, row_count, 0.0)`.
 
 ### Lateral Dynamics
 
