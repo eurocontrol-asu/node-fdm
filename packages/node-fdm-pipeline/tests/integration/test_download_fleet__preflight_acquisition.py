@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import time
 from pathlib import Path
 from types import SimpleNamespace
 from typing import Any
@@ -15,7 +16,10 @@ from node_fdm_pipeline.commands._fleet_digest import (
 )
 from node_fdm_pipeline.commands._fleet_journal import RunState, replay_journal
 from node_fdm_pipeline.commands._fleet_manifest import read_events
-from node_fdm_pipeline.commands._trino_lease import LeaseConfigError
+from node_fdm_pipeline.commands._trino_lease import (
+    LeaseConfigError,
+    acquire_lease,
+)
 from node_fdm_pipeline.config import FleetRunConfig
 
 _SELECTION_DIGEST = "recorded-offline-selection"
@@ -127,3 +131,142 @@ def test_download_fleet_journals_lifecycle_and_releases_lease(
     assert replay_journal(journal_path).states[run_key] is RunState.PROCESSING
     assert [outcome.date for outcome in outcomes] == calls
     assert not lease_path.exists()
+
+
+def _cli_plan(run_dir: Path) -> Any:
+    data_dir = run_dir / "data"
+    data_dir.mkdir(parents=True)
+    cohort = SimpleNamespace(
+        name="recorded",
+        cfg=SimpleNamespace(paths=SimpleNamespace(data_dir=data_dir)),
+    )
+    return SimpleNamespace(
+        cohorts=(cohort,),
+        dates={"20240101": ["abc123"]},
+        aircraft_days=1,
+        requests_saved=lambda: (1, 1),
+    )
+
+
+def _campaign_files(tmp_path: Path) -> tuple[Path, Path, Path]:
+    selection = tmp_path / "selection.txt"
+    resolved_config = tmp_path / "resolved-config.json"
+    profile = tmp_path / "profile.json"
+    selection.write_text(_SELECTION_DIGEST, encoding="utf-8")
+    resolved_config.write_text('{"workers": 1}', encoding="utf-8")
+    profile.write_text('{"aircraft": "A320"}', encoding="utf-8")
+    return selection, resolved_config, profile
+
+
+@pytest.mark.integration
+def test_download_fleet_campaign_rejects_held_lease_before_provider_or_payload(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC2: a live shared lease aborts the campaign before provider use or publication."""
+    from node_fdm_pipeline.cli import download_fleet
+
+    run_dir = tmp_path / "run"
+    shared_dir = tmp_path / "shared"
+    shared_dir.mkdir()
+    plan = _cli_plan(run_dir)
+    selection, resolved_config, profile = _campaign_files(tmp_path)
+    lease_path = shared_dir / "download-fleet.lease"
+    holder = acquire_lease(
+        lease_path,
+        owner="other-owner",
+        ttl_s=60,
+        now=time.time(),
+    )
+    provider_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "node_fdm_pipeline.commands._fleet_plan.discover_cohorts",
+        lambda _fleet_dir: [],
+    )
+    monkeypatch.setattr(
+        "node_fdm_pipeline.commands._fleet_plan.build_fleet_plan",
+        lambda _cohorts, *, data_root=None: plan,
+    )
+    monkeypatch.setattr(
+        _fleet_fetch,
+        "_get_opensky",
+        lambda: provider_calls.append("provider"),
+    )
+
+    try:
+        with pytest.raises(SystemExit) as raised:
+            download_fleet(
+                fleet_dir=tmp_path,
+                workers=1,
+                data_root=run_dir / "data",
+                dry_run=False,
+                force_refresh=False,
+                selection=selection,
+                resolved_config=resolved_config,
+                profile=profile,
+                lease_path=lease_path,
+                lease_ttl_s=60,
+                disk_min_gib=1.0,
+            )
+    finally:
+        holder.release()
+
+    captured = capsys.readouterr()
+    assert raised.value.code == 1
+    assert "Lease is held by other-owner" in captured.err
+    assert provider_calls == []
+    assert list(run_dir.rglob("*.parquet")) == []
+
+
+@pytest.mark.integration
+def test_download_fleet_partial_campaign_names_all_missing_inputs_before_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC3: a partial campaign reports every omission before lease or lock creation."""
+    from node_fdm_pipeline.cli import download_fleet
+
+    run_dir = tmp_path / "run"
+    plan = _cli_plan(run_dir)
+    selection = tmp_path / "selection.txt"
+    selection.write_text(_SELECTION_DIGEST, encoding="utf-8")
+    lease_path = tmp_path / "shared" / "download-fleet.lease"
+    lease_path.parent.mkdir()
+    provider_calls: list[str] = []
+
+    monkeypatch.setattr(
+        "node_fdm_pipeline.commands._fleet_plan.discover_cohorts",
+        lambda _fleet_dir: [],
+    )
+    monkeypatch.setattr(
+        "node_fdm_pipeline.commands._fleet_plan.build_fleet_plan",
+        lambda _cohorts, *, data_root=None: plan,
+    )
+    monkeypatch.setattr(
+        _fleet_fetch,
+        "_get_opensky",
+        lambda: provider_calls.append("provider"),
+    )
+
+    with pytest.raises(SystemExit) as raised:
+        download_fleet(
+            fleet_dir=tmp_path,
+            workers=1,
+            data_root=run_dir / "data",
+            dry_run=False,
+            force_refresh=False,
+            selection=selection,
+            lease_path=lease_path,
+        )
+
+    captured = capsys.readouterr()
+    diagnostic = captured.err.lower().replace("_", "-")
+    assert raised.value.code == 1
+    for missing in ("resolved-config", "profile", "lease-ttl-s", "disk-min-gib"):
+        assert missing in diagnostic
+    assert not lease_path.exists()
+    assert list((run_dir / "data").rglob("*.lock")) == []
+    assert provider_calls == []

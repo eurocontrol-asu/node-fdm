@@ -529,6 +529,30 @@ def download_fleet(
         bool,
         cyclopts.Parameter(name="--force-refresh", help="Bypass cache and re-fetch all data"),
     ] = False,
+    selection: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--selection", help="Recorded campaign selection digest"),
+    ] = None,
+    resolved_config: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--resolved-config", help="Recorded resolved configuration"),
+    ] = None,
+    profile: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--profile", help="Recorded campaign profile"),
+    ] = None,
+    lease_path: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--lease-path", help="Shared acquisition lease record"),
+    ] = None,
+    lease_ttl_s: Annotated[
+        int | None,
+        cyclopts.Parameter(name="--lease-ttl-s", help="Shared lease lifetime in seconds"),
+    ] = None,
+    disk_min_gib: Annotated[
+        float | None,
+        cyclopts.Parameter(name="--disk-min-gib", help="Minimum free disk space in GiB"),
+    ] = None,
 ) -> None:
     """Download every cohort at once, mutualised per date and strictly sequential.
 
@@ -544,18 +568,87 @@ def download_fleet(
     if workers != 1:
         raise SystemExit("--workers must be 1; concurrent Trino queries time out")
 
+    import sys
+
+    from node_fdm_pipeline.commands._fleet_boundary import (
+        CampaignGuardIncomplete,
+        resolve_fleet_guard,
+    )
     from node_fdm_pipeline.commands._fleet_fetch import download_fleet as run_fleet
     from node_fdm_pipeline.commands._fleet_plan import build_fleet_plan, discover_cohorts
-
-    plan = build_fleet_plan(discover_cohorts(fleet_dir), data_root=data_root)
-    root = next(iter(plan.cohorts)).cfg.paths.data_dir.parent
-    outcomes = run_fleet(
-        plan,
-        workers=workers,
-        force=force_refresh,
-        dry_run=dry_run,
-        manifest_path=root / "download-fleet.manifest.jsonl",
+    from node_fdm_pipeline.commands._trino_lease import (
+        LeaseConfigError,
+        LeaseUnavailable,
     )
+    from node_fdm_pipeline.config import FleetRunConfig
+
+    try:
+        try:
+            decision = resolve_fleet_guard(
+                selection=selection,
+                resolved_config=resolved_config,
+                profile=profile,
+                lease_path=lease_path,
+            )
+        except CampaignGuardIncomplete as exc:
+            missing = list(exc.missing)
+            if lease_ttl_s is None:
+                missing.append("lease_ttl_s")
+            if disk_min_gib is None:
+                missing.append("disk_min_gib")
+            raise CampaignGuardIncomplete(missing) from exc
+
+        if decision.mode == "historical" and (lease_ttl_s is not None or disk_min_gib is not None):
+            missing = [
+                name
+                for name, value in (
+                    ("selection", selection),
+                    ("resolved_config", resolved_config),
+                    ("profile", profile),
+                    ("lease_path", lease_path),
+                    ("lease_ttl_s", lease_ttl_s),
+                    ("disk_min_gib", disk_min_gib),
+                )
+                if value is None
+            ]
+            raise CampaignGuardIncomplete(missing)
+
+        fleet_config = None
+        acquisition_preflight = None
+        if decision.mode == "campaign":
+            missing = []
+            if lease_ttl_s is None:
+                missing.append("lease_ttl_s")
+            if disk_min_gib is None:
+                missing.append("disk_min_gib")
+            if missing:
+                raise CampaignGuardIncomplete(missing)
+            assert lease_ttl_s is not None
+            assert disk_min_gib is not None
+            acquisition_preflight = decision.preflight
+            if acquisition_preflight is None:
+                raise RuntimeError("campaign guard returned no acquisition preflight")
+            fleet_config = FleetRunConfig(
+                lease_path=acquisition_preflight.lease_path,
+                lease_ttl_s=lease_ttl_s,
+                disk_min_gib=disk_min_gib,
+            )
+
+        plan = build_fleet_plan(discover_cohorts(fleet_dir), data_root=data_root)
+        root = next(iter(plan.cohorts)).cfg.paths.data_dir.parent
+        outcomes = run_fleet(
+            plan,
+            workers=workers,
+            force=force_refresh,
+            dry_run=dry_run,
+            manifest_path=root / "download-fleet.manifest.jsonl",
+            fleet_config=fleet_config,
+            acquisition_preflight=acquisition_preflight,
+        )
+    except (CampaignGuardIncomplete, LeaseConfigError, LeaseUnavailable) as exc:
+        print(str(exc), file=sys.stderr)  # noqa: T201
+        raise SystemExit(1) from exc
+
     failed = [outcome for outcome in outcomes if outcome.error]
     if failed:
         raise SystemExit(f"download-fleet failed on {len(failed)} date(s); see manifest")

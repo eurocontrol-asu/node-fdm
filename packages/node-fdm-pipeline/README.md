@@ -33,10 +33,35 @@ fdm predict --arch opensky --config config.yaml --device cuda:0
 fdm evaluate --arch opensky --config config.yaml
 ```
 
-## Fleet run configuration
+## Fleet downloads
 
-Coordinated fleet runs may declare deployment-owned lease and disk settings in the same
-pipeline YAML:
+A historical fleet dry-run needs no campaign option. It validates the discovered cohorts
+and prints the planned dates without contacting OpenSky:
+
+```bash
+fdm download-fleet --fleet-dir fleet --dry-run
+```
+
+Campaign mode is selected by supplying the complete coordinated-run input set:
+
+```bash
+fdm download-fleet \
+  --fleet-dir fleet \
+  --selection run/selection.digest \
+  --resolved-config run/resolved-config.json \
+  --profile run/profile.json \
+  --lease-path /shared/node-fdm/download-fleet.lease \
+  --lease-ttl-s 120 \
+  --disk-min-gib 8.5
+```
+
+The six campaign options are atomic: a partial set exits non-zero and names every missing
+input before creating a lease, constructing the provider, or writing payloads. A complete
+set validates the recorded digests and acquires the shared lease before remote acquisition;
+if another owner holds that lease, the command exits non-zero without publishing payloads.
+
+Commands that load coordinated settings from pipeline YAML use the equivalent
+deployment-owned model:
 
 ```yaml
 fleet_run:
@@ -45,14 +70,15 @@ fleet_run:
   disk_min_gib: 8.5
 ```
 
-The `fleet_run` section is optional for backward compatibility. When present, all three
-values are required, `lease_ttl_s` and `disk_min_gib` must be strictly positive, and
-`lease_path` is expanded and resolved to an absolute path.
+When present, all three `fleet_run` values are required, `lease_ttl_s` and
+`disk_min_gib` must be strictly positive, and `lease_path` is expanded and resolved to
+an absolute path.
 
 ## Commands
 
 | Command | Description | Status |
 |---|---|---|
+| `fdm download-fleet` | Plan historical fleet downloads or run a coordinated campaign behind a shared lease | ✅ Implemented |
 | `fdm preprocess` | Resample flights: subsegment detection, position smoothing, fixed-rate resampling | ✅ Implemented |
 | `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
 | `fdm derive` | Compute derived physics columns (gamma, wind, distance) — étape 4 | ✅ Implemented |

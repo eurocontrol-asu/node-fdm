@@ -27,6 +27,7 @@ import random
 import threading
 import time
 from collections.abc import Callable
+from contextlib import nullcontext
 from dataclasses import dataclass
 from datetime import datetime, timedelta
 from pathlib import Path
@@ -36,6 +37,7 @@ import structlog
 
 from node_fdm_pipeline.commands import _raw_cache
 from node_fdm_pipeline.commands._fleet_boundary import (
+    AcquisitionPreflight,
     acquisition_section,
     preflight_acquisition,
 )
@@ -450,24 +452,38 @@ def download_fleet(  # noqa: PLR0913
     journal_path: Path | None = None,
     receipt_dir: Path | None = None,
     fetch_boundary: Callable[..., DateOutcome] | None = None,
+    acquisition_preflight: AcquisitionPreflight | None = None,
 ) -> list[DateOutcome]:
     """Download every date in *plan* through one strictly sequential stream."""
-    if (
-        fleet_config is None
-        or recorded_digest is None
-        or selection_digest is None
-        or resolved_config is None
-        or profile is None
-    ):
-        raise ValueError("fleet acquisition preflight inputs are required")
-
-    preflight = preflight_acquisition(
-        recorded_digest=recorded_digest,
-        selection_digest=selection_digest,
-        resolved_config=resolved_config,
-        profile=profile,
-        fleet_config=fleet_config,
+    legacy_preflight_supplied = any(
+        value is not None
+        for value in (
+            fleet_config,
+            recorded_digest,
+            selection_digest,
+            resolved_config,
+            profile,
+        )
     )
+    if acquisition_preflight is None and legacy_preflight_supplied:
+        if (
+            fleet_config is None
+            or recorded_digest is None
+            or selection_digest is None
+            or resolved_config is None
+            or profile is None
+        ):
+            raise ValueError("fleet acquisition preflight inputs are required")
+        acquisition_preflight = preflight_acquisition(
+            recorded_digest=recorded_digest,
+            selection_digest=selection_digest,
+            resolved_config=resolved_config,
+            profile=profile,
+            fleet_config=fleet_config,
+        )
+    if acquisition_preflight is not None and fleet_config is None:
+        raise ValueError("fleet_config is required with an acquisition preflight")
+
     run_key = _plan_digest(plan)
 
     if workers != 1:
@@ -486,6 +502,7 @@ def download_fleet(  # noqa: PLR0913
         requests_mutualised=mutualised,
         workers=workers,
     )
+    log.info("fleet_planned_dates", dates=sorted(plan.dates))
     if dry_run:
         log.info("fleet_dry_run", msg="Plan valid, would download")
         return []
@@ -506,14 +523,21 @@ def download_fleet(  # noqa: PLR0913
     outcomes: list[DateOutcome] = []
     done = 0
     total = len(plan.dates)
-    with acquisition_section(
-        preflight.lease_path,
-        owner=run_key,
-        ttl_s=fleet_config.lease_ttl_s,
-        journal_path=journal_path,
-        receipt_dir=receipt_dir,
-        acquisition_key=run_key,
-    ):
+    acquisition = (
+        acquisition_section(
+            acquisition_preflight.lease_path,
+            owner=run_key,
+            ttl_s=fleet_config.lease_ttl_s,
+            journal_path=journal_path,
+            receipt_dir=receipt_dir,
+            acquisition_key=run_key
+            if journal_path is not None and receipt_dir is not None
+            else None,
+        )
+        if acquisition_preflight is not None and fleet_config is not None
+        else nullcontext()
+    )
+    with acquisition:
         _get_opensky()  # resolve the lazy import before the remote span starts
         for date_str in plan.dates:
             outcome = fetch_date(plan, date_str, force=force)

@@ -3,6 +3,9 @@
 from __future__ import annotations
 
 from pathlib import Path
+from types import SimpleNamespace
+
+import pytest
 
 from _config_fixtures import SELECTED_PARAMS_YAML
 
@@ -202,3 +205,43 @@ class TestCLIDirectInvoke:
         config = self._make_config(tmp_path)
         with patch("node_fdm_pipeline.commands.visualize.run_plot_example"):
             plot_example(config=config)
+
+
+@pytest.mark.integration
+def test_download_fleet_historical_dry_run_reports_planned_dates(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    """AC1: no campaign options preserves the historical dry-run contract."""
+    from node_fdm_pipeline.cli import download_fleet
+
+    run_dir = tmp_path / "run"
+    data_dir = run_dir / "data"
+    data_dir.mkdir(parents=True)
+    plan = SimpleNamespace(
+        cohorts=(SimpleNamespace(cfg=SimpleNamespace(paths=SimpleNamespace(data_dir=data_dir))),),
+        dates={"20240101": ["abc123"], "20240102": ["def456"]},
+        aircraft_days=2,
+        requests_saved=lambda: (2, 2),
+    )
+    monkeypatch.setattr(
+        "node_fdm_pipeline.commands._fleet_plan.discover_cohorts",
+        lambda _fleet_dir: [],
+    )
+    monkeypatch.setattr(
+        "node_fdm_pipeline.commands._fleet_plan.build_fleet_plan",
+        lambda _cohorts, *, data_root=None: plan,
+    )
+
+    download_fleet(
+        fleet_dir=tmp_path,
+        workers=1,
+        data_root=tmp_path,
+        dry_run=True,
+        force_refresh=False,
+    )
+
+    captured = capsys.readouterr()
+    assert "20240101" in captured.out
+    assert "20240102" in captured.out
