@@ -60,6 +60,12 @@ input before creating a lease, constructing the provider, or writing payloads. A
 set validates the recorded digests and acquires the shared lease before remote acquisition;
 if another owner holds that lease, the command exits non-zero without publishing payloads.
 
+A successful zero-row response is persisted as an explicit absence receipt for the exact
+(day, acquisition kind, aircraft set) combination. Later consumers treat every aircraft
+listed by that receipt as cached, so retries do not repeat a live request merely to
+rediscover the same absence. See [Raw-cache absence receipts](docs/reference/raw-cache.md)
+for the persisted contract.
+
 ### Fleet decoding
 
 The historical decoder remains available without campaign options:

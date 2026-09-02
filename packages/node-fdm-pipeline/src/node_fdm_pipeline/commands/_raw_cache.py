@@ -6,21 +6,29 @@ Pure I/O against the on-disk parquet cache layout. No dependency on
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
+import tempfile
 from collections.abc import Iterable
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
 import polars as pl
+from pydantic import BaseModel, ConfigDict
 
 if TYPE_CHECKING:
     from node_fdm_pipeline.config import PipelineConfig
 
 __all__ = [
+    "AbsenceReceipt",
+    "absence_digest",
     "cache_misses",
     "cache_path",
     "cache_root",
     "is_cached",
+    "publish_absence",
+    "read_absence_receipt",
     "read_parquet",
     "read_partition",
     "write_atomic",
@@ -29,11 +37,90 @@ __all__ = [
 Kind = Literal["history", "extended", "flightlist"]
 
 
+class AbsenceReceipt(BaseModel):
+    """Durable proof that a batch produced no raw rows."""
+
+    model_config = ConfigDict(frozen=True)
+
+    day: str
+    kind: Kind
+    digest: str
+    row_count: Literal[0] = 0
+    icao24s: tuple[str, ...]
+
+
+def absence_digest(day: str, kind: Kind, icao24s: Iterable[str]) -> str:
+    """Return a stable digest for a day, kind, and covered aircraft set."""
+    canonical_icao24s = sorted(set(icao24s))
+    payload = json.dumps(
+        {"day": day, "kind": kind, "icao24s": canonical_icao24s},
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return hashlib.sha256(payload.encode("utf-8")).hexdigest()
+
+
+def _absence_receipt_path(root: Path, day: str, kind: Kind) -> Path:
+    return root / ".absences" / f"{day}.{kind}.json"
+
+
+def _absence_artifact_path(root: Path, day: str, digest: str) -> Path:
+    return root / f"date={day}" / ".absences" / f"{digest}.parquet"
+
+
+def _write_atomic_receipt(path: Path, receipt: AbsenceReceipt) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary_path = Path(raw_path)
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            handle.write(receipt.model_dump_json())
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
+
+
+def publish_absence(root: Path, day: str, kind: Kind, icao24s: Iterable[str]) -> AbsenceReceipt:
+    """Atomically publish a zero-row artifact and its durable receipt."""
+    canonical_icao24s = tuple(sorted(set(icao24s)))
+    digest = absence_digest(day, kind, canonical_icao24s)
+    receipt = AbsenceReceipt(
+        day=day,
+        kind=kind,
+        digest=digest,
+        icao24s=canonical_icao24s,
+    )
+    artifact_path = _absence_artifact_path(root, day, digest)
+    if not artifact_path.exists():
+        write_atomic(artifact_path, pl.DataFrame(schema={"icao24": pl.String}))
+    _write_atomic_receipt(_absence_receipt_path(root, day, kind), receipt)
+    return receipt
+
+
+def read_absence_receipt(root: Path, day: str, kind: Kind) -> AbsenceReceipt | None:
+    """Reload an absence receipt from disk, if one was published."""
+    path = _absence_receipt_path(root, day, kind)
+    if not path.exists():
+        return None
+    return AbsenceReceipt.model_validate_json(path.read_text(encoding="utf-8"))
+
+
 def cache_root(cfg: PipelineConfig, kind: Kind) -> Path:
+    """Return the on-disk raw-cache root for one acquisition kind."""
     return Path(cfg.paths.data_dir) / "raw" / kind
 
 
 def cache_path(cfg: PipelineConfig, kind: Kind, date_str: str, icao24: str) -> Path:
+    """Return the canonical parquet path for one raw-cache partition."""
     root = cache_root(cfg, kind)
     if kind == "flightlist":
         return root / f"date={date_str}.parquet"
@@ -41,16 +128,22 @@ def cache_path(cfg: PipelineConfig, kind: Kind, date_str: str, icao24: str) -> P
 
 
 def is_cached(cfg: PipelineConfig, kind: Kind, date_str: str, icao24: str) -> bool:
-    return cache_path(cfg, kind, date_str, icao24).exists()
+    """Return whether data or an explicit absence covers the requested aircraft."""
+    if cache_path(cfg, kind, date_str, icao24).exists():
+        return True
+    receipt = read_absence_receipt(cache_root(cfg, kind), date_str, kind)
+    return receipt is not None and icao24 in receipt.icao24s
 
 
 def cache_misses(
     cfg: PipelineConfig, kind: Kind, date_str: str, icao24_list: Iterable[str]
 ) -> list[str]:
+    """Return aircraft not covered by data or a persisted absence receipt."""
     return [i for i in icao24_list if not is_cached(cfg, kind, date_str, i)]
 
 
 def write_atomic(path: Path, df: pl.DataFrame) -> None:
+    """Publish a parquet frame by atomically renaming a completed temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
     tmp = path.with_suffix(path.suffix + ".tmp")
     df.write_parquet(tmp)
@@ -58,6 +151,7 @@ def write_atomic(path: Path, df: pl.DataFrame) -> None:
 
 
 def read_parquet(path: Path) -> pl.DataFrame:
+    """Read a parquet frame from the raw cache."""
     return pl.read_parquet(path)
 
 

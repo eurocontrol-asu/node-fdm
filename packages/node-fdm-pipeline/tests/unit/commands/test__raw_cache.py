@@ -7,6 +7,7 @@ from typing import TYPE_CHECKING, Any, cast
 import polars as pl
 import pytest
 
+import node_fdm_pipeline.commands._raw_cache as raw_cache
 from node_fdm_pipeline.commands._raw_cache import (
     cache_misses,
     cache_path,
@@ -125,3 +126,22 @@ def test_read_partition_empty_when_all_miss(cfg: PipelineConfig) -> None:
     result = read_partition(cfg, "history", "20250901", ["a1", "a2"])
     assert isinstance(result, pl.DataFrame)
     assert result.height == 0
+
+
+def test_absence_digest_is_stable_for_order_and_sensitive_to_members() -> None:
+    """AC1: the absence digest is deterministic and identifies the covered set."""
+    reverse_order = raw_cache.absence_digest("2024-03-01", "history", ["z002", "z001"])
+    canonical_order = raw_cache.absence_digest("2024-03-01", "history", ["z001", "z002"])
+    different_members = raw_cache.absence_digest("2024-03-01", "history", ["z001", "z003"])
+
+    assert reverse_order
+    assert reverse_order == canonical_order
+    assert reverse_order != different_members
+
+
+def test_absence_digest_changes_for_a_different_batch() -> None:
+    """AC1: a different covered aircraft set produces a different digest."""
+    first_batch = raw_cache.absence_digest("2024-03-01", "history", ["z001", "z002"])
+    second_batch = raw_cache.absence_digest("2024-03-01", "history", ["z001", "z003"])
+
+    assert first_batch != second_batch
