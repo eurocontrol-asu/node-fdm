@@ -14,6 +14,11 @@ from typing import Any
 
 import structlog
 
+from node_fdm_pipeline.commands._fleet_boundary import (
+    acquisition_section,
+    preflight_acquisition,
+)
+from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
 from node_fdm_pipeline.commands._fleet_manifest import append_event
 from node_fdm_pipeline.commands.data import (
     ENRICH_INPUT_COLUMNS,
@@ -21,7 +26,7 @@ from node_fdm_pipeline.commands.data import (
     enrich_with_grid,
     validate_enriched_frame,
 )
-from node_fdm_pipeline.config import PipelineConfig
+from node_fdm_pipeline.config import FleetRunConfig, PipelineConfig
 
 log = structlog.get_logger()
 
@@ -115,6 +120,75 @@ def _bounded(days: Iterable[str], start_date: str, end_date: str) -> tuple[str, 
         if (start is None or date.fromisoformat(day) >= start)
         and (end is None or date.fromisoformat(day) < end)
     )
+
+
+def enrich_fleet(  # noqa: PLR0913
+    plan: EnrichmentPlan,
+    *,
+    dry_run: bool = False,
+    manifest_path: Path | None = None,
+    runtime: EnrichmentRuntime | None = None,
+    fleet_config: FleetRunConfig | None = None,
+    recorded_digest: ResumeDigest | None = None,
+    selection_digest: str | None = None,
+    resolved_config: DigestInput | None = None,
+    profile: DigestInput | None = None,
+    journal_path: Path | None = None,
+    receipt_dir: Path | None = None,
+) -> list[DateEnrichmentOutcome]:
+    """Enrich a fleet after validating its resume identity and shared lease."""
+    if (
+        fleet_config is None
+        and recorded_digest is None
+        and selection_digest is None
+        and resolved_config is None
+        and profile is None
+    ):
+        return _enrich_fleet_impl(
+            plan,
+            dry_run=dry_run,
+            manifest_path=manifest_path,
+            runtime=runtime,
+        )
+    if (
+        fleet_config is None
+        or recorded_digest is None
+        or selection_digest is None
+        or resolved_config is None
+        or profile is None
+    ):
+        raise ValueError("fleet acquisition preflight inputs must be provided together")
+
+    preflight = preflight_acquisition(
+        recorded_digest=recorded_digest,
+        selection_digest=selection_digest,
+        resolved_config=resolved_config,
+        profile=profile,
+        fleet_config=fleet_config,
+    )
+    if dry_run:
+        return _enrich_fleet_impl(
+            plan,
+            dry_run=True,
+            manifest_path=manifest_path,
+            runtime=runtime,
+        )
+
+    run_key = _plan_digest(plan)
+    with acquisition_section(
+        preflight.lease_path,
+        owner=run_key,
+        ttl_s=fleet_config.lease_ttl_s,
+        journal_path=journal_path,
+        receipt_dir=receipt_dir,
+        acquisition_key=run_key,
+    ):
+        return _enrich_fleet_impl(
+            plan,
+            dry_run=False,
+            manifest_path=manifest_path,
+            runtime=runtime,
+        )
 
 
 def build_enrichment_plan(
@@ -385,7 +459,7 @@ def _run_day(
     )
 
 
-def enrich_fleet(
+def _enrich_fleet_impl(
     plan: EnrichmentPlan,
     *,
     dry_run: bool = False,

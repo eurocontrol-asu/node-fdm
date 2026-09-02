@@ -46,6 +46,13 @@ from pathlib import Path
 
 import structlog
 
+from node_fdm_pipeline.commands._fleet_boundary import (
+    acquisition_section,
+    preflight_acquisition,
+)
+from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
+from node_fdm_pipeline.config import FleetRunConfig
+
 log = structlog.get_logger()
 
 __all__ = [
@@ -106,7 +113,64 @@ def _available_gib() -> float:
                 return int(line.split()[1]) * 1024 / 2**30
     except (OSError, IndexError, ValueError):
         pass
-    return os.sysconf("SC_AVPHYS_PAGES") * os.sysconf("SC_PAGE_SIZE") / 2**30
+    try:
+        pages = os.sysconf("SC_AVPHYS_PAGES")
+    except (OSError, ValueError):
+        pages = os.sysconf("SC_PHYS_PAGES")
+    return pages * os.sysconf("SC_PAGE_SIZE") / 2**30
+
+
+def decode_fleet(  # noqa: PLR0913
+    fleet_dir: Path,
+    *,
+    workers: int = DEFAULT_WORKERS,
+    dry_run: bool = False,
+    fleet_config: FleetRunConfig | None = None,
+    recorded_digest: ResumeDigest | None = None,
+    selection_digest: str | None = None,
+    resolved_config: DigestInput | None = None,
+    profile: DigestInput | None = None,
+    journal_path: Path | None = None,
+    receipt_dir: Path | None = None,
+) -> list[DecodeOutcome]:
+    """Decode a fleet after validating its resume identity and shared lease."""
+    if (
+        fleet_config is None
+        and recorded_digest is None
+        and selection_digest is None
+        and resolved_config is None
+        and profile is None
+    ):
+        return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=dry_run)
+    if (
+        fleet_config is None
+        or recorded_digest is None
+        or selection_digest is None
+        or resolved_config is None
+        or profile is None
+    ):
+        raise ValueError("fleet acquisition preflight inputs must be provided together")
+
+    preflight = preflight_acquisition(
+        recorded_digest=recorded_digest,
+        selection_digest=selection_digest,
+        resolved_config=resolved_config,
+        profile=profile,
+        fleet_config=fleet_config,
+    )
+    if dry_run:
+        return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=True)
+
+    run_key = preflight.resume_digest.composite
+    with acquisition_section(
+        preflight.lease_path,
+        owner=run_key,
+        ttl_s=fleet_config.lease_ttl_s,
+        journal_path=journal_path,
+        receipt_dir=receipt_dir,
+        acquisition_key=run_key,
+    ):
+        return _decode_fleet_impl(fleet_dir, workers=workers, dry_run=False)
 
 
 def plan_decodes(fleet_dir: Path) -> list[CohortDecode]:
@@ -168,7 +232,7 @@ def _run_one(job: CohortDecode) -> DecodeOutcome:
     return DecodeOutcome(name=job.name, seconds=time.perf_counter() - t0)
 
 
-def decode_fleet(
+def _decode_fleet_impl(
     fleet_dir: Path,
     *,
     workers: int = DEFAULT_WORKERS,

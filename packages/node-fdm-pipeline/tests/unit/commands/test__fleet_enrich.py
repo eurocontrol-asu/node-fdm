@@ -10,6 +10,12 @@ import pytest
 from pytest_mock import MockerFixture
 
 from node_fdm_pipeline.commands import _fleet_enrich
+from node_fdm_pipeline.commands._fleet_digest import (
+    DigestInput,
+    ResumeDigestMismatch,
+    compute_resume_digest,
+)
+from node_fdm_pipeline.config import FleetRunConfig
 
 
 def test_build_plan_is_date_major_and_uses_decoded_dates(
@@ -76,4 +82,33 @@ def test_build_plan_rejects_incompatible_weather_features(
                 ("B", Path("B"), Path("selection_B.csv")),
             ],
             day_reader=lambda path: ("2024-01-01",),
+        )
+
+
+def test_enrich_fleet_rejects_mismatching_recorded_digest() -> None:
+    """AC2: enrich rejects when the recorded profile digest differs from the current one."""
+    selection_digest = "recorded-offline-selection"
+    resolved_config: DigestInput = {"workers": 1, "mode": "recorded-offline"}
+    profile: DigestInput = {"aircraft": "A320", "version": 1}
+    current = compute_resume_digest(selection_digest, resolved_config, profile)
+    recorded = current.model_copy(update={"profile": "recorded-profile-digest"})
+    fleet_config = FleetRunConfig(
+        lease_path=Path("/shared/enrich-fleet.lease"),
+        lease_ttl_s=60,
+        disk_min_gib=1.0,
+    )
+    plan = _fleet_enrich.EnrichmentPlan(
+        days={},
+        cache_root=Path("/recorded-offline/era5-cache"),
+        features=("temperature",),
+    )
+
+    with pytest.raises(ResumeDigestMismatch, match="profile changed"):
+        _fleet_enrich.enrich_fleet(
+            plan,
+            fleet_config=fleet_config,
+            recorded_digest=recorded,
+            selection_digest=selection_digest,
+            resolved_config=resolved_config,
+            profile=profile,
         )
