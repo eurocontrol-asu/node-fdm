@@ -17,7 +17,7 @@ Example::
 
 from __future__ import annotations
 
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Mapping, Sequence
 from typing import Any
 
 import numpy as np
@@ -38,6 +38,7 @@ from node_fdm_data.smoothing import bilateral_1d, butter_lowpass, interpolate_na
 __all__ = [
     "GammaFilterConfig",
     "add_segment_column",
+    "blank_frozen_endpoints",
     "build_selected_params",
     "detect_alt_hold_from_vz",
     "detect_cas_plateaus_bilat",
@@ -1185,6 +1186,89 @@ def _collect_propagated_columns(
     return columns
 
 
+_MIN_FROZEN_RUN_SAMPLES = 2
+
+_PROFILE_SEGMENT_COLUMNS = (
+    "fdm_alt_sel_ft",
+    "fdm_gamma_sel_rad",
+    "fdm_vz_sel_ftmin",
+    "fdm_mach_sel",
+    "fdm_cas_sel_kt",
+)
+
+
+def _frozen_endpoint_mask(
+    df: pl.DataFrame,
+    columns: Sequence[str],
+    min_samples: int,
+) -> np.ndarray:
+    if min_samples < _MIN_FROZEN_RUN_SAMPLES:
+        raise ValueError("min_samples must be at least 2")
+    if not columns:
+        raise ValueError("columns must not be empty")
+
+    height = df.height
+    mask = np.zeros(height, dtype=bool)
+    if height < min_samples:
+        return mask
+
+    equal_previous = (
+        df.select(
+            pl.all_horizontal(
+                [
+                    (pl.col(column) == pl.col(column).shift(1)).fill_null(False)
+                    for column in columns
+                ]
+            )
+        )
+        .to_series()
+        .to_numpy()
+    )
+
+    leading_end = 1
+    while leading_end < height and bool(equal_previous[leading_end]):
+        leading_end += 1
+    if leading_end >= min_samples:
+        mask[:leading_end] = True
+
+    trailing_start = height - 1
+    while trailing_start > 0 and bool(equal_previous[trailing_start]):
+        trailing_start -= 1
+    if height - trailing_start >= min_samples:
+        mask[trailing_start:] = True
+    return mask
+
+
+def _null_columns_on_mask(
+    df: pl.DataFrame,
+    columns: Sequence[str],
+    mask: np.ndarray,
+) -> pl.DataFrame:
+    if not mask.any():
+        return df
+    mask_series = pl.Series("__frozen_endpoint_mask", mask)
+    return df.with_columns(
+        [
+            pl.when(mask_series).then(None).otherwise(pl.col(column)).alias(column)
+            for column in columns
+        ]
+    )
+
+
+def blank_frozen_endpoints(
+    df: pl.DataFrame,
+    columns: Sequence[str],
+    min_samples: int,
+) -> pl.DataFrame:
+    """Null jointly constant runs at the beginning or end of a flight.
+
+    The returned frame retains every row. Interior runs are deliberately
+    preserved because the rule identifies frozen flight endpoints only.
+    """
+    mask = _frozen_endpoint_mask(df, columns, min_samples)
+    return _null_columns_on_mask(df, columns, mask)
+
+
 def build_selected_params(
     df: pl.DataFrame,
     config: Mapping[str, object] | None = None,
@@ -1226,10 +1310,23 @@ def build_selected_params(
         DataFrame with selected-parameter columns added.
     """
     effective_config: Mapping[str, object]
+    frozen_endpoint_mask: np.ndarray | None = None
     if profile is None:
         effective_config = legacy_selected_params_cfg(config or {})
     else:
-        effective_config = selected_params_cfg_from_profile(profile)
+        active_profile = load_profile(profile) if isinstance(profile, str) else profile
+        frozen_rule = active_profile.frozen_endpoint
+        frozen_endpoint_mask = _frozen_endpoint_mask(
+            df,
+            frozen_rule.columns,
+            frozen_rule.min_samples,
+        )
+        df = blank_frozen_endpoints(
+            df,
+            frozen_rule.columns,
+            frozen_rule.min_samples,
+        )
+        effective_config = selected_params_cfg_from_profile(active_profile)
 
     alt_col = _resolve_col(df, "raw_alt_ft", "altitude")
     alt_arr = df[alt_col].to_numpy()
@@ -1313,4 +1410,11 @@ def build_selected_params(
         "fdm_cas_target_kt",
     )
     df = _build_tas_target(df, alt_arr)
-    return _build_gamma_target(df, tas_col)
+    result = _build_gamma_target(df, tas_col)
+    if frozen_endpoint_mask is None:
+        return result
+    return _null_columns_on_mask(
+        result,
+        [column for column in _PROFILE_SEGMENT_COLUMNS if column in result.columns],
+        frozen_endpoint_mask,
+    )

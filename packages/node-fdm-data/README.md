@@ -114,6 +114,7 @@ result = processor.process(raw_df)
 
 ```python
 from node_fdm_data import (
+    blank_frozen_endpoints,
     legacy_selected_params_cfg,
     list_profiles,
     load_profile,
@@ -131,6 +132,16 @@ print(profile.provenance.commit)
 print(profile.channels["alt"].sigma_r)
 
 profile_cfg = selected_params_cfg_from_profile(profile_name)
+
+# The helper exposes the profile's row-preserving endpoint preprocessing.
+blanked = blank_frozen_endpoints(
+    flight_df,
+    profile.frozen_endpoint.columns,
+    profile.frozen_endpoint.min_samples,
+)
+assert blanked.height == flight_df.height
+
+# The profile-driven builder applies the same rule automatically.
 result = build_selected_params(flight_df, profile=profile_name)
 
 # A legacy block remains inspectable, but cannot override an explicit profile.
@@ -141,8 +152,12 @@ assert historical_cfg is legacy_selected_params
 Profiles are literal package data: loading one performs no network or filesystem access.
 An unknown name raises `KeyError` and reports the registered names. Passing both `config` and
 `profile` to `build_selected_params` gives the profile all-or-nothing precedence: legacy channel
-values are neither merged nor allowed to win. Use `legacy_selected_params_cfg` only when the
-historical block itself must remain observable.
+values are neither merged nor allowed to win. The profile-driven path nulls jointly constant
+altitude, ground speed, track, latitude, and longitude runs of at least 15 samples at either flight
+boundary before detection, without dropping timestamps. It also nulls the five selected-parameter
+outputs on those excluded rows. `blank_frozen_endpoints` exposes the same row-preserving
+preprocessing directly. Use `legacy_selected_params_cfg` only when the historical block itself must
+remain observable.
 
 ### Dataset splitting
 

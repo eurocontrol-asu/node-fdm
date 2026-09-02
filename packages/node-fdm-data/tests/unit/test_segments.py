@@ -2888,3 +2888,119 @@ def test_profile_cfg_matches_equivalent_legacy_cfg_and_results() -> None:
     profile_result = build_selected_params(frame, profile=_PROFILE_NAME)
     legacy_result = build_selected_params(frame, hand_written)
     _assert_profile_segment_columns_equal(profile_result, legacy_result)
+
+
+_FROZEN_ENDPOINT_COLUMNS = (
+    "altitude",
+    "ground_speed",
+    "track",
+    "latitude",
+    "longitude",
+)
+
+
+def _frozen_endpoint_frame(*, head_len: int = 20, n: int = 80) -> pl.DataFrame:
+    endpoint_values = {
+        "altitude": np.linspace(10_000.0, 20_000.0, n),
+        "ground_speed": np.linspace(390.0, 450.0, n),
+        "track": np.linspace(90.0, 120.0, n),
+        "latitude": np.linspace(48.0, 49.0, n),
+        "longitude": np.linspace(2.0, 3.0, n),
+    }
+    for values in endpoint_values.values():
+        values[:head_len] = values[0]
+    endpoint_values["altitude"][40:60] = 16_000.0
+
+    altitude = endpoint_values["altitude"]
+    ground_speed = endpoint_values["ground_speed"]
+    mach = np.linspace(0.60, 0.85, n)
+    cas = np.linspace(230.0, 310.0, n)
+    tas = np.linspace(350.0, 480.0, n)
+    vz = np.linspace(500.0, 1_500.0, n)
+    gamma = np.linspace(0.02, 0.10, n)
+    for values, frozen_value in (
+        (mach, 0.78),
+        (cas, 260.0),
+        (tas, 400.0),
+        (vz, 1_000.0),
+        (gamma, 0.05),
+    ):
+        values[:head_len] = frozen_value
+
+    return pl.DataFrame(
+        {
+            "timestamp": np.arange(n, dtype=np.int64),
+            **endpoint_values,
+            "raw_alt_ft": altitude,
+            "raw_gs_kt": ground_speed,
+            "raw_vz_ftmin": vz,
+            "vertical_rate": vz,
+            "bds_mach_clean": mach,
+            "bds_ias_kt_clean": cas,
+            "fdm_tas_from_cas_kt": tas,
+            "fdm_gamma_rad": gamma,
+            "era_temp_K": np.full(n, 250.0),
+        }
+    )
+
+
+def test_blank_frozen_endpoints_blanks_joint_head_only() -> None:
+    """AC1: jointly frozen endpoint columns are blanked, not an altitude-only run."""
+    frame = _frozen_endpoint_frame()
+
+    result = segments_module.blank_frozen_endpoints(
+        frame,
+        _FROZEN_ENDPOINT_COLUMNS,
+        min_samples=15,
+    )
+
+    for column in _FROZEN_ENDPOINT_COLUMNS:
+        assert result[column][:20].is_null().all()
+        assert result[column][40:60].to_list() == frame[column][40:60].to_list()
+
+
+def test_blank_frozen_endpoints_exact_minimum_length() -> None:
+    """AC2: fourteen frozen samples survive while exactly fifteen are blanked."""
+    shorter = _frozen_endpoint_frame(head_len=14, n=30)
+    exact = _frozen_endpoint_frame(head_len=15, n=30)
+
+    shorter_result = segments_module.blank_frozen_endpoints(
+        shorter,
+        _FROZEN_ENDPOINT_COLUMNS,
+        min_samples=15,
+    )
+    exact_result = segments_module.blank_frozen_endpoints(
+        exact,
+        _FROZEN_ENDPOINT_COLUMNS,
+        min_samples=15,
+    )
+
+    for column in _FROZEN_ENDPOINT_COLUMNS:
+        assert shorter_result[column][:14].to_list() == shorter[column][:14].to_list()
+        assert exact_result[column][:15].is_null().all()
+
+
+def test_blank_frozen_endpoints_preserves_time_axis() -> None:
+    """AC3: endpoint blanking preserves frame height and every timestamp."""
+    frame = _frozen_endpoint_frame()
+
+    result = segments_module.blank_frozen_endpoints(
+        frame,
+        _FROZEN_ENDPOINT_COLUMNS,
+        min_samples=15,
+    )
+
+    assert result.height == frame.height
+    assert result["timestamp"].equals(frame["timestamp"])
+
+
+def test_profile_blanks_all_segment_ids_on_frozen_head() -> None:
+    """AC4: exp03 profile leaves every selected channel null on the frozen head."""
+    result = build_selected_params(
+        _frozen_endpoint_frame(),
+        profile="opensky26-exp03-v1",
+    )
+
+    for column in _PROFILE_SEGMENT_COLUMNS:
+        head = result[column][:20]
+        assert (head.is_null() | head.is_nan()).all()
