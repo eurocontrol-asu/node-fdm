@@ -27,6 +27,8 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING
 
+from node_fdm_pipeline.commands._fleet_selection import SelectedFlight, SelectionPlan
+
 if TYPE_CHECKING:
     import polars as pl
 
@@ -60,11 +62,26 @@ class FleetPlan:
             across all cohorts, sorted for reproducible request ordering.
         owner: ``{icao24: (Cohort, ...)}`` — every silo receiving the aircraft's rows.
         cohorts: The cohorts this plan covers.
+        selection: The compiled selection projected into this plan, when available.
     """
 
     dates: dict[str, list[str]]
     owner: dict[str, tuple[Cohort, ...]]
     cohorts: tuple[Cohort, ...]
+    selection: SelectionPlan | None = None
+
+    def resolve(self, icao24: str, day: str) -> SelectedFlight | None:
+        """Return the selected flight that requested an aircraft-day pair."""
+        if self.selection is None:
+            return None
+        return next(
+            (
+                flight
+                for flight in self.selection.flights
+                if flight.icao24 == icao24 and day in flight.utc_days
+            ),
+            None,
+        )
 
     @property
     def aircraft_days(self) -> int:
@@ -149,7 +166,10 @@ def discover_cohorts(fleet_dir: Path) -> list[tuple[str, Path, Path]]:
 
 
 def build_fleet_plan(
-    triples: list[tuple[str, Path, Path]], *, data_root: Path | None = None
+    triples: list[tuple[str, Path, Path]],
+    *,
+    data_root: Path | None = None,
+    selection: SelectionPlan | None = None,
 ) -> FleetPlan:
     """Invert per-cohort selections into one date-major, mutualised plan.
 
@@ -162,9 +182,18 @@ def build_fleet_plan(
     owner: dict[str, list[Cohort]] = {}
     dates: dict[str, set[str]] = defaultdict(set)
 
+    if selection is not None:
+        for flight in selection.flights:
+            for day in flight.utc_days:
+                dates[day].add(flight.icao24)
+
     for name, config_path, selection_path in triples:
-        per_day = _read_selection_days(selection_path)
-        icao = {a for day_set in per_day.values() for a in day_set}
+        per_day = _read_selection_days(selection_path) if selection is None else {}
+        icao = (
+            {aircraft for day_set in per_day.values() for aircraft in day_set}
+            if selection is None
+            else {flight.icao24 for flight in selection.flights if name in flight.cohorts}
+        )
         cohort = Cohort(
             name=name,
             config_path=config_path,
@@ -177,11 +206,13 @@ def build_fleet_plan(
         for aircraft in icao:
             owner.setdefault(aircraft, []).append(cohort)
 
-        for day, day_set in per_day.items():
-            dates[day] |= day_set
+        if selection is None:
+            for day, day_set in per_day.items():
+                dates[day] |= day_set
 
     return FleetPlan(
         dates={day: sorted(v) for day, v in sorted(dates.items())},
         owner={aircraft: tuple(owners) for aircraft, owners in owner.items()},
         cohorts=tuple(cohorts),
+        selection=selection,
     )
