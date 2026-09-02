@@ -36,8 +36,8 @@ def _campaign_digest(*, profile_revision: int = 1) -> _fleet_digest.ResumeDigest
     )
 
 
-def test_recorded_identity_survives_disk_only_reload(tmp_path: Path) -> None:
-    """AC1: a disk-only reload restores selection, resolved config, and profile."""
+def test_recorded_identity_round_trips_from_durable_record(tmp_path: Path) -> None:
+    """AC1: the durable record restores selection, resolved config, and profile."""
     digest_module = _digest_module()
     record = digest_module.record_campaign_identity
     campaign_root = tmp_path / "campaign"
