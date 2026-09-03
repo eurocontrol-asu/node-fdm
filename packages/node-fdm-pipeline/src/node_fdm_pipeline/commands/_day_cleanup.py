@@ -211,7 +211,7 @@ def _decrement_once(  # noqa: PLR0913
         }
     )
     if step_hook is not None:
-        step_hook("counter_decremented", artifact_id)
+        step_hook("decrement", artifact_id)
 
 
 def _delete_once(  # noqa: PLR0913
@@ -237,8 +237,8 @@ def _delete_once(  # noqa: PLR0913
         },
     )
     deleted.add(artifact_id)
-    if existed and step_hook is not None:
-        step_hook("artifact_deleted", artifact_id)
+    if step_hook is not None:
+        step_hook("delete", artifact_id)
 
 
 def _run_cleanup(  # noqa: PLR0913

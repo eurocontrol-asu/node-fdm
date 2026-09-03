@@ -107,7 +107,7 @@ def test_failure_after_decrement_preserves_committed_partition_digests(
     committed = _published_digests(tmp_path / "published")
 
     def fail_after_decrement(step: str, _artifact_id: str) -> None:
-        if step == "counter_decremented":
+        if step == "decrement":
             raise RuntimeError("injected after durable decrement")
 
     with pytest.raises(RuntimeError, match="injected after durable decrement"):
@@ -139,7 +139,7 @@ def test_resume_after_deletion_finishes_only_remaining_cleanup_steps(
 
     def fail_after_one_deletion(step: str, _artifact_id: str) -> None:
         nonlocal failed_once
-        if step == "artifact_deleted" and not failed_once:
+        if step == "delete" and not failed_once:
             failed_once = True
             raise RuntimeError("injected after artefact deletion")
 
@@ -161,7 +161,7 @@ def test_resume_after_deletion_finishes_only_remaining_cleanup_steps(
     resumed_deletions: list[str] = []
 
     def observe_resume(step: str, artifact_id: str) -> None:
-        if step == "artifact_deleted":
+        if step == "delete":
             resumed_deletions.append(artifact_id)
 
     outcome = _cleanup().resume_cleanup(
@@ -196,7 +196,7 @@ def test_resume_does_not_repeat_a_durable_decrement(tmp_path: Path) -> None:
 
     def fail_after_first_decrement(step: str, _artifact_id: str) -> None:
         nonlocal failed_once
-        if step == "counter_decremented" and not failed_once:
+        if step == "decrement" and not failed_once:
             failed_once = True
             raise RuntimeError("injected after first decrement")
 

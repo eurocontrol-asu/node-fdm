@@ -251,7 +251,7 @@ def _partition_frames(root: Path) -> tuple[pl.DataFrame, ...]:
 
 
 def _fail_after_cleanup_deletion(step: str, _artifact_id: str) -> None:
-    if step == "artifact_deleted":
+    if step == "delete":
         raise RuntimeError("injected cleanup failure")
 
 
@@ -274,6 +274,42 @@ def _resume_first_day_cleanup(fixture: _DayFixture) -> None:
         artifacts=fixture.artifacts,
         decrements=fixture.decrements,
     )
+
+
+def _fail_at_delete_boundary(step: str, _artifact_id: str) -> None:
+    if step == "delete":
+        raise RuntimeError("injected delete-boundary failure")
+
+
+def test_failed_cleanup_blocks_acquisition_until_resume(day_fixture: _DayFixture) -> None:
+    """AC3: N+1 is blocked before acquisition until N's failed cleanup is resumed."""
+    with pytest.raises(RuntimeError, match="delete-boundary"):
+        _run_day(
+            day_fixture,
+            "20200101",
+            _RecordedLease(),
+            cleanup_step_hook=_fail_at_delete_boundary,
+        )
+
+    reads_before = len(day_fixture.reader.pids)
+    refused_lease = _RecordedLease()
+    with pytest.raises(_runner().PreviousDayCleanupFailed, match="20200101"):
+        _run_day(day_fixture, "20200102", refused_lease)
+
+    assert len(day_fixture.reader.pids) == reads_before
+    assert refused_lease.calls == []
+
+    _resume_first_day_cleanup(day_fixture)
+    admitted_lease = _RecordedLease()
+    _run_day(day_fixture, "20200102", admitted_lease)
+
+    events = read_events(day_fixture.journal_path)
+    assert any(
+        event.get("event") == "day_committed" and _event_day(event) == "20200102"
+        for event in events
+    )
+    assert len(day_fixture.reader.pids) > reads_before
+    assert any(operation == "acquire" for operation, _pid in admitted_lease.calls)
 
 
 def test_next_day_is_refused_before_its_first_step(day_fixture: _DayFixture) -> None:
