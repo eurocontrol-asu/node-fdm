@@ -6,7 +6,7 @@ from pathlib import Path
 from typing import Literal
 
 from polars.exceptions import PolarsError
-from pydantic import BaseModel, ConfigDict
+from pydantic import BaseModel, ConfigDict, TypeAdapter, ValidationError
 
 from node_fdm_pipeline.commands._raw_cache import (
     AbsenceReceipt,
@@ -48,6 +48,7 @@ class PurgeDecision(BaseModel):
 
     allowed: bool
     reason: PurgeReason | None = None
+    pending_consumers: tuple[str, ...] = ()
 
 
 def _recover_missing_receipt(
@@ -148,21 +149,36 @@ def purge_decision(
     """Decide whether a reconciled day is safe to purge, without I/O."""
     if reconciliation.status != "visible":
         return PurgeDecision(allowed=False, reason="receipt_invalid")
-    if any(state != "committed" for state in consumers.values()):
-        return PurgeDecision(allowed=False, reason="consumer_pending")
+    pending = tuple(sorted(name for name, state in consumers.items() if state != "committed"))
+    if pending:
+        return PurgeDecision(
+            allowed=False,
+            reason="consumer_pending",
+            pending_consumers=pending,
+        )
     return PurgeDecision(allowed=True)
+
+
+def _read_consumer_ledger(root: Path, day: str) -> dict[str, ConsumerState] | None:
+    path = root / f"date={day}" / "consumers.json"
+    try:
+        return TypeAdapter(dict[str, ConsumerState]).validate_json(path.read_bytes())
+    except (OSError, ValidationError):
+        return None
 
 
 def purge_day(
     root: Path,
     day: str,
     kind: Kind,
-    consumers: Mapping[str, ConsumerState],
 ) -> PurgeDecision:
     """Remove a day directory only after receipt and consumer verification."""
+    consumers = _read_consumer_ledger(root, day) or {"consumer_ledger": "pending"}
     reconciliation = reconcile_day(root, day, kind)
     decision = purge_decision(reconciliation, consumers)
     if decision.allowed:
+        receipt_path = root / ".absences" / f"{day}.{kind}.json"
+        receipt_path.unlink(missing_ok=True)
         day_directory = root / f"date={day}"
         if day_directory.is_dir():
             shutil.rmtree(day_directory)

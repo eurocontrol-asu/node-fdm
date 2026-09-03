@@ -81,17 +81,23 @@ def test_complete_artifact_is_visible_with_receipt_facts(tmp_path: Path) -> None
 @pytest.mark.integration
 def test_purge_requires_visible_artifact_and_committed_consumers(tmp_path: Path) -> None:
     """AC5: purge removes a verified day only after every consumer is committed."""
-    root = _raw_cache.cache_root(_config(tmp_path), KIND)
+    cfg = _config(tmp_path)
+    root = _raw_cache.cache_root(cfg, KIND)
     _, payload = _published_artifact(root)
     day_directory = payload.parents[1]
+    _raw_cache.write_consumer_ledger(cfg, KIND, DAY, ("warehouse",))
     retention = _retention()
 
-    blocked = retention.purge_day(root, DAY, KIND, {"warehouse": "pending"})
+    blocked = retention.purge_day(root, DAY, KIND)
 
     assert blocked.allowed is False
     assert day_directory.exists()
 
-    allowed = retention.purge_day(root, DAY, KIND, {"warehouse": "committed"})
+    (day_directory / "consumers.json").write_text(
+        '{"warehouse":"committed"}\n',
+        encoding="utf-8",
+    )
+    allowed = retention.purge_day(root, DAY, KIND)
 
     assert allowed.allowed is True
     assert not day_directory.exists()
