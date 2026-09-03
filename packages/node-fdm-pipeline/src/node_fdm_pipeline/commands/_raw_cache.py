@@ -84,6 +84,7 @@ def _write_atomic_receipt(path: Path, receipt: AbsenceReceipt) -> None:
             handle.flush()
             os.fsync(handle.fileno())
         os.replace(temporary_path, path)
+        _sync_directory(path.parent)
     except BaseException:
         temporary_path.unlink(missing_ok=True)
         raise
@@ -194,9 +195,25 @@ def cache_misses(
 def write_atomic(path: Path, df: pl.DataFrame) -> None:
     """Publish a parquet frame by atomically renaming a completed temporary file."""
     path.parent.mkdir(parents=True, exist_ok=True)
-    tmp = path.with_suffix(path.suffix + ".tmp")
-    df.write_parquet(tmp)
-    os.rename(tmp, path)
+    descriptor, raw_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+    )
+    os.close(descriptor)
+    temporary_path = Path(raw_path)
+    try:
+        df.write_parquet(temporary_path)
+        descriptor = os.open(temporary_path, os.O_RDONLY)
+        try:
+            os.fsync(descriptor)
+        finally:
+            os.close(descriptor)
+        os.replace(temporary_path, path)
+        _sync_directory(path.parent)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def read_parquet(path: Path) -> pl.DataFrame:

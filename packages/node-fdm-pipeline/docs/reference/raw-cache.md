@@ -53,7 +53,22 @@ value.
 The receipt contains `day`, `kind`, `digest`, `row_count` (always `0`), and the canonical
 covered identifiers in the legacy-named `icao24s` tuple. The parquet artefact is written
 first through the cache’s atomic writer; the receipt is exposed last through an atomic
-rename. A crash cannot make a partial receipt visible as valid coverage.
+rename. Both boundaries flush their file before the rename and synchronize the containing
+directory afterwards. Temporary payload names are unique, so concurrent writers cannot
+share an incomplete file. A crash cannot make a partial receipt visible as valid coverage.
+
+## Start-up reconciliation
+
+Before a fleet campaign submits any acquisition, it reconciles every planned `(day, kind)`
+against the staged absence artefact and receipt. If a process stopped after publishing an
+intact payload but before publishing its receipt, reconciliation derives the expected digest
+from the planned aircraft set, validates the parquet, and republishes only the receipt. The
+day remains visible and no acquisition boundary is called.
+
+A truncated payload, an unreadable receipt, a missing referenced payload, or a digest
+mismatch makes that `(day, kind)` invalid. Its absence artefacts and receipt are removed
+before the day is submitted exactly once for acquisition, allowing the two-phase publication
+to restart from a clean state. A fully verified day remains untouched.
 
 `read_absence_receipt(root, day, kind)` reloads and validates the JSON receipt from disk.
 No process-local state is required. It returns `None` when no receipt has been published.

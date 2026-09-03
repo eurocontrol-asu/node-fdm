@@ -36,7 +36,7 @@ from typing import TYPE_CHECKING, Any
 
 import structlog
 
-from node_fdm_pipeline.commands import _raw_cache
+from node_fdm_pipeline.commands import _cache_retention, _raw_cache
 from node_fdm_pipeline.commands._fetch_backoff import BackoffPolicy, next_delay, retry_policy_for
 from node_fdm_pipeline.commands._fetch_bisect import plan_bisection
 from node_fdm_pipeline.commands._fleet_boundary import (
@@ -848,8 +848,33 @@ def _run_started_event(plan: FleetPlan, run_key: str, force: bool) -> dict[str, 
     }
 
 
+def _campaign_pending_dates(plan: FleetPlan, *, force: bool) -> set[str]:
+    if force:
+        return set(plan.dates)
+    try:
+        cfg = plan.cohorts[0].cfg
+    except (AttributeError, IndexError):
+        return set(plan.dates)
+
+    pending: set[str] = set()
+    for day, icao24s in plan.dates.items():
+        for kind in _KINDS:
+            root = _raw_cache.cache_root(cfg, kind)
+            reconciliation = _cache_retention.reconcile_day(
+                root,
+                day,
+                kind,
+                icao24s=icao24s,
+            )
+            if reconciliation.status == "invalid":
+                _cache_retention.invalidate_day(root, day, kind)
+                pending.add(day)
+    return pending
+
+
 def _run_dates(context: _DownloadContext, run_key: str) -> list[DateOutcome]:
     outcomes: list[DateOutcome] = []
+    pending_dates = _campaign_pending_dates(context.plan, force=context.force)
     acquisition = (
         acquisition_section(
             context.preflight.lease_path,
@@ -865,9 +890,19 @@ def _run_dates(context: _DownloadContext, run_key: str) -> list[DateOutcome]:
         else nullcontext()
     )
     with acquisition:
-        _get_opensky()
+        if pending_dates:
+            _get_opensky()
         for done, date_str in enumerate(context.plan.dates, start=1):
-            outcome = context.fetch_date(context.plan, date_str, force=context.force)
+            if date_str in pending_dates:
+                outcome = context.fetch_date(context.plan, date_str, force=context.force)
+            else:
+                outcome = DateOutcome(
+                    date=date_str,
+                    requested=len(context.plan.dates[date_str]),
+                    written=0,
+                    requests=0,
+                    empty_kinds=(),
+                )
             outcomes.append(outcome)
             _append_manifest(context.manifest_path, _date_event(outcome))
             _log_date_outcome(outcome, done, len(context.plan.dates))
