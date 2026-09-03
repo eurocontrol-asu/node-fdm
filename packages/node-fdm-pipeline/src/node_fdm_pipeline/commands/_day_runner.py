@@ -65,7 +65,7 @@ class _OpenSkyReader(Protocol):
 
 
 class _GridOpener(Protocol):
-    def __call__(self, source_day: str, field_name: str) -> object:
+    def __call__(self, source_day: str, field_name: str, /) -> object:
         """Open one ERA5 field for one UTC source day."""
 
 
@@ -97,6 +97,7 @@ class _AssemblySlice:
     key: DayPartitionKey
     profile: ScienceProfile
     versions: dict[str, str]
+    grid_handles: dict[str, object]
 
 
 @dataclass(frozen=True)
@@ -113,6 +114,7 @@ def _assemble_slice(slice_: _AssemblySlice) -> _AssemblyResult:
         slice_.key,
         slice_.profile,
         slice_.versions,
+        grid_handles=slice_.grid_handles,
     )
     return _AssemblyResult(key=slice_.key, frame=frame, pid=os.getpid())
 
@@ -185,13 +187,24 @@ def _read_opensky_sources(
     return pl.concat(frames, how="vertical_relaxed")
 
 
+@dataclass
+class _OpenedDayGrids:
+    handles: dict[str, object]
+    opens: dict[tuple[str, str], int]
+    cache: DayGridCache[object]
+
+    def close(self) -> None:
+        for source_day in self.handles:
+            self.cache.evict(source_day)
+
+
 def _open_shared_grids(
     plan: DayPlan,
     fields: tuple[str, ...],
     opener: _GridOpener,
     closer: _GridCloser,
     external_pids: set[int],
-) -> dict[tuple[str, str], int]:
+) -> _OpenedDayGrids:
     def guarded_opener(source_day: str, field_name: str) -> object:
         return _parent_call(
             external_pids,
@@ -199,16 +212,25 @@ def _open_shared_grids(
             lambda: opener(source_day, field_name),
         )
 
+    if plan.source_days and not fields:
+        raise ValueError("at least one ERA5 field is required")
+
     cache = DayGridCache[object](opener=guarded_opener, closer=closer)
-    for _key in plan.partition_keys:
-        for source_day in plan.source_days:
-            for field_name in fields:
-                cache.acquire(source_day, field_name)
-                cache.release(source_day, field_name)
-    opens = cache.stats().opens
+    handles: dict[str, object] = {}
+    field_name = fields[0] if fields else ""
     for source_day in plan.source_days:
-        cache.evict(source_day)
-    return opens
+        handle = cache.acquire(source_day, field_name)
+        handles[source_day] = handle
+        cache.release(source_day, field_name)
+        if not (hasattr(handle, "interpolate") or hasattr(handle, "data_vars")):
+            for legacy_field in fields[1:]:
+                cache.acquire(source_day, legacy_field)
+                cache.release(source_day, legacy_field)
+    return _OpenedDayGrids(
+        handles=handles,
+        opens=cache.stats().opens,
+        cache=cache,
+    )
 
 
 def _assemble_partitions(  # noqa: PLR0913
@@ -218,6 +240,8 @@ def _assemble_partitions(  # noqa: PLR0913
     versions: Mapping[str, str],
     local_workers: int,
     max_resident_gib: float,
+    *,
+    grid_handles: Mapping[str, object] | None = None,
 ) -> tuple[dict[DayPartitionKey, pl.DataFrame], tuple[int, ...]]:
     slices = tuple(
         _AssemblySlice(
@@ -228,6 +252,7 @@ def _assemble_partitions(  # noqa: PLR0913
             key=key,
             profile=profile,
             versions=dict(versions),
+            grid_handles=dict(grid_handles or {}),
         )
         for key in plan.partition_keys
     )
@@ -282,20 +307,20 @@ def _run_parent_acquisition(  # noqa: PLR0913
     grid_closer: _GridCloser,
     era5_fields: tuple[str, ...],
     external_pids: set[int],
-) -> tuple[pl.DataFrame, dict[tuple[str, str], int]]:
+) -> tuple[pl.DataFrame, _OpenedDayGrids]:
     _parent_call(external_pids, "trino_lease_acquire", lease.acquire)
     try:
         _parent_call(external_pids, "trino_lease_heartbeat", lease.heartbeat)
         _parent_call(external_pids, "trino_lease_possession", lease.assert_owned)
         frame = _read_opensky_sources(plan, opensky_reader, external_pids)
-        grid_opens = _open_shared_grids(
+        shared_grids = _open_shared_grids(
             plan,
             era5_fields,
             grid_opener,
             grid_closer,
             external_pids,
         )
-        return frame, grid_opens
+        return frame, shared_grids
     finally:
         _parent_call(external_pids, "trino_lease_release", lease.release)
 
@@ -327,7 +352,7 @@ def run_selection_day(  # noqa: PLR0913
     append_event(journal_path, {"event": "day_started", "meta_selection_day": day})
     plan = build_day_plan(selection, day)
     external_pids: set[int] = set()
-    frame, grid_opens = _run_parent_acquisition(
+    frame, shared_grids = _run_parent_acquisition(
         lease,
         plan,
         opensky_reader,
@@ -336,14 +361,19 @@ def run_selection_day(  # noqa: PLR0913
         era5_fields,
         external_pids,
     )
-    partitions, worker_pids = _assemble_partitions(
-        frame,
-        plan,
-        science_profile,
-        versions,
-        local_workers,
-        max_resident_gib,
-    )
+    try:
+        partitions, worker_pids = _assemble_partitions(
+            frame,
+            plan,
+            science_profile,
+            versions,
+            local_workers,
+            max_resident_gib,
+            grid_handles=shared_grids.handles,
+        )
+    finally:
+        shared_grids.close()
+    grid_opens = shared_grids.opens
     publish_day(
         partitions=partitions,
         plan=plan,

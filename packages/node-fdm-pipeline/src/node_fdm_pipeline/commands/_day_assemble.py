@@ -3,10 +3,11 @@ from __future__ import annotations
 import hashlib
 import json
 from collections.abc import Mapping
-from typing import cast
+from typing import Protocol, cast
 
 import pandas as pd
 import polars as pl
+import xarray as xr
 from node_fdm_data.meteo import enrich_era5
 from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
 from node_fdm_data.preprocessing.derive import derive_columns
@@ -77,6 +78,9 @@ def _require_candidate_scope(frame: pl.DataFrame, plan: DayPlan) -> None:
         if not isinstance(selection_id, str):
             raise DayScopeViolation("selection_id must be a non-null string")
         require_selection_in_scope(plan, selection_id)
+    for source_day in frame.get_column("meta_source_day").unique().to_list():
+        if not isinstance(source_day, str) or source_day not in plan.source_days:
+            raise DayScopeViolation(f"source day {source_day!r} is outside the active day plan")
 
 
 _MIN_FLAG_POINTS = 40
@@ -194,7 +198,66 @@ def _with_required_outputs(frame: pl.DataFrame) -> pl.DataFrame:
     return frame.with_columns(outputs) if outputs else frame
 
 
-def _scientific_chain(frame: pl.DataFrame, profile: ScienceProfile) -> pl.DataFrame:
+class _GridInterpolator(Protocol):
+    def interpolate(self, frame: pd.DataFrame) -> pd.DataFrame: ...
+
+
+class _DatasetGrid:
+    def __init__(self, dataset: xr.Dataset) -> None:
+        self._dataset = dataset
+
+    def interpolate(self, frame: pd.DataFrame) -> pd.DataFrame:
+        result = frame.copy()
+        coordinates = {
+            "time": xr.DataArray(result["timestamp"].to_numpy(), dims="points"),
+            "latitude": xr.DataArray(result["latitude"].to_numpy(), dims="points"),
+            "longitude": xr.DataArray(result["longitude"].to_numpy(), dims="points"),
+        }
+        interpolated = self._dataset.interp(coordinates)
+        if "level" in interpolated.dims:
+            interpolated = interpolated.isel(level=0)
+        for field_name in (
+            "temperature",
+            "u_component_of_wind",
+            "v_component_of_wind",
+        ):
+            result[field_name] = interpolated[field_name].to_numpy()
+        return result
+
+
+def _grid_interpolator(handle: object) -> _GridInterpolator:
+    if isinstance(handle, xr.Dataset):
+        return _DatasetGrid(handle)
+    if hasattr(handle, "interpolate"):
+        return cast("_GridInterpolator", handle)
+    raise TypeError("day grid handle must provide interpolate(frame)")
+
+
+def _enrich_with_day_grids(
+    frame: pl.DataFrame,
+    profile: ScienceProfile,
+    grid_handles: Mapping[str, object] | None,
+) -> pl.DataFrame:
+    if grid_handles is None:
+        return enrich_era5(frame, _ProfileGrid(profile.profile_id))
+    if frame.is_empty():
+        return frame
+
+    enriched_days: list[pl.DataFrame] = []
+    for source_day in frame.get_column("meta_source_day").unique().sort().to_list():
+        if not isinstance(source_day, str) or source_day not in grid_handles:
+            raise DayScopeViolation(f"source day {source_day!r} is outside the active day plan")
+        source_frame = frame.filter(pl.col("meta_source_day") == source_day)
+        interpolator = _grid_interpolator(grid_handles[source_day])
+        enriched_days.append(enrich_era5(source_frame, interpolator))
+    return pl.concat(enriched_days, how="vertical_relaxed")
+
+
+def _scientific_chain(
+    frame: pl.DataFrame,
+    profile: ScienceProfile,
+    grid_handles: Mapping[str, object] | None = None,
+) -> pl.DataFrame:
     required = {
         "meta_source_day",
         "raw_alt_ft",
@@ -243,7 +306,7 @@ def _scientific_chain(frame: pl.DataFrame, profile: ScienceProfile) -> pl.DataFr
         distance_low_thr=200.0,
         distance_upper_thr=3_000.0,
     )
-    scientific = enrich_era5(scientific, _ProfileGrid(profile.profile_id))
+    scientific = _enrich_with_day_grids(scientific, profile, grid_handles)
     clean = CleanSpeedsConfig()
     scientific = clean_bds_speeds(
         scientific,
@@ -280,12 +343,14 @@ def _scientific_chain(frame: pl.DataFrame, profile: ScienceProfile) -> pl.DataFr
     return scientific.select(*original_order, *produced_order)
 
 
-def assemble_partition(
+def assemble_partition(  # noqa: PLR0913
     frame: pl.DataFrame,
     plan: DayPlan,
     key: DayPartitionKey | tuple[str, str],
     profile: ScienceProfile,
     versions: Mapping[str, str],
+    *,
+    grid_handles: Mapping[str, object] | None = None,
 ) -> pl.DataFrame:
     """Assemble one deterministic, provenance-complete day partition."""
     partition_key = _partition_key(key)
@@ -296,10 +361,10 @@ def assemble_partition(
             f"partition {tuple(partition_key)!r} is outside the day plan"
         ) from None
 
+    _require_candidate_scope(frame, plan)
     candidate = _candidate_rows(frame, plan, partition_key)
-    _require_candidate_scope(candidate, plan)
     selected = candidate.filter(pl.col("selection_id").is_in(authorised_ids))
-    scientific = _scientific_chain(selected, profile)
+    scientific = _scientific_chain(selected, profile, grid_handles)
 
     manifest = profile_manifest(profile)
     try:
