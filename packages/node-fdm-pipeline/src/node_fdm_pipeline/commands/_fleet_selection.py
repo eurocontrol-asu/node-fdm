@@ -97,7 +97,7 @@ _REQUIRED_CSV_FIELDS = (
 
 
 def _selection_csv_row(row: Mapping[str, str | None]) -> dict[str, object]:
-    normalized: dict[str, object] = dict(row)
+    normalized = _normalize_csv_identity(row)
     normalized["cohort"] = row["cohorts"] or ""
     normalized.pop("cohorts", None)
     raw_days = row["utc_days"] or ""
@@ -107,24 +107,29 @@ def _selection_csv_row(row: Mapping[str, str | None]) -> dict[str, object]:
     return normalized
 
 
+def _campaign_selection_csv_rows(
+    row: Mapping[str, str | None],
+) -> tuple[dict[str, object], ...]:
+    normalized = _selection_csv_row(row)
+    cohorts = tuple(value.strip() for value in (row["cohorts"] or "").split("|"))
+    return tuple(normalized | {"cohort": cohort} for cohort in cohorts)
+
+
 def compile_selection_csv(raw: str) -> SelectionPlan:
     """Compile a strict header-based CSV selection without partial rows."""
-    reader = csv.DictReader(StringIO(raw), strict=True)
-    try:
-        fieldnames = reader.fieldnames
-        missing = [
-            field
-            for field in _REQUIRED_CSV_FIELDS
-            if fieldnames is None or field not in fieldnames
-        ]
-        if missing:
-            columns = ", ".join(missing)
-            raise SelectionFormatError(f"missing required CSV columns: {columns}")
-        rows = tuple(_selection_csv_row(row) for row in reader)
-    except csv.Error as exc:
-        line_number = reader.line_num + 1
-        raise SelectionFormatError(f"CSV syntax error on line {line_number}: {exc}") from exc
-    return compile_selection(rows)
+    fieldnames, rows = _read_selection_csv(raw)
+    fields = set(fieldnames)
+    if "cohort" in fields and "cohorts" in fields:
+        raise SelectionFormatError("ambiguous CSV columns: cannot mix cohort and cohorts")
+    required = (
+        _COMPACT_CAMPAIGN_CSV_FIELDS
+        if "start" in fields or "end" in fields
+        else _REQUIRED_CSV_FIELDS
+    )
+    _require_csv_columns(fieldnames, required)
+    return compile_selection(
+        normalized for row in rows for normalized in _campaign_selection_csv_rows(row)
+    )
 
 
 def _compile_json_selection(raw: str) -> SelectionPlan:
@@ -137,13 +142,102 @@ def _compile_json_selection(raw: str) -> SelectionPlan:
     return plan
 
 
+_COMPACT_CAMPAIGN_CSV_FIELDS = (
+    "selection_id",
+    "icao24",
+    "callsign",
+    "start",
+    "end",
+    "cohorts",
+    "utc_days",
+)
+_HISTORICAL_CSV_FIELDS = (
+    "selection_id",
+    "icao24",
+    "callsign",
+    "start",
+    "end",
+    "cohort",
+)
+_RICH_HISTORICAL_CSV_FIELDS = (
+    "selection_id",
+    "icao24",
+    "callsign",
+    "firstseen",
+    "lastseen",
+    "msn",
+    "split",
+    "cohort",
+)
+
+
+def _read_selection_csv(
+    raw: str,
+) -> tuple[tuple[str, ...], tuple[dict[str, str | None], ...]]:
+    reader = csv.DictReader(StringIO(raw), strict=True)
+    try:
+        fieldnames = reader.fieldnames
+        if fieldnames is None:
+            raise SelectionFormatError("missing CSV header")
+        rows = tuple(dict(row) for row in reader)
+    except csv.Error as exc:
+        line_number = reader.line_num + 1
+        raise SelectionFormatError(f"CSV syntax error on line {line_number}: {exc}") from exc
+    return tuple(fieldnames), rows
+
+
+def _require_csv_columns(fieldnames: tuple[str, ...], required: tuple[str, ...]) -> None:
+    missing = [field for field in required if field not in fieldnames]
+    if missing:
+        columns = ", ".join(missing)
+        raise SelectionFormatError(f"missing required CSV columns: {columns}")
+
+
+def _normalize_csv_identity(row: Mapping[str, str | None]) -> dict[str, object]:
+    normalized: dict[str, object] = dict(row)
+    if "start" in row or "end" in row:
+        normalized["firstseen"] = row.get("start") or ""
+        normalized["lastseen"] = row.get("end") or ""
+        normalized.setdefault("msn", "")
+        normalized.setdefault("split", "")
+        normalized.pop("start", None)
+        normalized.pop("end", None)
+    return normalized
+
+
+def _historical_selection_csv_row(row: Mapping[str, str | None]) -> dict[str, object]:
+    normalized = _normalize_csv_identity(row)
+    firstseen = int(row.get("firstseen") or row.get("start") or "")
+    lastseen = int(row.get("lastseen") or row.get("end") or "")
+    normalized["utc_days"] = utc_days_for_interval(firstseen, lastseen)
+    return normalized
+
+
+def _compile_selection_source_csv(raw: str) -> SelectionPlan:
+    fieldnames, rows = _read_selection_csv(raw)
+    fields = set(fieldnames)
+    if "cohort" in fields and "cohorts" in fields:
+        raise SelectionFormatError("ambiguous CSV columns: cannot mix cohort and cohorts")
+    if "cohort" in fields:
+        required = (
+            _HISTORICAL_CSV_FIELDS
+            if "start" in fields or "end" in fields
+            else _RICH_HISTORICAL_CSV_FIELDS
+        )
+        _require_csv_columns(fieldnames, required)
+        return compile_selection(_historical_selection_csv_row(row) for row in rows)
+    if "cohorts" in fields:
+        return compile_selection_csv(raw)
+    raise SelectionFormatError("CSV header must contain exactly one of cohort or cohorts")
+
+
 def load_selection_file(path: Path) -> SelectionSource:
     """Load a structured selection by suffix or preserve a legacy opaque source."""
     raw = path.read_text()
     plan: SelectionPlan | None
     match path.suffix.lower():
         case ".csv":
-            plan = compile_selection_csv(raw)
+            plan = _compile_selection_source_csv(raw)
         case ".json":
             plan = _compile_json_selection(raw)
         case _:
