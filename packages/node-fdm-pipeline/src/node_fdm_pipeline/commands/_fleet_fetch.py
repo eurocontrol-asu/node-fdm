@@ -271,24 +271,6 @@ def fetch_action(error: BaseException) -> str:
     return classify_trino_failure(error).kind
 
 
-def _is_retryable(exc: Exception) -> bool:
-    """Is this a capacity refusal — worth retrying the *same* query later?
-
-    Checked **after** :func:`_is_too_large`, and the order is load-bearing. Trino
-    reports a query that ran past its time budget as
-    ``INSUFFICIENT_RESOURCES / EXCEEDED_TIME_LIMIT``: the type says "capacity",
-    the name says "too big". Matching on the type first would retry an identical
-    query that cannot succeed — six times, then fail the date — instead of
-    splitting it. So a size marker disqualifies a refusal from being retryable.
-    """
-    return fetch_action(exc) == "retry_later"
-
-
-def _is_too_large(exc: Exception) -> bool:
-    """Did the cluster refuse this because the request itself was too big?"""
-    return fetch_action(exc) == "split"
-
-
 def _default_backoff_policy() -> BackoffPolicy:
     return BackoffPolicy(
         min_delay_s=QUEUE_BACKOFF_S / 2,
@@ -1196,11 +1178,6 @@ def _campaign_receipts(
             ):
                 receipts[day][kind] = receipt
     return receipts
-
-
-def _campaign_pending_dates(plan: FleetPlan, *, force: bool) -> set[str]:
-    receipts = _campaign_receipts(plan, force=force)
-    return {day for day, day_receipts in receipts.items() if len(day_receipts) != len(_KINDS)}
 
 
 def _receipt_rejections(
