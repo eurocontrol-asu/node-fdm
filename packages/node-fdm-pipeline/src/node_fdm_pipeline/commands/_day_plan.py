@@ -43,8 +43,20 @@ class DayScopeViolation(ValueError):  # noqa: N818
 
 def build_day_plan(selection: SelectionPlan, meta_selection_day: str) -> DayPlan:
     """Materialise the exact cohort, selection, and source-day scope for one day."""
+    flight_days = tuple(
+        (
+            flight,
+            utc_days_for_interval(flight.firstseen, flight.lastseen),
+        )
+        for flight in selection.flights
+    )
+    single_day_starts = tuple(days[0] for _, days in flight_days if len(days) == 1)
+    campaign_start = min(single_day_starts) if single_day_starts else None
     flights = tuple(
-        flight for flight in selection.flights if meta_selection_day in flight.utc_days
+        flight
+        for flight, days in flight_days
+        if (days[0] if campaign_start is None else max(days[0], campaign_start))
+        == meta_selection_day
     )
     ids_by_key: dict[DayPartitionKey, set[str]] = {}
     for flight in flights:

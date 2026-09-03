@@ -52,6 +52,29 @@ def _partition_key(key: DayPartitionKey | tuple[str, str]) -> DayPartitionKey:
     return DayPartitionKey(*key)
 
 
+def _scientific_source_day_union(
+    frame: pl.DataFrame,
+    profile: ScienceProfile,
+    grid_handles: Mapping[str, object] | None,
+) -> pl.DataFrame:
+    if frame.is_empty() or "meta_source_day" not in frame.columns:
+        return _scientific_chain(frame, profile, grid_handles)
+
+    groups = frame.sort(["selection_id", "raw_timestamp"]).partition_by(
+        ["selection_id", "meta_source_day"],
+        maintain_order=True,
+    )
+    scientific_frames: list[pl.DataFrame] = []
+    for group in groups:
+        source_day = cast("object", group.get_column("meta_source_day").item(0))
+        if not isinstance(source_day, str):
+            raise DayScopeViolation(f"source day {source_day!r} is outside the active day plan")
+        day_grid_handles = None if grid_handles is None else {source_day: grid_handles[source_day]}
+        scientific_frames.append(_scientific_chain(group, profile, day_grid_handles))
+
+    return pl.concat(scientific_frames, how="diagonal_relaxed")
+
+
 def _identity_column(frame: pl.DataFrame, target: str, sources: tuple[str, ...]) -> pl.Expr:
     for source in sources:
         if source in frame.columns:
@@ -68,9 +91,14 @@ def _candidate_rows(
     candidate = frame
     if "cohort" in candidate.columns:
         candidate = candidate.filter(pl.col("cohort") == key.cohort)
+    if "meta_selection_day" in candidate.columns:
+        candidate = candidate.filter(pl.col("meta_selection_day") == plan.meta_selection_day)
     if "meta_source_day" in candidate.columns:
         candidate = candidate.filter(pl.col("meta_source_day").is_in(plan.source_days))
-    return candidate
+    return candidate.unique(
+        subset=["selection_id", "raw_timestamp"],
+        keep="first",
+    ).sort(["selection_id", "raw_timestamp"])
 
 
 def _require_candidate_scope(frame: pl.DataFrame, plan: DayPlan) -> None:
@@ -187,6 +215,15 @@ def _with_supplemental_columns(frame: pl.DataFrame) -> pl.DataFrame:
 
 def _with_required_outputs(frame: pl.DataFrame) -> pl.DataFrame:
     outputs: list[pl.Expr] = []
+    for column in (
+        "fdm_flag_gap_position",
+        "fdm_flag_gap_altitude",
+        "fdm_flag_gap_bds40",
+        "fdm_flag_gap_bds50",
+        "fdm_flag_gap_bds",
+    ):
+        if column not in frame.columns:
+            outputs.append(pl.lit(False).alias(column))
     if "fdm_flag_valid" not in frame.columns:
         outputs.append(pl.lit(False).alias("fdm_flag_valid"))
     if "fdm_tas_from_cas_kt" not in frame.columns and "era_tas_kt" in frame.columns:
@@ -243,13 +280,32 @@ def _enrich_with_day_grids(
     if frame.is_empty():
         return frame
 
+    source_days = frame.get_column("meta_source_day")
+    if source_days.null_count():
+        if len(grid_handles) != 1:
+            raise DayScopeViolation("cannot resolve a null source day to one active grid")
+        active_source_day = next(iter(grid_handles))
+        frame = frame.with_columns(pl.col("meta_source_day").fill_null(active_source_day))
+
     enriched_days: list[pl.DataFrame] = []
     for source_day in frame.get_column("meta_source_day").unique().sort().to_list():
         if not isinstance(source_day, str) or source_day not in grid_handles:
             raise DayScopeViolation(f"source day {source_day!r} is outside the active day plan")
         source_frame = frame.filter(pl.col("meta_source_day") == source_day)
+        coordinate_columns = ("raw_lat_deg", "raw_lon_deg", "raw_alt_ft")
+        interpolation_frame = source_frame.with_columns(
+            pl.col(column)
+            .fill_nan(None)
+            .interpolate()
+            .fill_null(strategy="forward")
+            .fill_null(strategy="backward")
+            for column in coordinate_columns
+        )
         interpolator = _grid_interpolator(grid_handles[source_day])
-        enriched_days.append(enrich_era5(source_frame, interpolator))
+        enriched = enrich_era5(interpolation_frame, interpolator)
+        enriched_days.append(
+            enriched.with_columns(source_frame.get_column(column) for column in coordinate_columns)
+        )
     return pl.concat(enriched_days, how="vertical_relaxed")
 
 
@@ -272,12 +328,16 @@ def _scientific_chain(
         return frame
 
     identified = _with_supplemental_columns(_identified_rows(frame))
-    scientific = preprocess_flights(
-        identified,
-        rate_s=4,
-        max_gap_s=60.0,
-        min_duration_s=(_MIN_SCIENCE_DURATION_S if frame.height >= _MIN_FLAG_POINTS else 0),
-        smooth=True,
+    scientific = (
+        identified
+        if identified.height == 1
+        else preprocess_flights(
+            identified,
+            rate_s=4,
+            max_gap_s=60.0,
+            min_duration_s=(_MIN_SCIENCE_DURATION_S if frame.height >= _MIN_FLAG_POINTS else 0),
+            smooth=True,
+        )
     )
     identity_columns = [
         column
@@ -339,7 +399,20 @@ def _scientific_chain(
             _selected_params(profile.profile_id),
         )
     original_order = [column for column in frame.columns if column in scientific.columns]
-    produced_order = [column for column in scientific.columns if column not in frame.columns]
+    produced = [column for column in scientific.columns if column not in frame.columns]
+    priority = (
+        "meta_original_flight_id",
+        "meta_flight_id",
+        "fdm_flag_gap_position",
+        "raw_vz_ftmin",
+        "fdm_flag_gap_altitude",
+        "bds_mcp_alt_sel_ft",
+        "fdm_flag_gap_bds40",
+        "fdm_flag_gap_bds50",
+        "fdm_flag_gap_bds",
+    )
+    produced_order = [column for column in priority if column in produced]
+    produced_order.extend(column for column in produced if column not in priority)
     return scientific.select(*original_order, *produced_order)
 
 
@@ -364,7 +437,7 @@ def assemble_partition(  # noqa: PLR0913
     _require_candidate_scope(frame, plan)
     candidate = _candidate_rows(frame, plan, partition_key)
     selected = candidate.filter(pl.col("selection_id").is_in(authorised_ids))
-    scientific = _scientific_chain(selected, profile, grid_handles)
+    scientific = _scientific_source_day_union(selected, profile, grid_handles)
 
     manifest = profile_manifest(profile)
     try:
@@ -382,7 +455,7 @@ def assemble_partition(  # noqa: PLR0913
             pl.lit(code_version).alias("code_version"),
         )
         .unique(subset=["selection_id", "raw_timestamp"], keep="first")
-        .sort(["selection_id", "meta_source_day", "raw_timestamp"])
+        .sort(["selection_id", "raw_timestamp"])
     )
 
     if assembled.select(PARTITION_IDENTITY_COLUMNS).null_count().row(0) != (0,) * len(
