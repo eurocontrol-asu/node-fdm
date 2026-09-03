@@ -21,11 +21,7 @@ import structlog
 
 from node_fdm_pipeline.commands import _raw_cache
 from node_fdm_pipeline.commands._fleet_plan import _parse_plan_day
-from node_fdm_pipeline.commands._fleet_selection import (
-    SelectionPlan,
-    compile_selection,
-    compile_selection_text,
-)
+from node_fdm_pipeline.commands._fleet_selection import SelectionPlan, load_selection_file
 from node_fdm_pipeline.commands._selection_match import MatchResult, match_selections
 
 if TYPE_CHECKING:
@@ -831,13 +827,8 @@ def join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFrame
 
 
 def _load_identify_selection(config: Path, selection: Path | None) -> SelectionPlan | None:
-    import polars as pl
-
     if selection is not None:
-        plan = compile_selection_text(selection.read_text(encoding="utf-8"))
-        if plan is not None:
-            return plan
-        return compile_selection(pl.read_csv(selection).to_dicts())
+        return load_selection_file(selection).plan
 
     config_path = Path(config)
     variant = config_path.stem.removeprefix("config").lstrip(".")
@@ -845,7 +836,7 @@ def _load_identify_selection(config: Path, selection: Path | None) -> SelectionP
     default_path = config_path.parent / "results" / f"selection_{campaign_name}.csv"
     if not default_path.exists():
         return None
-    return compile_selection(pl.read_csv(default_path).to_dicts())
+    return load_selection_file(default_path).plan
 
 
 def _matchable_rotations(df: pl.DataFrame) -> tuple[dict[str, object], ...]:
