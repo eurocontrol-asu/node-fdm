@@ -27,7 +27,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import TYPE_CHECKING, Literal
 
-from node_fdm_pipeline.commands._fleet_selection import SelectedFlight, SelectionPlan
+from node_fdm_pipeline.commands._fleet_selection import (
+    SelectedFlight,
+    SelectionPlan,
+    load_selection_file,
+)
 
 if TYPE_CHECKING:
     import polars as pl
@@ -122,7 +126,12 @@ def _parse_plan_day(day: pl.Expr) -> pl.Expr:
     return day.str.slice(0, 10).str.to_date("%Y-%m-%d", strict=True)
 
 
-def _read_selection_days(path: Path) -> dict[str, set[str]]:
+def _read_selection_days(path: Path) -> SelectionPlan | None:
+    """Load the canonical selection plan carried by one campaign artifact."""
+    return load_selection_file(path).plan
+
+
+def _read_legacy_selection_days(path: Path) -> dict[str, set[str]]:
     """Read one selection CSV into ``{YYYYMMDD: {icao24}}``.
 
     Mirrors ``_read_flight_plan``'s reading rules on purpose: ``infer_schema=False``
@@ -214,17 +223,25 @@ def build_fleet_plan(
     cohorts: list[Cohort] = []
     owner: dict[str, list[Cohort]] = {}
     dates: dict[str, set[str]] = defaultdict(set)
+    active_selection = selection
+    selection_paths = {selection_path for _, _, selection_path in triples}
+    historical_layout = all(
+        selection_path == config_path.parent / "results" / f"selection_{name}.csv"
+        for name, config_path, selection_path in triples
+    )
+    if active_selection is None and len(selection_paths) == 1 and not historical_layout:
+        active_selection = _read_selection_days(next(iter(selection_paths)))
 
     for name, config_path, selection_path in triples:
         selected_flights: tuple[SelectedFlight, ...] = ()
-        if selection is None:
-            per_day = _read_selection_days(selection_path)
+        if active_selection is None:
+            per_day = _read_legacy_selection_days(selection_path)
             icao = {aircraft for day_set in per_day.values() for aircraft in day_set}
             utc_days = frozenset(per_day)
         else:
             per_day = {}
             selected_flights = tuple(
-                flight for flight in selection.flights if name in flight.cohorts
+                flight for flight in active_selection.flights if name in flight.cohorts
             )
             icao = {flight.icao24 for flight in selected_flights}
             utc_days = frozenset(day for flight in selected_flights for day in flight.utc_days)
@@ -241,7 +258,7 @@ def build_fleet_plan(
         for aircraft in icao:
             owner.setdefault(aircraft, []).append(cohort)
 
-        if selection is None:
+        if active_selection is None:
             for day, day_set in per_day.items():
                 dates[day] |= day_set
         else:
@@ -253,6 +270,8 @@ def build_fleet_plan(
         dates={day: sorted(v) for day, v in sorted(dates.items())},
         owner={aircraft: tuple(owners) for aircraft, owners in owner.items()},
         cohorts=tuple(cohorts),
-        selection=selection,
-        shared_acquisitions=(plan_shared_acquisitions(selection) if selection is not None else ()),
+        selection=active_selection,
+        shared_acquisitions=(
+            plan_shared_acquisitions(active_selection) if active_selection is not None else ()
+        ),
     )
