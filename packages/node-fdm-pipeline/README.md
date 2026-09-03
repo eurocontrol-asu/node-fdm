@@ -52,13 +52,24 @@ fdm download-fleet \
   --profile run/profile.json \
   --lease-path /shared/node-fdm/download-fleet.lease \
   --lease-ttl-s 120 \
+  --lease-wait-budget-s 300 \
+  --lease-poll-interval-s 1 \
   --disk-min-gib 8.5
 ```
 
-The six campaign options are atomic: a partial set exits non-zero and names every missing
-input before creating a lease, constructing the provider, or writing payloads. A complete
-set validates the recorded digests and acquires the shared lease before remote acquisition;
-if another owner holds that lease, the command exits non-zero without publishing payloads.
+The six core campaign options are atomic: a partial set exits non-zero and names every
+missing input before creating a lease, constructing the provider, or writing payloads. A
+complete set validates the recorded digests and acquires the shared lease before remote
+acquisition. If another live owner holds it, the command polls until the lease is released
+or `--lease-wait-budget-s` is exhausted; only then does it exit with `LeaseUnavailable`,
+naming the holder. The exclusive lease record and heartbeat still guarantee one OpenSky
+boundary at a time across processes and machines.
+
+For auditable record/replay runs, add `--recorded-source`, `--acquisition-journal`, and
+`--acquisition-receipt-dir`. The recorded source replaces the live OpenSky provider, while
+the shared journal records wait attempts with their holder plus boundary-entry and
+lease-release observations. See [Fleet lease coordination](docs/reference/fleet-lease.md)
+for the complete contract.
 
 A successful zero-row response is persisted as an explicit absence receipt for the exact
 (day, acquisition kind, aircraft set) combination. Later consumers treat every aircraft
@@ -130,7 +141,12 @@ deployment-owned model:
 fleet_run:
   lease_path: ~/shared/trino.lease
   lease_ttl_s: 120
+  lease_wait_budget_s: 300.0
+  lease_poll_interval_s: 1.0
   disk_min_gib: 8.5
+  recorded_source: null
+  acquisition_journal: null
+  acquisition_receipt_dir: null
   retry_min_delay_s: 10.0
   retry_max_delay_s: 960.0
   retry_max_retries: 6
@@ -140,8 +156,10 @@ fleet_run:
 
 When present, the three lease and disk values are required, `lease_ttl_s` and
 `disk_min_gib` must be strictly positive, and `lease_path` is expanded and resolved to
-an absolute path. The retry and bisection values shown above are optional defaults:
-queue saturation retries the same batch with bounded exponential jitter, while time or
+an absolute path. The lease wait budget defaults to immediate refusal (`0.0`), while the
+poll interval defaults to `0.1` seconds. The recorded source and acquisition-journal paths
+are optional. The retry and bisection values shown above are optional defaults: queue
+saturation retries the same batch with bounded exponential jitter, while time or
 memory limits split the batch without resubmitting its parent. Splitting stops at
 `bisection_floor`; every attempt, delay, branch, and terminal outcome is appended to the
 acquisition journal.

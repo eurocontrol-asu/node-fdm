@@ -383,7 +383,12 @@ class FleetRunConfig(BaseModel, frozen=True):
 
     lease_path: Path
     lease_ttl_s: int = Field(gt=0)
+    lease_wait_budget_s: float = Field(default=0.0, ge=0.0)
+    lease_poll_interval_s: float = Field(default=0.1, gt=0.0)
     disk_min_gib: float = Field(gt=0)
+    recorded_source: Path | None = None
+    acquisition_journal: Path | None = None
+    acquisition_receipt_dir: Path | None = None
     retry_min_delay_s: float = Field(default=10.0, ge=0.0)
     retry_max_delay_s: float = Field(default=960.0, gt=0.0)
     retry_max_retries: int = Field(default=6, ge=0)

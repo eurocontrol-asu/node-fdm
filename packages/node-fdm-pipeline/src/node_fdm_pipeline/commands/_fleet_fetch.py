@@ -32,9 +32,10 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
 
 import structlog
+from pydantic import BaseModel, Field, JsonValue
 
 from node_fdm_pipeline.commands import _cache_retention, _raw_cache
 from node_fdm_pipeline.commands._fetch_backoff import BackoffPolicy, next_delay, retry_policy_for
@@ -154,14 +155,114 @@ _opensky_lock = threading.Lock()
 _opensky: Any = None
 
 
-def _get_opensky() -> Any:
+class _RecordedResponses(BaseModel, frozen=True):
+    history: list[dict[str, JsonValue]] | None
+    extended: list[dict[str, JsonValue]] | None
+    flightlist: list[dict[str, JsonValue]] | None
+
+
+class _RecordedSource(BaseModel, frozen=True):
+    delay_s: float = Field(default=0.0, ge=0.0)
+    responses: _RecordedResponses
+
+
+class _OpenSkyProvider(Protocol):
+    def history(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        icao24: list[str],
+        cached: bool,
+    ) -> object | None: ...
+
+    def extended(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        icao24: list[str],
+        cached: bool,
+    ) -> object | None: ...
+
+    def flightlist(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        icao24: list[str],
+        cached: bool,
+    ) -> object | None: ...
+
+
+class _RecordedOpenSky:
+    def __init__(self, source_path: Path) -> None:
+        self._source = _RecordedSource.model_validate_json(source_path.read_bytes())
+
+    def _fetch(
+        self,
+        kind: Literal["history", "extended", "flightlist"],
+        _start: datetime,
+        _end: datetime,
+        *,
+        icao24: list[str],
+        cached: bool,
+    ) -> object | None:
+        del icao24, cached
+        if self._source.delay_s:
+            time.sleep(self._source.delay_s)
+        match kind:
+            case "history":
+                rows = self._source.responses.history
+            case "extended":
+                rows = self._source.responses.extended
+            case "flightlist":
+                rows = self._source.responses.flightlist
+        if rows is None:
+            return None
+        import polars as pl
+
+        return pl.DataFrame(rows)
+
+    def history(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        icao24: list[str],
+        cached: bool,
+    ) -> object | None:
+        return self._fetch("history", start, end, icao24=icao24, cached=cached)
+
+    def extended(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        icao24: list[str],
+        cached: bool,
+    ) -> object | None:
+        return self._fetch("extended", start, end, icao24=icao24, cached=cached)
+
+    def flightlist(
+        self,
+        start: datetime,
+        end: datetime,
+        *,
+        icao24: list[str],
+        cached: bool,
+    ) -> object | None:
+        return self._fetch("flightlist", start, end, icao24=icao24, cached=cached)
+
+
+def _get_opensky() -> _OpenSkyProvider:
     global _opensky
     with _opensky_lock:
         if _opensky is None:
             from traffic.data import opensky
 
             _opensky = opensky
-    return _opensky
+    return cast("_OpenSkyProvider", _opensky)
 
 
 def fetch_action(error: BaseException) -> str:
@@ -751,7 +852,11 @@ def fetch_one_date(
     aircraft = plan.dates[date_str]
     start = datetime.strptime(date_str, "%Y%m%d")
     end = start + timedelta(hours=24)
-    api = _get_opensky()
+    api: _OpenSkyProvider
+    if fleet_config is not None and fleet_config.recorded_source is not None:
+        api = _RecordedOpenSky(fleet_config.recorded_source)
+    else:
+        api = _get_opensky()
     written = requests = 0
     empty: list[str] = []
 
@@ -1000,13 +1105,22 @@ def _run_dates(context: _DownloadContext, run_key: str) -> list[DateOutcome]:
             acquisition_key=run_key
             if context.journal_path is not None and context.receipt_dir is not None
             else None,
+            wait_budget_s=context.fleet_config.lease_wait_budget_s,
+            poll_interval_s=context.fleet_config.lease_poll_interval_s,
+            record_boundary_events=context.fleet_config.recorded_source is not None,
         )
         if context.preflight is not None and context.fleet_config is not None
         else nullcontext()
     )
     with acquisition:
         if pending_dates:
-            _get_opensky()
+            if (
+                context.fleet_config is not None
+                and context.fleet_config.recorded_source is not None
+            ):
+                _RecordedOpenSky(context.fleet_config.recorded_source)
+            else:
+                _get_opensky()
         for done, date_str in enumerate(context.plan.dates, start=1):
             if date_str in pending_dates:
                 outcome = context.fetch_date(context.plan, date_str, force=context.force)

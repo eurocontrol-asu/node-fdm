@@ -553,6 +553,29 @@ def download_fleet(
         float | None,
         cyclopts.Parameter(name="--disk-min-gib", help="Minimum free disk space in GiB"),
     ] = None,
+    lease_wait_budget_s: Annotated[
+        float | None,
+        cyclopts.Parameter(name="--lease-wait-budget-s", help="Maximum shared lease wait"),
+    ] = None,
+    lease_poll_interval_s: Annotated[
+        float | None,
+        cyclopts.Parameter(name="--lease-poll-interval-s", help="Shared lease poll interval"),
+    ] = None,
+    recorded_source: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--recorded-source", help="Recorded OpenSky response source"),
+    ] = None,
+    acquisition_journal: Annotated[
+        Path | None,
+        cyclopts.Parameter(name="--acquisition-journal", help="Shared acquisition journal"),
+    ] = None,
+    acquisition_receipt_dir: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--acquisition-receipt-dir",
+            help="Shared acquisition journal receipts",
+        ),
+    ] = None,
 ) -> None:
     """Download every cohort at once, mutualised per date and strictly sequential.
 
@@ -637,7 +660,16 @@ def download_fleet(
             fleet_config = FleetRunConfig(
                 lease_path=acquisition_preflight.lease_path,
                 lease_ttl_s=lease_ttl_s,
+                lease_wait_budget_s=(
+                    lease_wait_budget_s if lease_wait_budget_s is not None else 0.0
+                ),
+                lease_poll_interval_s=(
+                    lease_poll_interval_s if lease_poll_interval_s is not None else 0.1
+                ),
                 disk_min_gib=disk_min_gib,
+                recorded_source=recorded_source,
+                acquisition_journal=acquisition_journal,
+                acquisition_receipt_dir=acquisition_receipt_dir,
             )
             assert (
                 decision.resume_digest is not None
@@ -670,6 +702,8 @@ def download_fleet(
             selection_digest=campaign_selection,
             resolved_config=campaign_resolved_config,
             profile=campaign_profile,
+            journal_path=fleet_config.acquisition_journal if fleet_config is not None else None,
+            receipt_dir=fleet_config.acquisition_receipt_dir if fleet_config is not None else None,
         )
     except (
         CampaignGuardIncomplete,
@@ -677,7 +711,7 @@ def download_fleet(
         LeaseUnavailable,
         ResumeDigestMismatch,
     ) as exc:
-        print(str(exc), file=sys.stderr)  # noqa: T201
+        print(f"{type(exc).__name__}: {exc}", file=sys.stderr)  # noqa: T201
         raise SystemExit(1) from exc
 
     failed = [outcome for outcome in outcomes if outcome.error]

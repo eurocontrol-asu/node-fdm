@@ -20,11 +20,42 @@ __all__ = [
 
 
 class LeaseUnavailable(RuntimeError):  # noqa: N818
+    record: LeaseRecord | None = None
     """Raised when another owner holds a live lease."""
 
 
 class LeaseNotOwned(RuntimeError):  # noqa: N818
     """Raised when a caller no longer owns the stored lease."""
+
+
+class LeaseWaitDecision(BaseModel):
+    """Pure decision describing one bounded lease wait attempt."""
+
+    model_config = ConfigDict(frozen=True)
+
+    should_wait: bool
+    delay_s: float
+    holder: str
+
+
+def decide_lease_wait(
+    record: LeaseRecord,
+    *,
+    now: float,
+    elapsed_s: float,
+    wait_budget_s: float,
+    poll_interval_s: float,
+) -> LeaseWaitDecision:
+    """Decide whether and how long to wait for a live lease holder."""
+    remaining_budget_s = max(0.0, wait_budget_s - elapsed_s)
+    remaining_lease_s = max(0.0, record.expires_at - now)
+    should_wait = remaining_budget_s > 0.0 and remaining_lease_s > 0.0
+    delay_s = min(poll_interval_s, remaining_budget_s, remaining_lease_s) if should_wait else 0.0
+    return LeaseWaitDecision(
+        should_wait=should_wait,
+        delay_s=delay_s,
+        holder=record.owner,
+    )
 
 
 class LeaseConfigError(ValueError):
@@ -112,7 +143,9 @@ def acquire_lease(
                 raise LeaseUnavailable("Lease changed during acquisition") from exc
         else:
             if not current.is_expired(now):
-                raise LeaseUnavailable(f"Lease is held by {current.owner}") from None
+                unavailable = LeaseUnavailable(f"Lease is held by {current.owner}")
+                unavailable.record = current
+                raise unavailable from None
             try:
                 lease_path.unlink()
                 _create_record_exclusively(lease_path, record)

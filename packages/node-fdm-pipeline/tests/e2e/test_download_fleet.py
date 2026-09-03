@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
+import json
 import os
 import subprocess
+import time
+from dataclasses import dataclass
 from pathlib import Path
+from typing import TypedDict, cast
 
 import pytest
 
@@ -124,3 +128,266 @@ def test_download_fleet_cli_reports_mutated_campaign_identity_without_provider_c
     assert rejected.returncode != 0
     assert "mismatch" in f"{rejected.stdout}\n{rejected.stderr}".lower()
     assert counter_path.read_text(encoding="utf-8") == "1"
+
+
+def _recorded_source(tmp_path: Path, *, delay_s: float) -> Path:
+    source = tmp_path / "recorded-opensky.json"
+    source.write_text(
+        json.dumps(
+            {
+                "delay_s": delay_s,
+                "responses": {
+                    "history": None,
+                    "extended": None,
+                    "flightlist": None,
+                },
+            }
+        ),
+        encoding="utf-8",
+    )
+    return source
+
+
+@dataclass(frozen=True)
+class _CampaignOptions:
+    name: str
+    lease_path: Path
+    recorded_source: Path
+    journal_path: Path
+    receipt_dir: Path
+    wait_budget_s: float
+    poll_interval_s: float
+
+
+def _campaign_command(tmp_path: Path, options: _CampaignOptions) -> list[str]:
+    campaign_dir = tmp_path / options.name
+    fleet_dir = _single_date_recorded_fleet(campaign_dir)
+    selection = campaign_dir / "selection.txt"
+    resolved_config = campaign_dir / "resolved-config.json"
+    profile = campaign_dir / "profile.json"
+    selection.write_text(f"recorded-offline-selection-{options.name}", encoding="utf-8")
+    resolved_config.write_text('{"workers": 1}', encoding="utf-8")
+    profile.write_text(json.dumps({"campaign": options.name}), encoding="utf-8")
+    return [
+        "fdm",
+        "download-fleet",
+        "--fleet-dir",
+        str(fleet_dir),
+        "--workers",
+        "1",
+        "--selection",
+        str(selection),
+        "--resolved-config",
+        str(resolved_config),
+        "--profile",
+        str(profile),
+        "--lease-path",
+        str(options.lease_path),
+        "--lease-ttl-s",
+        "5",
+        "--lease-wait-budget-s",
+        str(options.wait_budget_s),
+        "--lease-poll-interval-s",
+        str(options.poll_interval_s),
+        "--disk-min-gib",
+        "0.001",
+        "--recorded-source",
+        str(options.recorded_source),
+        "--acquisition-journal",
+        str(options.journal_path),
+        "--acquisition-receipt-dir",
+        str(options.receipt_dir),
+    ]
+
+
+class _JournalEvent(TypedDict):
+    state: str
+    timestamp: str
+    receipt: dict[str, object]
+
+
+def _journal_events(journal_path: Path) -> list[_JournalEvent]:
+    events: list[_JournalEvent] = []
+    for line in journal_path.read_text(encoding="utf-8").splitlines():
+        event = cast("dict[str, object]", json.loads(line))
+        receipt_path = Path(str(event["receipt"]))
+        receipt = cast(
+            "dict[str, object]",
+            json.loads(receipt_path.read_text(encoding="utf-8")),
+        )
+        events.append(
+            {
+                "state": str(event["state"]),
+                "timestamp": str(event["timestamp"]),
+                "receipt": receipt,
+            }
+        )
+    return events
+
+
+def _wait_for_state(journal_path: Path, state: str, *, timeout_s: float = 5.0) -> None:
+    deadline = time.monotonic() + timeout_s
+    while time.monotonic() < deadline:
+        if journal_path.exists() and any(
+            event["state"] == state for event in _journal_events(journal_path)
+        ):
+            return
+        time.sleep(0.01)
+    raise AssertionError(f"journal never reached {state!r}")
+
+
+def _run_two_campaigns(tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], ...]:
+    lease_path = tmp_path / "shared" / "download-fleet.lease"
+    lease_path.parent.mkdir()
+    journal_path = tmp_path / "shared" / "acquisition.jsonl"
+    receipt_dir = tmp_path / "shared" / "receipts"
+    recorded_source = _recorded_source(tmp_path, delay_s=0.4)
+    first_command = _campaign_command(
+        tmp_path,
+        _CampaignOptions(
+            name="campaign-a",
+            lease_path=lease_path,
+            recorded_source=recorded_source,
+            journal_path=journal_path,
+            receipt_dir=receipt_dir,
+            wait_budget_s=2.0,
+            poll_interval_s=0.02,
+        ),
+    )
+    second_command = _campaign_command(
+        tmp_path,
+        _CampaignOptions(
+            name="campaign-b",
+            lease_path=lease_path,
+            recorded_source=recorded_source,
+            journal_path=journal_path,
+            receipt_dir=receipt_dir,
+            wait_budget_s=2.0,
+            poll_interval_s=0.02,
+        ),
+    )
+
+    first = subprocess.Popen(
+        first_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    _wait_for_state(journal_path, "boundary_entered")
+    second = subprocess.Popen(
+        second_command,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+    )
+    first_stdout, first_stderr = first.communicate(timeout=10)
+    second_stdout, second_stderr = second.communicate(timeout=10)
+    return (
+        subprocess.CompletedProcess(
+            first_command,
+            first.returncode,
+            first_stdout,
+            first_stderr,
+        ),
+        subprocess.CompletedProcess(
+            second_command,
+            second.returncode,
+            second_stdout,
+            second_stderr,
+        ),
+    )
+
+
+@pytest.mark.e2e
+def test_two_concurrent_campaign_processes_both_complete(tmp_path: Path) -> None:
+    """AC1: a live shared lease serialises two campaign CLI processes without rejecting either."""
+
+    first, second = _run_two_campaigns(tmp_path)
+
+    assert first.returncode == 0, first.stderr
+    assert second.returncode == 0, second.stderr
+
+
+@pytest.mark.e2e
+def test_concurrent_campaign_boundary_sections_never_overlap(tmp_path: Path) -> None:
+    """AC2: the shared journal proves that concurrent CLI boundaries never overlap."""
+
+    first, second = _run_two_campaigns(tmp_path)
+    assert first.returncode == second.returncode == 0
+    journal_path = tmp_path / "shared" / "acquisition.jsonl"
+    events = sorted(
+        _journal_events(journal_path),
+        key=lambda event: str(event["timestamp"]),
+    )
+    boundary_events = [
+        event for event in events if event["state"] in {"boundary_entered", "lease_released"}
+    ]
+
+    active = 0
+    peak = 0
+    for event in boundary_events:
+        active += 1 if event["state"] == "boundary_entered" else -1
+        peak = max(peak, active)
+
+    assert [event["state"] for event in boundary_events] == [
+        "boundary_entered",
+        "lease_released",
+        "boundary_entered",
+        "lease_released",
+    ]
+    assert peak == 1
+    assert active == 0
+    assert str(boundary_events[1]["timestamp"]) < str(boundary_events[2]["timestamp"])
+
+
+@pytest.mark.e2e
+def test_foreign_live_lease_waits_for_budget_before_giving_up(tmp_path: Path) -> None:
+    """AC3: a foreign live holder is journalled and rejected only after the wait budget."""
+
+    lease_path = tmp_path / "shared" / "download-fleet.lease"
+    lease_path.parent.mkdir()
+    now = time.time()
+    lease_path.write_text(
+        json.dumps(
+            {
+                "owner": "foreign-owner",
+                "acquired_at": now,
+                "heartbeat_at": now,
+                "expires_at": now + 60.0,
+            }
+        ),
+        encoding="utf-8",
+    )
+    journal_path = tmp_path / "shared" / "acquisition.jsonl"
+    receipt_dir = tmp_path / "shared" / "receipts"
+    command = _campaign_command(
+        tmp_path,
+        _CampaignOptions(
+            name="waiting-campaign",
+            lease_path=lease_path,
+            recorded_source=_recorded_source(tmp_path, delay_s=0.0),
+            journal_path=journal_path,
+            receipt_dir=receipt_dir,
+            wait_budget_s=0.25,
+            poll_interval_s=0.05,
+        ),
+    )
+
+    started = time.monotonic()
+    completed = subprocess.run(
+        command,
+        check=False,
+        capture_output=True,
+        text=True,
+        timeout=5,
+    )
+    elapsed_s = time.monotonic() - started
+
+    events = _journal_events(journal_path)
+    waits = [event for event in events if event["state"] == "waiting"]
+    assert elapsed_s >= 0.25
+    assert completed.returncode != 0
+    assert "LeaseUnavailable" in completed.stderr
+    assert "foreign-owner" in completed.stderr
+    assert waits
+    assert all(event["receipt"]["holder"] == "foreign-owner" for event in waits)

@@ -43,13 +43,21 @@ class RunState(StrEnum):
     CLEANUP_FAILED = "cleanup_failed"
 
 
+class AcquisitionState(StrEnum):
+    """Auditable coordination observations outside the durable run lifecycle."""
+
+    WAITING = "waiting"
+    BOUNDARY_ENTERED = "boundary_entered"
+    LEASE_RELEASED = "lease_released"
+
+
 class JournalEvent(BaseModel):
     """One durable state transition and the receipt that attests it."""
 
     model_config = ConfigDict(frozen=True)
 
     acquisition_key: str
-    state: RunState
+    state: RunState | AcquisitionState
     timestamp: datetime
     receipt: dict[str, JsonValue]
 

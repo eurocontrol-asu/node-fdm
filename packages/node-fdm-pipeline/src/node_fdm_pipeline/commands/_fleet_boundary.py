@@ -19,7 +19,10 @@ from node_fdm_pipeline.commands._fleet_digest import (
     record_campaign_identity,
 )
 from node_fdm_pipeline.commands._trino_lease import (
+    Lease,
+    LeaseUnavailable,
     acquire_lease,
+    decide_lease_wait,
     require_shared_lease_path,
 )
 from node_fdm_pipeline.config import FleetRunConfig
@@ -172,6 +175,17 @@ class _AcquisitionJournal:
     def record_processing(self) -> None:
         self._record("processing", {"owner": self._owner})
 
+    def record_waiting(self, holder: str) -> None:
+        self._record("waiting", {"owner": self._owner, "holder": holder})
+
+    def record_boundary_entered(self, *, enabled: bool) -> None:
+        if enabled:
+            self._record("boundary_entered", {"owner": self._owner})
+
+    def record_lease_released(self, *, enabled: bool) -> None:
+        if enabled:
+            self._record("lease_released", {"owner": self._owner})
+
     def record_interrupted(self) -> None:
         self._record("interrupted", {"exception_class": "KeyboardInterrupt"})
 
@@ -196,15 +210,21 @@ class _AcquisitionJournal:
         from datetime import UTC, datetime
 
         from node_fdm_pipeline.commands._fleet_journal import (
+            AcquisitionState,
             JournalEvent,
             RunState,
             record_state,
         )
 
+        lifecycle_state: RunState | AcquisitionState
+        try:
+            lifecycle_state = RunState(state)
+        except ValueError:
+            lifecycle_state = AcquisitionState(state)
         event = JournalEvent.model_validate(
             {
                 "acquisition_key": self._acquisition_key,
-                "state": RunState(state),
+                "state": lifecycle_state,
                 "timestamp": datetime.now(UTC),
                 "receipt": receipt,
             }
@@ -212,8 +232,38 @@ class _AcquisitionJournal:
         record_state(self._journal_path, self._receipt_dir, event)
 
 
+def _acquire_with_wait(  # noqa: PLR0913
+    lease_path: Path,
+    *,
+    owner: str,
+    ttl_s: float,
+    wait_budget_s: float,
+    poll_interval_s: float,
+    journal: _AcquisitionJournal,
+) -> Lease:
+    started = time.monotonic()
+    while True:
+        now = time.time()
+        try:
+            return acquire_lease(lease_path, owner=owner, ttl_s=ttl_s, now=now)
+        except LeaseUnavailable as exc:
+            if exc.record is None:
+                raise
+            decision = decide_lease_wait(
+                exc.record,
+                now=now,
+                elapsed_s=time.monotonic() - started,
+                wait_budget_s=wait_budget_s,
+                poll_interval_s=poll_interval_s,
+            )
+            journal.record_waiting(decision.holder)
+            if not decision.should_wait:
+                raise
+            time.sleep(decision.delay_s)
+
+
 @contextmanager
-def acquisition_section(  # noqa: PLR0913
+def acquisition_section(  # noqa: PLR0913, PLR0915
     lease_path: Path,
     *,
     owner: str,
@@ -221,10 +271,17 @@ def acquisition_section(  # noqa: PLR0913
     journal_path: Path | None = None,
     receipt_dir: Path | None = None,
     acquisition_key: str | None = None,
+    wait_budget_s: float = 0.0,
+    poll_interval_s: float = 0.1,
+    record_boundary_events: bool = False,
 ) -> Iterator[None]:
     """Hold an exclusive shared lease for the complete acquisition section."""
     if ttl_s <= 0:
         raise ValueError("Lease TTL must be positive")
+    if wait_budget_s < 0:
+        raise ValueError("Lease wait budget must not be negative")
+    if poll_interval_s <= 0:
+        raise ValueError("Lease poll interval must be positive")
 
     journal = _AcquisitionJournal.from_options(
         journal_path,
@@ -233,13 +290,16 @@ def acquisition_section(  # noqa: PLR0913
         owner,
     )
 
-    lease = acquire_lease(
+    lease = _acquire_with_wait(
         lease_path,
         owner=owner,
         ttl_s=ttl_s,
-        now=time.time(),
+        wait_budget_s=wait_budget_s,
+        poll_interval_s=poll_interval_s,
+        journal=journal,
     )
     journal.record_acquiring()
+    journal.record_boundary_entered(enabled=record_boundary_events)
     stop_heartbeat = threading.Event()
     heartbeat_errors: list[Exception] = []
 
@@ -280,6 +340,8 @@ def acquisition_section(  # noqa: PLR0913
             lease.release()
         except Exception as exc:  # noqa: BLE001
             release_error = exc
+        else:
+            journal.record_lease_released(enabled=record_boundary_events)
         if not body_failed:
             if release_error is not None:
                 journal.record_cleanup_failed(release_error)
