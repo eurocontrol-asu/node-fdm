@@ -27,7 +27,7 @@ A bounded campaign invocation can add these options to the normal six campaign i
 ```bash
 fdm download-fleet \
   --fleet-dir fleet \
-  --selection run/selection.digest \
+  --selection run/selection.json \
   --resolved-config run/resolved-config.json \
   --profile run/profile.json \
   --lease-path /shared/node-fdm/download-fleet.lease \
@@ -39,6 +39,47 @@ fdm download-fleet \
 
 If the budget expires, the command exits non-zero and writes an error such as
 `LeaseUnavailable: Lease is held by campaign-a` to standard error.
+
+## Campaign selection
+
+For campaign downloads, `--selection` may contain a JSON array of source rows:
+
+```json
+[
+  {
+    "icao24": "a00001",
+    "callsign": "ALPHA1",
+    "firstseen": 1577835000,
+    "lastseen": 1577838600,
+    "msn": "M1",
+    "split": "train",
+    "cohort": "C1",
+    "selection_id": "sel-alpha",
+    "utc_days": ["20191231", "20200101"]
+  },
+  {
+    "icao24": "a00001",
+    "callsign": "ALPHA1",
+    "firstseen": 1577835000,
+    "lastseen": 1577838600,
+    "msn": "M1",
+    "split": "train",
+    "cohort": "C2",
+    "selection_id": "sel-alpha",
+    "utc_days": ["20191231", "20200101"]
+  }
+]
+```
+
+Rows with the same flight identity are compiled into one acquisition shared by their
+cohorts. Explicit `utc_days` values are authoritative; when omitted, they are derived
+from `firstseen` and `lastseen`. The resulting plan ignores aircraft and dates
+present only in the per-cohort selection CSV files, while the exact JSON text remains the
+resume-digest input.
+
+Each selected day requests `history`, `extended`, and `flightlist` in
+that order. One staging artifact is published per (UTC day, kind), with all owning cohorts
+recorded in its consumer ledger.
 
 ## Acquisition journal
 

@@ -703,6 +703,48 @@ def _staged_payload_digest(
     return digest.hexdigest()
 
 
+def _shared_acquisition_owners(
+    plan: FleetPlan,
+    date_str: str,
+    kind: _raw_cache.Kind,
+) -> tuple[str, ...]:
+    for acquisition in plan.shared_acquisitions:
+        if acquisition.utc_day == date_str and acquisition.kind == kind:
+            return acquisition.owners
+    return ()
+
+
+def _write_shared_flightlist(
+    collected: dict[str, tuple[Cohort, list[object]]],
+    date_str: str,
+    plan: FleetPlan,
+) -> int:
+    import polars as pl
+
+    frames: list[pl.DataFrame] = []
+    for _cohort, cohort_frames in collected.values():
+        for frame in cohort_frames:
+            if not isinstance(frame, pl.DataFrame):
+                raise TypeError("collected flightlist frame must be a Polars DataFrame")
+            frames.append(frame)
+    if not frames:
+        return 0
+    merged = frames[0] if len(frames) == 1 else pl.concat(frames, how="vertical_relaxed")
+    merged = merged.unique(maintain_order=True)
+    representative = next(iter(collected.values()))[0]
+    _raw_cache.write_atomic(
+        _raw_cache.cache_path(representative.cfg, "flightlist", date_str, "_"),
+        merged,
+    )
+    _raw_cache.write_consumer_ledger(
+        representative.cfg,
+        "flightlist",
+        date_str,
+        _shared_acquisition_owners(plan, date_str, "flightlist"),
+    )
+    return 1
+
+
 def _fetch_kind(context: _KindFetch) -> _KindCounters:
     wanted = _missing_by_owner(
         context.plan,
@@ -747,7 +789,22 @@ def _fetch_kind(context: _KindFetch) -> _KindCounters:
             staged_icao24s.extend(chunk)
 
     if flightlist_rows:
-        counters.written += _write_flightlist(flightlist_rows, context.date)
+        if context.plan.selection is None:
+            counters.written += _write_flightlist(flightlist_rows, context.date)
+        else:
+            counters.written += _write_shared_flightlist(
+                flightlist_rows,
+                context.date,
+                context.plan,
+            )
+    if counters.written and context.plan.selection is not None and context.kind != "flightlist":
+        representative = next(iter(wanted.values()))[0]
+        _raw_cache.write_consumer_ledger(
+            representative.cfg,
+            context.kind,
+            context.date,
+            _shared_acquisition_owners(context.plan, context.date, context.kind),
+        )
     if terminal_error is not None:
         terminal_error.written = counters.written
         terminal_error.requests = counters.requests

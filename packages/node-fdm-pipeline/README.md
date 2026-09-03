@@ -47,7 +47,7 @@ Campaign mode is selected by supplying the complete coordinated-run input set:
 ```bash
 fdm download-fleet \
   --fleet-dir fleet \
-  --selection run/selection.digest \
+  --selection run/selection.json \
   --resolved-config run/resolved-config.json \
   --profile run/profile.json \
   --lease-path /shared/node-fdm/download-fleet.lease \
@@ -57,6 +57,13 @@ fdm download-fleet \
   --disk-min-gib 8.5
 ```
 
+For a structured campaign, `--selection` is a JSON array of selection rows. Repeating
+the same flight identity with different `cohort` values assigns all consumers to one
+mutualised acquisition; explicit `utc_days` values define the dates to request. The
+campaign plan uses only these compiled identities and dates, never entries found solely in
+the legacy per-cohort CSV files. The exact selection file content remains part of the resume
+digest.
+
 The six core campaign options are atomic: a partial set exits non-zero and names every
 missing input before creating a lease, constructing the provider, or writing payloads. A
 complete set validates the recorded digests and acquires the shared lease before remote
@@ -64,6 +71,10 @@ acquisition. If another live owner holds it, the command polls until the lease i
 or `--lease-wait-budget-s` is exhausted; only then does it exit with `LeaseUnavailable`,
 naming the holder. The exclusive lease record and heartbeat still guarantee one OpenSky
 boundary at a time across processes and machines.
+
+For every selected UTC day, acquisition runs in `history`, `extended`, then
+`flightlist` order. A structured campaign publishes one shared staging artifact per
+(day, kind) pair and records every owning cohort in its consumer ledger.
 
 For auditable record/replay runs, add `--recorded-source`, `--acquisition-journal`, and
 `--acquisition-receipt-dir`. The recorded source replaces the live OpenSky provider, while

@@ -6,6 +6,7 @@ import hashlib
 import json
 from collections.abc import Iterable, Mapping
 from datetime import UTC, date, datetime, timedelta
+from typing import cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
@@ -30,6 +31,7 @@ class _SelectionRow(BaseModel):
     split: str
     cohort: str
     selection_id: str
+    utc_days: tuple[str, ...] | None = None
 
     @field_validator("selection_id")
     @classmethod
@@ -59,6 +61,17 @@ class SelectedFlight(BaseModel):
     selection_id: str
     utc_days: tuple[str, ...]
     acquisition_key: str
+
+
+def compile_selection_text(raw: str) -> SelectionPlan | None:
+    """Compile structured campaign rows while preserving opaque legacy digests."""
+    try:
+        parsed = cast("object", json.loads(raw))
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, list) or not all(isinstance(row, dict) for row in parsed):
+        raise ValueError("campaign selection must be a JSON list of rows")
+    return compile_selection(cast("list[dict[str, object]]", parsed))
 
 
 class SelectionPlan(BaseModel):
@@ -126,7 +139,7 @@ def _acquisition_key(identity: FlightIdentity) -> str:
 
 
 def _cohorts_by_identity(
-    rows: Iterable[Mapping[str, object]],
+    rows: Iterable[Mapping[str, object] | _SelectionRow],
 ) -> dict[FlightIdentity, set[str]]:
     cohorts_by_identity: dict[FlightIdentity, set[str]] = {}
     for raw_row in rows:
@@ -179,5 +192,22 @@ def _digest_payload(flights: tuple[SelectedFlight, ...]) -> list[dict[str, objec
 
 def compile_selection(rows: Iterable[Mapping[str, object]]) -> SelectionPlan:
     """Mutualise identical flights while preserving every cohort assignment."""
-    flights = _selection_flights(_cohorts_by_identity(rows))
+    validated_rows = tuple(_SelectionRow.model_validate(row) for row in rows)
+    explicit_days: dict[FlightIdentity, tuple[str, ...]] = {}
+    for row in validated_rows:
+        if row.utc_days is None:
+            continue
+        identity = _identity(row)
+        previous = explicit_days.setdefault(identity, row.utc_days)
+        if previous != row.utc_days:
+            msg = f"conflicting utc_days for selection {row.selection_id!r}"
+            raise ValueError(msg)
+
+    compiled = _selection_flights(_cohorts_by_identity(validated_rows))
+    flights = tuple(
+        flight.model_copy(
+            update={"utc_days": explicit_days.get(_identity(flight), flight.utc_days)}
+        )
+        for flight in compiled
+    )
     return SelectionPlan(flights=flights, digest=_selection_digest(flights))

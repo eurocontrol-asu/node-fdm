@@ -499,7 +499,7 @@ def download(
 
 
 @app.command(name="download-fleet")
-def download_fleet(
+def download_fleet(  # noqa: PLR0915
     *,
     fleet_dir: Annotated[
         Path,
@@ -600,6 +600,10 @@ def download_fleet(
     from node_fdm_pipeline.commands._fleet_digest import ResumeDigestMismatch
     from node_fdm_pipeline.commands._fleet_fetch import download_fleet as run_fleet
     from node_fdm_pipeline.commands._fleet_plan import build_fleet_plan, discover_cohorts
+    from node_fdm_pipeline.commands._fleet_selection import (
+        SelectionPlan,
+        compile_selection_text,
+    )
     from node_fdm_pipeline.commands._trino_lease import (
         LeaseConfigError,
         LeaseUnavailable,
@@ -644,6 +648,7 @@ def download_fleet(
             campaign_resolved_config,
             campaign_profile,
         ) = (None, None, None, None)
+        campaign_selection_plan: SelectionPlan | None = None
         if decision.mode == "campaign":
             missing = []
             if lease_ttl_s is None:
@@ -677,19 +682,28 @@ def download_fleet(
                 and resolved_config is not None
                 and profile is not None
             )
+            campaign_selection = selection.read_text(encoding="utf-8")
+            campaign_selection_plan = compile_selection_text(campaign_selection)
             (
                 campaign_digest,
-                campaign_selection,
                 campaign_resolved_config,
                 campaign_profile,
             ) = (
                 decision.resume_digest,
-                selection.read_text(encoding="utf-8"),
                 resolved_config.read_text(encoding="utf-8"),
                 profile.read_text(encoding="utf-8"),
             )
 
-        plan = build_fleet_plan(discover_cohorts(fleet_dir), data_root=data_root)
+        cohort_triples = discover_cohorts(fleet_dir)
+        plan = (
+            build_fleet_plan(cohort_triples, data_root=data_root)
+            if campaign_selection_plan is None
+            else build_fleet_plan(
+                cohort_triples,
+                data_root=data_root,
+                selection=campaign_selection_plan,
+            )
+        )
         root = next(iter(plan.cohorts)).cfg.paths.data_dir.parent
         outcomes = run_fleet(
             plan,
