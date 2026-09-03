@@ -22,7 +22,10 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def cfg(tmp_path: Path) -> PipelineConfig:
-    return cast("PipelineConfig", SimpleNamespace(paths=SimpleNamespace(data_dir=tmp_path)))
+    return cast(
+        "PipelineConfig",
+        SimpleNamespace(paths=SimpleNamespace(data_dir=tmp_path / "cohort")),
+    )
 
 
 @pytest.fixture
@@ -34,7 +37,7 @@ def test_cache_path_history_layout(cfg: PipelineConfig) -> None:
     p = cache_path(cfg, "history", "20250901", "4d22ad")
     assert (
         p
-        == cfg.paths.data_dir
+        == cfg.paths.data_dir.parent
         / "raw"
         / "history"
         / "date=20250901"
@@ -47,7 +50,7 @@ def test_cache_path_extended_layout(cfg: PipelineConfig) -> None:
     p = cache_path(cfg, "extended", "20250901", "4d22ad")
     assert (
         p
-        == cfg.paths.data_dir
+        == cfg.paths.data_dir.parent
         / "raw"
         / "extended"
         / "date=20250901"
@@ -58,7 +61,7 @@ def test_cache_path_extended_layout(cfg: PipelineConfig) -> None:
 
 def test_cache_path_flightlist_layout(cfg: PipelineConfig) -> None:
     p = cache_path(cfg, "flightlist", "20250901", "4d22ad")
-    assert p == cfg.paths.data_dir / "raw" / "flightlist" / "date=20250901.parquet"
+    assert p == cfg.paths.data_dir.parent / "raw" / "flightlist" / "date=20250901.parquet"
 
 
 def test_is_cached_hit(cfg: PipelineConfig, df: pl.DataFrame) -> None:
@@ -145,3 +148,27 @@ def test_absence_digest_changes_for_a_different_batch() -> None:
     second_batch = raw_cache.absence_digest("2024-03-01", "history", ["z001", "z003"])
 
     assert first_batch != second_batch
+
+
+def test_cache_path_is_shared_by_cohorts_in_one_campaign(tmp_path: Path) -> None:
+    """AC3: cohort-local data directories resolve to one campaign staging path."""
+    campaign_root = tmp_path / "campaign-staging"
+    cfg_c1 = cast(
+        "PipelineConfig",
+        SimpleNamespace(paths=SimpleNamespace(data_dir=campaign_root / "C1")),
+    )
+    cfg_c2 = cast(
+        "PipelineConfig",
+        SimpleNamespace(paths=SimpleNamespace(data_dir=campaign_root / "C2")),
+    )
+
+    c1_path = cache_path(cfg_c1, "history", "20191231", "a00001")
+    c2_path = cache_path(cfg_c2, "history", "20191231", "a00001")
+
+    assert c1_path == c2_path
+    assert c1_path.is_relative_to(campaign_root)
+    assert c1_path.parts[-3:] == (
+        "date=20191231",
+        "icao24=a00001",
+        "data.parquet",
+    )

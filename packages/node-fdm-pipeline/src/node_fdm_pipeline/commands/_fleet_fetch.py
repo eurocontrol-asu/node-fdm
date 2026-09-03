@@ -333,10 +333,10 @@ def _missing_by_owner(
     for icao24 in aircraft:
         owner = plan.owner[icao24]
         owner_cohorts = owner if isinstance(owner, tuple) else (owner,)
-        owners = tuple(
-            cohort
-            for cohort in owner_cohorts
-            if force or not _raw_cache.is_cached(cohort.cfg, kind, date_str, icao24)
+        owners = (
+            owner_cohorts
+            if force or not _raw_cache.is_cached(owner_cohorts[0].cfg, kind, date_str, icao24)
+            else ()
         )
         if owners:
             missing[icao24] = owners
@@ -346,7 +346,7 @@ def _missing_by_owner(
 def _dispatch_history(
     pdf: Any, wanted: dict[str, Cohort], kind: _raw_cache.Kind, date_str: str
 ) -> int:
-    """Split a per-aircraft result and write each slice into its owner's silo."""
+    """Split a result and stage each aircraft slice once for all consumers."""
     import polars as pl
 
     written = 0
@@ -493,20 +493,27 @@ def _dispatch_chunk(
     result: object,
     flightlist_rows: dict[str, tuple[Cohort, list[object]]],
 ) -> int:
-    by_cohort: dict[str, dict[str, Cohort]] = {}
-    for aircraft in chunk:
-        for cohort in wanted[aircraft]:
-            by_cohort.setdefault(cohort.name, {})[aircraft] = cohort
-
     pdf = getattr(result, "data", result)
     if context.kind == "flightlist":
+        by_cohort: dict[str, dict[str, Cohort]] = {}
+        for aircraft in chunk:
+            for cohort in wanted[aircraft]:
+                by_cohort.setdefault(cohort.name, {})[aircraft] = cohort
         for cohort_wanted in by_cohort.values():
             _collect_flightlist(pdf, cohort_wanted, flightlist_rows)
         return 0
-    return sum(
-        _dispatch_history(pdf, cohort_wanted, context.kind, context.date)
-        for cohort_wanted in by_cohort.values()
+
+    shared_wanted = {aircraft: wanted[aircraft][0] for aircraft in chunk}
+    written = _dispatch_history(pdf, shared_wanted, context.kind, context.date)
+    consumers = {cohort.name for owner_cohorts in wanted.values() for cohort in owner_cohorts}
+    representative = next(iter(shared_wanted.values()))
+    _raw_cache.write_consumer_ledger(
+        representative.cfg,
+        context.kind,
+        context.date,
+        consumers,
     )
+    return written
 
 
 def _fetch_kind(context: _KindFetch) -> _KindCounters:
@@ -629,7 +636,7 @@ def fetch_one_date(
     manifest_path: object | None = None,
     fleet_config: FleetRunConfig | None = None,
 ) -> DateOutcome:
-    """Fetch every kind for one date, mutualised, and dispatch into the silos."""
+    """Fetch every kind for one date and stage the mutualised payloads."""
     aircraft = plan.dates[date_str]
     start = datetime.strptime(date_str, "%Y%m%d")
     end = start + timedelta(hours=24)

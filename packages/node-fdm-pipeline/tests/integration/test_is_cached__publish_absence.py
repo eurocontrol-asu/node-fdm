@@ -15,7 +15,10 @@ if TYPE_CHECKING:
 
 @pytest.fixture
 def cfg(tmp_path: Path) -> PipelineConfig:
-    return cast("PipelineConfig", SimpleNamespace(paths=SimpleNamespace(data_dir=tmp_path)))
+    return cast(
+        "PipelineConfig",
+        SimpleNamespace(paths=SimpleNamespace(data_dir=tmp_path / "cohort")),
+    )
 
 
 def _receipt_field(receipt: object, name: str) -> object:

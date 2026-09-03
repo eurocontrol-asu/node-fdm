@@ -1,8 +1,23 @@
-# Raw-cache absence receipts
+# Raw-cache campaign staging and absence receipts
 
 The raw cache records a successful zero-row acquisition as an explicit artefact. This
 distinguishes “the provider returned no rows for this batch” from “this batch has never
 been acquired”.
+
+## Campaign staging
+
+A fleet campaign stages raw payloads once under the campaign root rather than copying
+them into each cohort's data directory. `cache_root(cfg, kind)` resolves to
+`<campaign-root>/raw/<kind>` when the configuration carries the absolute campaign
+cache anchor produced by fleet-plan construction. Standalone configurations keep the
+existing `<data-dir>/raw/<kind>` layout.
+
+History and extended payloads retain the partition layout
+`date=<day>/icao24=<icao24>/data.parquet`. When several cohorts select the same
+aircraft-day, acquisition writes that parquet artefact once. The day directory also
+contains `consumers.json`, an atomically published ledger mapping every consuming
+cohort to `"pending"`. The file is flushed, renamed, and its directory synchronized
+before it becomes visible.
 
 ## Contract
 

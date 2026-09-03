@@ -116,7 +116,56 @@ def read_absence_receipt(root: Path, day: str, kind: Kind) -> AbsenceReceipt | N
 
 def cache_root(cfg: PipelineConfig, kind: Kind) -> Path:
     """Return the on-disk raw-cache root for one acquisition kind."""
-    return Path(cfg.paths.data_dir) / "raw" / kind
+    data_dir = Path(cfg.paths.data_dir)
+    try:
+        campaign_cache = Path(cfg.paths.era5_cache_dir)
+    except AttributeError:
+        staging_root = data_dir.parent
+    else:
+        staging_root = campaign_cache.parent if campaign_cache.is_absolute() else data_dir
+    return staging_root / "raw" / kind
+
+
+def _consumer_ledger_path(cfg: PipelineConfig, kind: Kind, date_str: str) -> Path:
+    return cache_root(cfg, kind) / f"date={date_str}" / "consumers.json"
+
+
+def _sync_directory(path: Path) -> None:
+    descriptor = os.open(path, os.O_RDONLY)
+    try:
+        os.fsync(descriptor)
+    finally:
+        os.close(descriptor)
+
+
+def write_consumer_ledger(
+    cfg: PipelineConfig,
+    kind: Kind,
+    date_str: str,
+    consumers: Iterable[str],
+) -> None:
+    """Atomically stage the complete pending-consumer ledger for one UTC day."""
+    path = _consumer_ledger_path(cfg, kind, date_str)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    descriptor, raw_path = tempfile.mkstemp(
+        dir=path.parent,
+        prefix=f".{path.name}.",
+        suffix=".tmp",
+        text=True,
+    )
+    temporary_path = Path(raw_path)
+    payload = dict.fromkeys(sorted(set(consumers)), "pending")
+    try:
+        with os.fdopen(descriptor, "w", encoding="utf-8") as handle:
+            json.dump(payload, handle, sort_keys=True, separators=(",", ":"))
+            handle.write("\n")
+            handle.flush()
+            os.fsync(handle.fileno())
+        os.replace(temporary_path, path)
+        _sync_directory(path.parent)
+    except BaseException:
+        temporary_path.unlink(missing_ok=True)
+        raise
 
 
 def cache_path(cfg: PipelineConfig, kind: Kind, date_str: str, icao24: str) -> Path:
