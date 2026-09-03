@@ -1,0 +1,367 @@
+from __future__ import annotations
+
+import os
+from collections.abc import Callable, Iterable, Mapping
+from dataclasses import dataclass
+from datetime import datetime, timedelta
+from functools import partial
+from pathlib import Path
+from typing import Protocol
+
+import polars as pl
+from pydantic import BaseModel
+
+from node_fdm_pipeline.commands._day_assemble import assemble_partition
+from node_fdm_pipeline.commands._day_bounds import (
+    ResourceBudget,
+    register_parent_process,
+    require_parent_process,
+    run_bounded_slices,
+)
+from node_fdm_pipeline.commands._day_cleanup import cleanup_day
+from node_fdm_pipeline.commands._day_commit import DayCommit, DaySnapshot, commit_day
+from node_fdm_pipeline.commands._day_plan import (
+    DayPartitionKey,
+    DayPlan,
+    build_day_plan,
+)
+from node_fdm_pipeline.commands._day_publish import publish_day
+from node_fdm_pipeline.commands._day_weather import DayGridCache
+from node_fdm_pipeline.commands._fleet_manifest import append_event, read_events
+from node_fdm_pipeline.commands._fleet_selection import SelectionPlan
+from node_fdm_pipeline.commands._science_profile import (
+    ScienceProfile,
+    profile_manifest,
+)
+
+__all__ = [
+    "DayRunReport",
+    "PreviousDayCleanupFailed",
+    "admit_day",
+    "assert_day_admissible",
+    "load_day_journal_snapshot",
+    "run_selection_day",
+]
+
+type DayJournalSnapshot = tuple[dict[str, object], ...]
+type CleanupStepHook = Callable[[str, str], None]
+
+
+class PreviousDayCleanupFailed(RuntimeError):  # noqa: N818
+    """Raised when a day's durable predecessor still has failed cleanup."""
+
+
+class DayRunReport(BaseModel, frozen=True):
+    """Immutable observations from one complete selection-day run."""
+
+    external_access_pids: frozenset[int]
+    worker_pids: tuple[int, ...]
+    grid_opens: dict[tuple[str, str], int]
+
+
+class _OpenSkyReader(Protocol):
+    def __call__(self, source_day: str, selection_ids: frozenset[str]) -> pl.DataFrame:
+        """Read locally recorded OpenSky rows for one UTC source day."""
+
+
+class _GridOpener(Protocol):
+    def __call__(self, source_day: str, field_name: str) -> object:
+        """Open one ERA5 field for one UTC source day."""
+
+
+class _GridCloser(Protocol):
+    def __call__(self, handle: object) -> None:
+        """Close an ERA5 handle."""
+
+
+class _LeaseHandle(Protocol):
+    def acquire(self) -> None:
+        """Acquire the lease."""
+
+    def heartbeat(self) -> None:
+        """Renew the lease."""
+
+    def assert_owned(self) -> None:
+        """Verify possession of the lease."""
+
+    def release(self) -> None:
+        """Release the lease."""
+
+
+@dataclass(frozen=True)
+class _AssemblySlice:
+    slice_id: str
+    slice_gib: float
+    frame: pl.DataFrame
+    plan: DayPlan
+    key: DayPartitionKey
+    profile: ScienceProfile
+    versions: dict[str, str]
+
+
+@dataclass(frozen=True)
+class _AssemblyResult:
+    key: DayPartitionKey
+    frame: pl.DataFrame
+    pid: int
+
+
+def _assemble_slice(slice_: _AssemblySlice) -> _AssemblyResult:
+    frame = assemble_partition(
+        slice_.frame,
+        slice_.plan,
+        slice_.key,
+        slice_.profile,
+        slice_.versions,
+    )
+    return _AssemblyResult(key=slice_.key, frame=frame, pid=os.getpid())
+
+
+def _previous_day(day: str) -> str:
+    compact = "-" not in day
+    format_ = "%Y%m%d" if compact else "%Y-%m-%d"
+    parsed = datetime.strptime(day, format_).date()
+    return (parsed - timedelta(days=1)).strftime(format_)
+
+
+def _event_day(event: Mapping[str, object]) -> str | None:
+    value = event.get("day", event.get("meta_selection_day"))
+    return value if isinstance(value, str) else None
+
+
+def assert_day_admissible(snapshot: Iterable[Mapping[str, object]], day: str) -> None:
+    """Reject a day when its predecessor's latest cleanup outcome is failed."""
+    previous_day = _previous_day(day)
+    last_cleanup_state: str | None = None
+    for event in snapshot:
+        name = event.get("event")
+        if _event_day(event) == previous_day and name in {"cleanup_failed", "cleanup_completed"}:
+            last_cleanup_state = str(name)
+    if last_cleanup_state == "cleanup_failed":
+        raise PreviousDayCleanupFailed(
+            f"previous day {previous_day} cleanup failed; resume cleanup before starting {day}"
+        )
+
+
+def load_day_journal_snapshot(journal_path: Path) -> DayJournalSnapshot:
+    """Load the durable events used to decide day admission."""
+    if not journal_path.exists():
+        return ()
+    return tuple(read_events(journal_path))
+
+
+def admit_day(day: str, journal_path: Path) -> DayJournalSnapshot:
+    """Recompute and enforce admission from the durable journal."""
+    snapshot = load_day_journal_snapshot(journal_path)
+    assert_day_admissible(snapshot, day)
+    return snapshot
+
+
+def _parent_call[ResultT](
+    pids: set[int],
+    action: str,
+    operation: Callable[[], ResultT],
+) -> ResultT:
+    require_parent_process(action)
+    pids.add(os.getpid())
+    return operation()
+
+
+def _read_opensky_sources(
+    plan: DayPlan,
+    reader: _OpenSkyReader,
+    external_pids: set[int],
+) -> pl.DataFrame:
+    frames = [
+        _parent_call(
+            external_pids,
+            f"opensky_read:{source_day}",
+            partial(reader, source_day, plan.selection_ids),
+        )
+        for source_day in plan.source_days
+    ]
+    if not frames:
+        raise ValueError(f"day {plan.meta_selection_day} has no OpenSky source day")
+    return pl.concat(frames, how="vertical_relaxed")
+
+
+def _open_shared_grids(
+    plan: DayPlan,
+    fields: tuple[str, ...],
+    opener: _GridOpener,
+    closer: _GridCloser,
+    external_pids: set[int],
+) -> dict[tuple[str, str], int]:
+    def guarded_opener(source_day: str, field_name: str) -> object:
+        return _parent_call(
+            external_pids,
+            f"era5_open:{source_day}:{field_name}",
+            lambda: opener(source_day, field_name),
+        )
+
+    cache = DayGridCache[object](opener=guarded_opener, closer=closer)
+    for _key in plan.partition_keys:
+        for source_day in plan.source_days:
+            for field_name in fields:
+                cache.acquire(source_day, field_name)
+                cache.release(source_day, field_name)
+    opens = cache.stats().opens
+    for source_day in plan.source_days:
+        cache.evict(source_day)
+    return opens
+
+
+def _assemble_partitions(  # noqa: PLR0913
+    frame: pl.DataFrame,
+    plan: DayPlan,
+    profile: ScienceProfile,
+    versions: Mapping[str, str],
+    local_workers: int,
+    max_resident_gib: float,
+) -> tuple[dict[DayPartitionKey, pl.DataFrame], tuple[int, ...]]:
+    slices = tuple(
+        _AssemblySlice(
+            slice_id=f"{key.cohort}:{key.meta_selection_day}",
+            slice_gib=1.0,
+            frame=frame,
+            plan=plan,
+            key=key,
+            profile=profile,
+            versions=dict(versions),
+        )
+        for key in plan.partition_keys
+    )
+    report = run_bounded_slices(
+        slices=slices,
+        budget=ResourceBudget(
+            local_workers=local_workers,
+            max_resident_gib=max_resident_gib,
+        ),
+        fn=_assemble_slice,
+    )
+    results: list[_AssemblyResult] = []
+    for result in report.results:
+        if not isinstance(result, _AssemblyResult):
+            raise TypeError("day assembly returned an unexpected result")
+        results.append(result)
+    partitions = {result.key: result.frame for result in results}
+    worker_pids = tuple(sorted({result.pid for result in results}))
+    return partitions, worker_pids
+
+
+def _cleanup_hook(value: object | None) -> CleanupStepHook | None:
+    if value is None:
+        return None
+    if not callable(value):
+        raise TypeError("cleanup_step_hook must be callable")
+
+    def invoke(step: str, artifact_id: str) -> None:
+        value(step, artifact_id)
+
+    return invoke
+
+
+def _committed_snapshot(plan: DayPlan, profile: ScienceProfile) -> DaySnapshot:
+    marker = DayCommit(
+        meta_selection_day=plan.meta_selection_day,
+        partition_keys=plan.partition_keys,
+        profile_manifest=profile_manifest(profile),
+    )
+    return DaySnapshot(
+        meta_selection_day=plan.meta_selection_day,
+        published_keys=plan.partition_keys,
+        day_committed=marker,
+    )
+
+
+def _run_parent_acquisition(  # noqa: PLR0913
+    lease: _LeaseHandle,
+    plan: DayPlan,
+    opensky_reader: _OpenSkyReader,
+    grid_opener: _GridOpener,
+    grid_closer: _GridCloser,
+    era5_fields: tuple[str, ...],
+    external_pids: set[int],
+) -> tuple[pl.DataFrame, dict[tuple[str, str], int]]:
+    _parent_call(external_pids, "trino_lease_acquire", lease.acquire)
+    try:
+        _parent_call(external_pids, "trino_lease_heartbeat", lease.heartbeat)
+        _parent_call(external_pids, "trino_lease_possession", lease.assert_owned)
+        frame = _read_opensky_sources(plan, opensky_reader, external_pids)
+        grid_opens = _open_shared_grids(
+            plan,
+            era5_fields,
+            grid_opener,
+            grid_closer,
+            external_pids,
+        )
+        return frame, grid_opens
+    finally:
+        _parent_call(external_pids, "trino_lease_release", lease.release)
+
+
+def run_selection_day(  # noqa: PLR0913
+    day: str,
+    *,
+    selection: SelectionPlan,
+    opensky_reader: _OpenSkyReader,
+    grid_opener: _GridOpener,
+    grid_closer: _GridCloser,
+    era5_fields: tuple[str, ...],
+    lease: _LeaseHandle,
+    staging_root: Path,
+    published_root: Path,
+    journal_path: Path,
+    counters_path: Path,
+    cleanup_artifacts: Mapping[str, Path],
+    cleanup_decrements: Iterable[str],
+    science_profile: ScienceProfile,
+    versions: Mapping[str, str],
+    local_workers: int,
+    max_resident_gib: float,
+    cleanup_step_hook: object | None = None,
+) -> DayRunReport:
+    """Run one admitted selection day through assembly, publication, commit, and cleanup."""
+    admit_day(day, journal_path)
+    register_parent_process()
+    append_event(journal_path, {"event": "day_started", "meta_selection_day": day})
+    plan = build_day_plan(selection, day)
+    external_pids: set[int] = set()
+    frame, grid_opens = _run_parent_acquisition(
+        lease,
+        plan,
+        opensky_reader,
+        grid_opener,
+        grid_closer,
+        era5_fields,
+        external_pids,
+    )
+    partitions, worker_pids = _assemble_partitions(
+        frame,
+        plan,
+        science_profile,
+        versions,
+        local_workers,
+        max_resident_gib,
+    )
+    publish_day(
+        partitions=partitions,
+        plan=plan,
+        staging_root=staging_root,
+        published_root=published_root,
+        event_log=journal_path,
+    )
+    commit_day(plan, published_root, journal_path, science_profile)
+    cleanup_day(
+        _committed_snapshot(plan, science_profile),
+        journal_path=journal_path,
+        counters_path=counters_path,
+        artifacts=cleanup_artifacts,
+        decrements=cleanup_decrements,
+        step_hook=_cleanup_hook(cleanup_step_hook),
+    )
+    return DayRunReport(
+        external_access_pids=frozenset(external_pids),
+        worker_pids=worker_pids,
+        grid_opens=grid_opens,
+    )
