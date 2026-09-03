@@ -1068,6 +1068,22 @@ def preprocess(
 
     df = _drop_pre_existing(df)
 
+    identity_columns = [
+        column
+        for column in (
+            "selection_id",
+            "cohort",
+            "meta_selection_day",
+            "meta_source_day",
+            "msn",
+            "meta_msn",
+            "split",
+            "meta_split",
+        )
+        if column in df.columns
+    ]
+    identity = df.select("meta_flight_id", *identity_columns).unique(subset=["meta_flight_id"])
+
     result = preprocess_flights(
         df,
         rate_s=cfg.preprocess.rate_s,
@@ -1075,6 +1091,13 @@ def preprocess(
         min_duration_s=cfg.preprocess.min_duration_s,
         smooth=cfg.preprocess.smooth,
     )
+    missing_identity = [column for column in identity_columns if column not in result.columns]
+    if missing_identity:
+        result = result.join(
+            identity.select("meta_flight_id", *missing_identity),
+            on="meta_flight_id",
+            how="left",
+        )
 
     result = _cast_null_columns(result)
 
