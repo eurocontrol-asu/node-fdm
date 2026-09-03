@@ -388,7 +388,11 @@ def _ensure_window_cached(
         if force:
             misses = list(icao24_list)
         else:
-            misses = _raw_cache.cache_misses(cfg, kind, date_str, icao24_list)
+            misses = [
+                icao24
+                for icao24 in _raw_cache.cache_misses(cfg, kind, date_str, icao24_list)
+                if not _raw_cache.cache_path(cfg, kind, date_str, icao24).is_file()
+            ]
         if not misses:
             continue
         _fetch_and_cache_window(cfg, date_str, misses, kind, start=start, end=end)
@@ -459,7 +463,11 @@ def _decode_one_window(
     import polars as pl
     from traffic.core import Flight, Traffic
 
-    cached = [i for i in icao24_demanded if _raw_cache.is_cached(cfg, "history", date_str, i)]
+    cached = [
+        icao24
+        for icao24 in icao24_demanded
+        if _raw_cache.cache_path(cfg, "history", date_str, icao24).is_file()
+    ]
     skipped = len(icao24_demanded) - len(cached)
 
     history_pl = _raw_cache.read_partition(

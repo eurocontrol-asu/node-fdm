@@ -28,7 +28,7 @@ import threading
 import time
 from collections.abc import Callable
 from contextlib import nullcontext
-from dataclasses import dataclass, field
+from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
@@ -48,6 +48,7 @@ from node_fdm_pipeline.commands._fleet_boundary import (
 from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
 from node_fdm_pipeline.commands._fleet_journal import AttemptRecord, replay_attempts
 from node_fdm_pipeline.commands._fleet_manifest import read_events
+from node_fdm_pipeline.commands._selection_match import MatchRejection
 from node_fdm_pipeline.commands._trino_errors import classify_trino_failure
 from node_fdm_pipeline.config import FleetRunConfig
 
@@ -433,6 +434,7 @@ class DateOutcome:
     failing_batch: tuple[str, ...] = ()
     staged_icao24s: tuple[str, ...] = ()
     staged_digest: str | None = None
+    rejections: dict[str, MatchRejection] = field(default_factory=dict)
 
 
 def _missing_by_owner(
@@ -443,9 +445,17 @@ def _missing_by_owner(
     for icao24 in aircraft:
         owner = plan.owner[icao24]
         owner_cohorts = owner if isinstance(owner, tuple) else (owner,)
+        selection = plan.resolve(icao24, date_str)
+        receipt_id = selection.selection_id if selection is not None else icao24
         owners = (
             owner_cohorts
-            if force or not _raw_cache.is_cached(owner_cohorts[0].cfg, kind, date_str, icao24)
+            if force
+            or not _raw_cache.is_cached(
+                owner_cohorts[0].cfg,
+                kind,
+                date_str,
+                receipt_id,
+            )
             else ()
         )
         if owners:
@@ -1068,33 +1078,112 @@ def _run_started_event(plan: FleetPlan, run_key: str, force: bool) -> dict[str, 
     }
 
 
-def _campaign_pending_dates(plan: FleetPlan, *, force: bool) -> set[str]:
+def _receipt_id(plan: FleetPlan, icao24: str, day: str) -> str:
+    selection_plan = getattr(plan, "selection", None)
+    if selection_plan is None:
+        return icao24
+    selection = next(
+        (
+            flight
+            for flight in selection_plan.flights
+            if flight.icao24 == icao24 and day in flight.utc_days
+        ),
+        None,
+    )
+    return selection.selection_id if selection is not None else icao24
+
+
+def _campaign_receipts(
+    plan: FleetPlan,
+    *,
+    force: bool,
+) -> dict[str, dict[_raw_cache.Kind, _raw_cache.AbsenceReceipt]]:
+    receipts: dict[str, dict[_raw_cache.Kind, _raw_cache.AbsenceReceipt]] = {
+        day: {} for day in plan.dates
+    }
     if force:
-        return set(plan.dates)
+        return receipts
     try:
         cfg = plan.cohorts[0].cfg
     except (AttributeError, IndexError):
-        return set(plan.dates)
+        return receipts
 
-    pending: set[str] = set()
     for day, icao24s in plan.dates.items():
+        receipt_ids = tuple(_receipt_id(plan, icao24, day) for icao24 in icao24s)
         for kind in _KINDS:
             root = _raw_cache.cache_root(cfg, kind)
+            try:
+                receipt = _raw_cache.read_absence_receipt(root, day, kind)
+            except (OSError, ValueError):
+                _cache_retention.invalidate_day(root, day, kind)
+                continue
+
+            if receipt is None and any(
+                _raw_cache.cache_path(cfg, kind, day, icao24).is_file() for icao24 in icao24s
+            ):
+                continue
+
             reconciliation = _cache_retention.reconcile_day(
                 root,
                 day,
                 kind,
-                icao24s=icao24s,
+                icao24s=receipt_ids,
             )
             if reconciliation.status == "invalid":
                 _cache_retention.invalidate_day(root, day, kind)
-                pending.add(day)
-    return pending
+                continue
+
+            receipt = _raw_cache.read_absence_receipt(root, day, kind)
+            if receipt is not None and all(
+                _raw_cache.is_cached(cfg, kind, day, receipt_id) for receipt_id in receipt_ids
+            ):
+                receipts[day][kind] = receipt
+    return receipts
+
+
+def _campaign_pending_dates(plan: FleetPlan, *, force: bool) -> set[str]:
+    receipts = _campaign_receipts(plan, force=force)
+    return {day for day, day_receipts in receipts.items() if len(day_receipts) != len(_KINDS)}
+
+
+def _receipt_rejections(
+    plan: FleetPlan,
+    day: str,
+    receipts: dict[_raw_cache.Kind, _raw_cache.AbsenceReceipt],
+) -> dict[str, MatchRejection]:
+    selection = getattr(plan, "selection", None)
+    if selection is None:
+        return {}
+    covered = {receipt_id for receipt in receipts.values() for receipt_id in receipt.icao24s}
+    return {
+        flight.selection_id: MatchRejection(
+            selection_id=flight.selection_id,
+            kind="absent",
+        )
+        for flight in selection.flights
+        if day in flight.utc_days and flight.selection_id in covered
+    }
+
+
+def _reuse_event(
+    day: str,
+    kind: _raw_cache.Kind,
+    receipt: _raw_cache.AbsenceReceipt,
+) -> dict[str, object]:
+    return {
+        "event": "date_reused",
+        "date": day,
+        "kind": kind,
+        "receipt_digest": receipt.digest,
+    }
 
 
 def _run_dates(context: _DownloadContext, run_key: str) -> list[DateOutcome]:
     outcomes: list[DateOutcome] = []
-    pending_dates = _campaign_pending_dates(context.plan, force=context.force)
+    receipts = _campaign_receipts(context.plan, force=context.force)
+    pending_dates = {
+        day for day, day_receipts in receipts.items() if len(day_receipts) != len(_KINDS)
+    }
     acquisition = (
         acquisition_section(
             context.preflight.lease_path,
@@ -1131,6 +1220,19 @@ def _run_dates(context: _DownloadContext, run_key: str) -> list[DateOutcome]:
                     written=0,
                     requests=0,
                     empty_kinds=(),
+                    kind="reused",
+                )
+            day_receipts = receipts[date_str]
+            rejections = _receipt_rejections(context.plan, date_str, day_receipts)
+            if rejections:
+                outcome = replace(
+                    outcome,
+                    rejections={**outcome.rejections, **rejections},
+                )
+            for receipt_kind, receipt in day_receipts.items():
+                _append_manifest(
+                    context.manifest_path,
+                    _reuse_event(date_str, receipt_kind, receipt),
                 )
             outcomes.append(outcome)
             _append_manifest(context.manifest_path, _date_event(outcome))

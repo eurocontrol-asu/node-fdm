@@ -84,24 +84,38 @@ share an incomplete file. A crash cannot make a partial receipt visible as valid
 
 ## Start-up reconciliation
 
-Before a fleet campaign submits any acquisition, it reconciles every planned `(day, kind)`
-against the staged absence artefact and receipt. If a process stopped after publishing an
-intact payload but before publishing its receipt, reconciliation derives the expected digest
-from the planned aircraft set, validates the parquet, and republishes only the receipt. The
-day remains visible and no acquisition boundary is called.
+Before a fleet campaign submits any acquisition, it loads the receipt for every planned
+`(day, kind)` and reconciles it with the staged absence artefact. A normal aircraft parquet
+does not certify a completed partition by itself: if that parquet exists but its receipt is
+missing, the day is submitted exactly once for acquisition and the receipt is republished.
+The narrower crash-recovery rule for a standalone, intact zero-row absence artefact remains:
+reconciliation can derive its expected digest and republish only its receipt.
 
 A truncated payload, an unreadable receipt, a missing referenced payload, or a digest
 mismatch makes that `(day, kind)` invalid. Its absence artefacts and receipt are removed
-before the day is submitted exactly once for acquisition, allowing the two-phase publication
-to restart from a clean state. A fully verified day remains untouched.
+before reacquisition. When the receipt, digest, covered identifiers, and artefact agree, the
+campaign issues no boundary call and appends a `date_reused` manifest event containing the
+`date`, `kind`, and `receipt_digest`.
 
-`read_absence_receipt(root, day, kind)` reloads and validates the JSON receipt from disk.
-No process-local state is required. It returns `None` when no receipt has been published.
+For campaign-selection receipts, covered selection IDs are also restored as
+`DateOutcome.rejections`. A resumed `sel-zulu` absence therefore returns a
+`MatchRejection(selection_id="sel-zulu", kind="absent")` instead of querying the
+provider again.
+
+`read_absence_receipt(root, day, kind)` reloads and schema-validates the JSON receipt from
+disk. No process-local state is required. It returns `None` when no receipt has been
+published; cache admission separately verifies its day, kind, digest, covered identifiers,
+and referenced artefact.
 
 ## Cache semantics
 
-`is_cached(cfg, kind, day, icao24)` remains true when the normal parquet partition exists.
-When it does not, the function checks an acquisition absence receipt and returns true only
-if that aircraft belongs to the receipt’s covered set. `cache_misses` inherits the same
-semantics for a batch; identification receipts are audit evidence for selection matching,
-not aircraft cache-hit evidence.
+`is_cached(cfg, kind, day, identifier)` is receipt-gated: a normal parquet partition alone
+is never a verified cache hit. The function returns true only when a durable receipt has the
+requested day and kind, its digest matches its canonical covered set, the identifier belongs
+to that set, and the referenced absence artefact exists. `cache_misses` applies the same
+rule to a batch.
+
+Fleet plans translate aircraft IDs to selection IDs before this check, so identification
+receipts can suppress and restitute a previously proven absence. The legacy standalone
+download and decode paths continue to inspect their parquet staging directly; they do not
+silently acquire the fleet campaign's receipt-based resume semantics.

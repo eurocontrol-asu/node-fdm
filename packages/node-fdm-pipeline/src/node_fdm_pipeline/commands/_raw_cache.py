@@ -179,10 +179,19 @@ def cache_path(cfg: PipelineConfig, kind: Kind, date_str: str, icao24: str) -> P
 
 def is_cached(cfg: PipelineConfig, kind: Kind, date_str: str, icao24: str) -> bool:
     """Return whether data or an explicit absence covers the requested aircraft."""
-    if cache_path(cfg, kind, date_str, icao24).exists():
-        return True
-    receipt = read_absence_receipt(cache_root(cfg, kind), date_str, kind)
-    return receipt is not None and icao24 in receipt.icao24s
+    root = cache_root(cfg, kind)
+    try:
+        receipt = read_absence_receipt(root, date_str, kind)
+    except (OSError, ValueError):
+        return False
+    return (
+        receipt is not None
+        and receipt.day == date_str
+        and receipt.kind == kind
+        and receipt.digest == absence_digest(date_str, kind, receipt.icao24s)
+        and icao24 in receipt.icao24s
+        and _absence_artifact_path(root, date_str, receipt.digest).is_file()
+    )
 
 
 def cache_misses(

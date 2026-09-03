@@ -64,10 +64,13 @@ def test_cache_path_flightlist_layout(cfg: PipelineConfig) -> None:
     assert p == cfg.paths.data_dir.parent / "raw" / "flightlist" / "date=20250901.parquet"
 
 
-def test_is_cached_hit(cfg: PipelineConfig, df: pl.DataFrame) -> None:
+def test_is_cached_rejects_staged_payload_without_receipt(
+    cfg: PipelineConfig, df: pl.DataFrame
+) -> None:
+    """AC3: a staged parquet alone is not a verified cache hit."""
     p = cache_path(cfg, "history", "20250901", "4d22ad")
     write_atomic(p, df)
-    assert is_cached(cfg, "history", "20250901", "4d22ad") is True
+    assert is_cached(cfg, "history", "20250901", "4d22ad") is False
 
 
 def test_is_cached_miss_empty_dir(cfg: PipelineConfig) -> None:
@@ -87,12 +90,15 @@ def test_cache_misses_empty_returns_all(cfg: PipelineConfig) -> None:
     assert list(cache_misses(cfg, "history", "20250901", icaos)) == icaos
 
 
-def test_cache_misses_partial(cfg: PipelineConfig, df: pl.DataFrame) -> None:
+def test_cache_misses_rejects_partial_payloads_without_receipt(
+    cfg: PipelineConfig, df: pl.DataFrame
+) -> None:
+    """AC3: partial parquet presence does not attest the day partition."""
     icaos = ["a1", "a2", "a3", "a4", "a5"]
     for i in ("a1", "a3"):
         write_atomic(cache_path(cfg, "history", "20250901", i), df)
     missing = list(cache_misses(cfg, "history", "20250901", icaos))
-    assert sorted(missing) == ["a2", "a4", "a5"]
+    assert sorted(missing) == icaos
 
 
 def test_write_atomic_no_tmp_remains_on_success(cfg: PipelineConfig, df: pl.DataFrame) -> None:
