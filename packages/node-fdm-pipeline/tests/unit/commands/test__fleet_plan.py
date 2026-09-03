@@ -103,3 +103,48 @@ def test_plan_without_a_date_column_is_rejected(tmp_path: Path) -> None:
 
     with pytest.raises(SystemExit):
         _read_flight_plan(path)
+
+
+def test_plan_shared_acquisitions_deduplicates_day_kind_pairs() -> None:
+    """AC2: each UTC-day/kind pair is emitted once with both sorted owners."""
+    from typing import Literal
+
+    from node_fdm_pipeline.commands import _fleet_plan
+    from node_fdm_pipeline.commands._fleet_selection import compile_selection
+
+    rows = [
+        {
+            "selection_id": selection_id,
+            "icao24": icao24,
+            "callsign": callsign,
+            "firstseen": 1577835000,
+            "lastseen": 1577838600,
+            "msn": msn,
+            "split": "train",
+            "cohort": cohort,
+            "day": "2020-01-01",
+        }
+        for selection_id, icao24, callsign, msn in (
+            ("sel-alpha", "a00001", "ALPHA1", "M1"),
+            ("sel-zulu", "z00002", "ZULU1", "M2"),
+        )
+        for cohort in ("C2", "C1")
+    ]
+    selection = compile_selection(rows)
+
+    acquisitions = _fleet_plan.plan_shared_acquisitions(selection)
+    kinds: tuple[Literal["history", "extended", "flightlist"], ...] = (
+        "history",
+        "extended",
+        "flightlist",
+    )
+
+    assert acquisitions == tuple(
+        _fleet_plan.SharedAcquisition(
+            utc_day=utc_day,
+            kind=kind,
+            owners=("C1", "C2"),
+        )
+        for utc_day in ("20191231", "20200101")
+        for kind in kinds
+    )

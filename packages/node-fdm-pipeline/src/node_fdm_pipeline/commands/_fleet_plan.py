@@ -25,7 +25,7 @@ from __future__ import annotations
 from collections import defaultdict
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Literal
 
 from node_fdm_pipeline.commands._fleet_selection import SelectedFlight, SelectionPlan
 
@@ -37,8 +37,10 @@ if TYPE_CHECKING:
 __all__ = [
     "Cohort",
     "FleetPlan",
+    "SharedAcquisition",
     "build_fleet_plan",
     "discover_cohorts",
+    "plan_shared_acquisitions",
 ]
 
 
@@ -51,6 +53,7 @@ class Cohort:
     selection_path: Path
     cfg: PipelineConfig
     icao24: frozenset[str]
+    utc_days: frozenset[str] = frozenset()
 
 
 @dataclass(frozen=True)
@@ -63,12 +66,14 @@ class FleetPlan:
         owner: ``{icao24: (Cohort, ...)}`` — every silo receiving the aircraft's rows.
         cohorts: The cohorts this plan covers.
         selection: The compiled selection projected into this plan, when available.
+        shared_acquisitions: Date/kind staging units and their owning cohorts.
     """
 
     dates: dict[str, list[str]]
     owner: dict[str, tuple[Cohort, ...]]
     cohorts: tuple[Cohort, ...]
     selection: SelectionPlan | None = None
+    shared_acquisitions: tuple[SharedAcquisition, ...] = ()
 
     def resolve(self, icao24: str, day: str) -> SelectedFlight | None:
         """Return the selected flight that requested an aircraft-day pair."""
@@ -165,6 +170,34 @@ def discover_cohorts(fleet_dir: Path) -> list[tuple[str, Path, Path]]:
     return out
 
 
+@dataclass(frozen=True)
+class SharedAcquisition:
+    """One mutualised staging unit shared by every owning cohort."""
+
+    utc_day: str
+    kind: Literal["history", "extended", "flightlist"]
+    owners: tuple[str, ...]
+
+
+def plan_shared_acquisitions(selection: SelectionPlan) -> tuple[SharedAcquisition, ...]:
+    """Project a selection into unique, deterministically ordered staging units."""
+    owners_by_day: dict[str, set[str]] = defaultdict(set)
+    for flight in selection.flights:
+        for utc_day in flight.utc_days:
+            owners_by_day[utc_day].update(flight.cohorts)
+
+    kinds: tuple[Literal["history", "extended", "flightlist"], ...] = (
+        "history",
+        "extended",
+        "flightlist",
+    )
+    return tuple(
+        SharedAcquisition(utc_day=utc_day, kind=kind, owners=tuple(sorted(owners)))
+        for utc_day, owners in sorted(owners_by_day.items())
+        for kind in kinds
+    )
+
+
 def build_fleet_plan(
     triples: list[tuple[str, Path, Path]],
     *,
@@ -182,24 +215,26 @@ def build_fleet_plan(
     owner: dict[str, list[Cohort]] = {}
     dates: dict[str, set[str]] = defaultdict(set)
 
-    if selection is not None:
-        for flight in selection.flights:
-            for day in flight.utc_days:
-                dates[day].add(flight.icao24)
-
     for name, config_path, selection_path in triples:
-        per_day = _read_selection_days(selection_path) if selection is None else {}
-        icao = (
-            {aircraft for day_set in per_day.values() for aircraft in day_set}
-            if selection is None
-            else {flight.icao24 for flight in selection.flights if name in flight.cohorts}
-        )
+        selected_flights: tuple[SelectedFlight, ...] = ()
+        if selection is None:
+            per_day = _read_selection_days(selection_path)
+            icao = {aircraft for day_set in per_day.values() for aircraft in day_set}
+            utc_days = frozenset(per_day)
+        else:
+            per_day = {}
+            selected_flights = tuple(
+                flight for flight in selection.flights if name in flight.cohorts
+            )
+            icao = {flight.icao24 for flight in selected_flights}
+            utc_days = frozenset(day for flight in selected_flights for day in flight.utc_days)
         cohort = Cohort(
             name=name,
             config_path=config_path,
             selection_path=selection_path,
             cfg=PipelineConfig.from_yaml(config_path, data_root=data_root),
             icao24=frozenset(icao),
+            utc_days=utc_days,
         )
         cohorts.append(cohort)
 
@@ -209,10 +244,15 @@ def build_fleet_plan(
         if selection is None:
             for day, day_set in per_day.items():
                 dates[day] |= day_set
+        else:
+            for flight in selected_flights:
+                for day in flight.utc_days:
+                    dates[day].add(flight.icao24)
 
     return FleetPlan(
         dates={day: sorted(v) for day, v in sorted(dates.items())},
         owner={aircraft: tuple(owners) for aircraft, owners in owner.items()},
         cohorts=tuple(cohorts),
         selection=selection,
+        shared_acquisitions=(plan_shared_acquisitions(selection) if selection is not None else ()),
     )
