@@ -602,7 +602,7 @@ def download_fleet(  # noqa: PLR0915
     from node_fdm_pipeline.commands._fleet_plan import build_fleet_plan, discover_cohorts
     from node_fdm_pipeline.commands._fleet_selection import (
         SelectionPlan,
-        compile_selection_text,
+        load_selection_file,
     )
     from node_fdm_pipeline.commands._trino_lease import (
         LeaseConfigError,
@@ -682,8 +682,9 @@ def download_fleet(  # noqa: PLR0915
                 and resolved_config is not None
                 and profile is not None
             )
-            campaign_selection = selection.read_text(encoding="utf-8")
-            campaign_selection_plan = compile_selection_text(campaign_selection)
+            selection_source = load_selection_file(selection)
+            campaign_selection = selection_source.raw
+            campaign_selection_plan = selection_source.plan
             (
                 campaign_digest,
                 campaign_resolved_config,
