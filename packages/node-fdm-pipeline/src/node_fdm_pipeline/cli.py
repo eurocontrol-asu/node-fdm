@@ -1338,6 +1338,13 @@ def identify(
         Path,
         cyclopts.Parameter(help="Path to YAML config file"),
     ],
+    selection: Annotated[
+        Path | None,
+        cyclopts.Parameter(
+            name="--selection",
+            help="Recorded campaign selection (JSON rows or CSV)",
+        ),
+    ] = None,
     gap_threshold_s: Annotated[
         int,
         cyclopts.Parameter(
@@ -1355,6 +1362,7 @@ def identify(
 
     identify_fn(
         config=config,
+        selection=selection,
         gap_threshold_s=gap_threshold_s,
         dry_run=dry_run,
     )

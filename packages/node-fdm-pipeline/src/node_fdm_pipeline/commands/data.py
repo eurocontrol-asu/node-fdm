@@ -21,7 +21,11 @@ import structlog
 
 from node_fdm_pipeline.commands import _raw_cache
 from node_fdm_pipeline.commands._fleet_plan import _parse_plan_day
-from node_fdm_pipeline.commands._fleet_selection import SelectionPlan, compile_selection
+from node_fdm_pipeline.commands._fleet_selection import (
+    SelectionPlan,
+    compile_selection,
+    compile_selection_text,
+)
 from node_fdm_pipeline.commands._selection_match import MatchResult, match_selections
 
 if TYPE_CHECKING:
@@ -826,9 +830,57 @@ def join_flightlist_inline(df: pl.DataFrame, flightlist: object) -> pl.DataFrame
     return _ensure_meta_columns(df)
 
 
+def _load_identify_selection(config: Path, selection: Path | None) -> SelectionPlan | None:
+    import polars as pl
+
+    if selection is not None:
+        plan = compile_selection_text(selection.read_text(encoding="utf-8"))
+        if plan is not None:
+            return plan
+        return compile_selection(pl.read_csv(selection).to_dicts())
+
+    config_path = Path(config)
+    variant = config_path.stem.removeprefix("config").lstrip(".")
+    campaign_name = f"{config_path.parent.name}__{variant}" if variant else config_path.parent.name
+    default_path = config_path.parent / "results" / f"selection_{campaign_name}.csv"
+    if not default_path.exists():
+        return None
+    return compile_selection(pl.read_csv(default_path).to_dicts())
+
+
+def _matchable_rotations(df: pl.DataFrame) -> tuple[dict[str, object], ...]:
+    import polars as pl
+
+    rotations = df
+    if "icao24" not in rotations.columns and "raw_icao24" in rotations.columns:
+        rotations = rotations.with_columns(pl.col("raw_icao24").alias("icao24"))
+    if "callsign" not in rotations.columns and "raw_callsign" in rotations.columns:
+        rotations = rotations.with_columns(pl.col("raw_callsign").alias("callsign"))
+
+    rows = rotations.to_dicts()
+    for row in rows:
+        for field in ("firstseen", "lastseen"):
+            value = row.get(field)
+            if value is None:
+                value = row.get("raw_timestamp")
+            if isinstance(value, datetime):
+                row[field] = int(value.timestamp())
+            elif isinstance(value, float) and value.is_integer():
+                row[field] = int(value)
+            elif isinstance(value, str):
+                try:
+                    row[field] = int(value)
+                except ValueError:
+                    row[field] = int(
+                        datetime.fromisoformat(value.replace("Z", "+00:00")).timestamp()
+                    )
+    return tuple(rows)
+
+
 def identify(
     *,
     config: Path,
+    selection: Path | None = None,
     gap_threshold_s: int = 30,
     dry_run: bool = False,
 ) -> MatchResult | None:
@@ -843,6 +895,7 @@ def identify(
 
     Args:
         config: Path to the YAML config file.
+        selection: Optional recorded campaign selection (JSON rows or CSV).
         gap_threshold_s: Gap threshold in seconds for segment splitting.
         dry_run: Validate config without modifying the Delta Table.
     """
@@ -868,13 +921,10 @@ def identify(
     )
     selection_plan: SelectionPlan | None = None
     match_result: MatchResult | None = None
-    config_path = Path(config)
-    variant = config_path.stem.removeprefix("config").lstrip(".")
-    campaign_name = f"{config_path.parent.name}__{variant}" if variant else config_path.parent.name
-    selection_path = config_path.parent / "results" / f"selection_{campaign_name}.csv"
-    if selection_path.exists():
-        selection_plan = compile_selection(pl.read_csv(selection_path).to_dicts())
-        match_result = match_selections(selection_plan, df.to_dicts())
+    selection_plan = _load_identify_selection(config, selection)
+
+    if selection_plan is not None:
+        match_result = match_selections(selection_plan, _matchable_rotations(df))
         if match_result.admitted:
             accepted = tuple(
                 flight
@@ -884,6 +934,7 @@ def identify(
             identity = pl.DataFrame(
                 {
                     "selection_id": [flight.selection_id for flight in accepted],
+                    "icao24": [flight.icao24 for flight in accepted],
                     "callsign": [flight.callsign for flight in accepted],
                     "firstseen": [flight.firstseen for flight in accepted],
                     "lastseen": [flight.lastseen for flight in accepted],

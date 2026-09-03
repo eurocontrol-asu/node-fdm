@@ -46,13 +46,15 @@ Legacy events without attribution replay with an empty key tuple.
 
 ## Campaign identification
 
-When an `identify` configuration has the adjacent
-`results/selection_<campaign>.csv` file, the command compiles that selection and passes
-the staged rotations to `match_selections`. Only uniquely admitted rotations are written
-to the identified output; each row receives the selection's `selection_id`, canonical
-`callsign`, interval, `msn`, `split`, `cohorts`, and `utc_days`. Rotations outside
-the selected callsign and time interval are not copied merely because their aircraft was
-staged for the same day.
+`identify` accepts `--selection <path>` for an explicit recorded campaign selection in
+JSON-row or CSV format. The explicit file takes precedence; when the option is omitted,
+the command still discovers an adjacent `results/selection_<campaign>.csv` file. It
+compiles the selected source and passes the staged rotations to `match_selections`. Only
+uniquely admitted rotations are written to the identified output; each row receives the
+selection's `selection_id`, `icao24`, canonical `callsign`, interval, `msn`, `split`,
+`cohorts`, and `utc_days`. Callsigns are matched despite case or surrounding whitespace,
+and the selected canonical value is written. Rotations outside the selected callsign and
+time interval are not copied merely because their aircraft was staged for the same day.
 
 The command returns the structured `MatchResult` for campaign runs. After the identified
 output has been written successfully, every `absent` rejection is published through
