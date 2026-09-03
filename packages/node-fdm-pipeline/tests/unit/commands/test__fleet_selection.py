@@ -180,3 +180,87 @@ def test_compile_selection_is_order_independent(
         flight.utc_days for flight in plan_b.flights
     )
     assert plan_a.digest == plan_b.digest
+
+
+def test_compile_selection_csv_matches_equivalent_json_plan() -> None:
+    """AC1: header-based CSV compiles to the same canonical plan as equivalent JSON."""
+    fleet_selection = _load_fleet_selection()
+    csv_text = (
+        "selection_id,icao24,callsign,firstseen,lastseen,msn,split,cohorts,utc_days\n"
+        "sel-alpha,a00001,ALPHA1,1577835000,1577838600,M1,train,C1,20200101\n"
+        "sel-zulu,z00026,ZULU9,1577923200,1577926800,M26,test,C9,20200102\n"
+    )
+    json_text = """[
+        {
+            "selection_id": "sel-alpha",
+            "icao24": "a00001",
+            "callsign": "ALPHA1",
+            "firstseen": 1577835000,
+            "lastseen": 1577838600,
+            "msn": "M1",
+            "split": "train",
+            "cohort": "C1",
+            "utc_days": ["20200101"]
+        },
+        {
+            "selection_id": "sel-zulu",
+            "icao24": "z00026",
+            "callsign": "ZULU9",
+            "firstseen": 1577923200,
+            "lastseen": 1577926800,
+            "msn": "M26",
+            "split": "test",
+            "cohort": "C9",
+            "utc_days": ["20200102"]
+        }
+    ]"""
+
+    csv_plan = fleet_selection.compile_selection_csv(csv_text)
+    json_plan = fleet_selection.compile_selection_text(json_text)
+
+    assert json_plan is not None
+    assert csv_plan == json_plan
+    assert [
+        (flight.selection_id, flight.icao24, flight.utc_days, flight.acquisition_key)
+        for flight in csv_plan.flights
+    ] == [
+        (flight.selection_id, flight.icao24, flight.utc_days, flight.acquisition_key)
+        for flight in json_plan.flights
+    ]
+
+
+def test_compile_selection_csv_rejects_missing_selection_id_header() -> None:
+    """AC2: a structured CSV missing selection_id reports that required column."""
+    fleet_selection = _load_fleet_selection()
+    csv_text = (
+        "icao24,callsign,firstseen,lastseen,msn,split,cohorts,utc_days\n"
+        "a00001,ALPHA1,1577835000,1577838600,M1,train,C1,20200101\n"
+    )
+
+    with pytest.raises(fleet_selection.SelectionFormatError) as excinfo:
+        fleet_selection.compile_selection_csv(csv_text)
+
+    assert "selection_id" in str(excinfo.value)
+
+
+def test_compile_selection_csv_rejects_unclosed_quote_atomically(mocker: Any) -> None:
+    """AC3: malformed quoting reports its CSV line before any row is compiled."""
+    fleet_selection = _load_fleet_selection()
+    compile_selection = mocker.patch.object(
+        fleet_selection,
+        "compile_selection",
+        wraps=fleet_selection.compile_selection,
+    )
+    csv_text = (
+        "selection_id,icao24,callsign,firstseen,lastseen,msn,split,cohorts,utc_days\n"
+        "sel-alpha,a00001,ALPHA1,1577835000,1577838600,M1,train,C1,20200101\n"
+        'sel-zulu,z00026,"ZULU9,1577923200,1577926800,M26,test,C9,20200102\n'
+    )
+
+    with pytest.raises(fleet_selection.SelectionFormatError) as excinfo:
+        fleet_selection.compile_selection_csv(csv_text)
+
+    message = str(excinfo.value).lower()
+    assert "csv" in message
+    assert "3" in message
+    compile_selection.assert_not_called()

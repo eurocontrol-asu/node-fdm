@@ -2,18 +2,26 @@
 
 from __future__ import annotations
 
+import csv
 import hashlib
 import json
 from collections.abc import Iterable, Mapping
+from dataclasses import dataclass
 from datetime import UTC, date, datetime, timedelta
+from io import StringIO
+from pathlib import Path
 from typing import cast
 
 from pydantic import BaseModel, ConfigDict, field_validator
 
 __all__ = [
     "SelectedFlight",
+    "SelectionFormatError",
     "SelectionPlan",
+    "SelectionSource",
     "compile_selection",
+    "compile_selection_csv",
+    "load_selection_file",
     "utc_days_for_interval",
 ]
 
@@ -61,6 +69,86 @@ class SelectedFlight(BaseModel):
     selection_id: str
     utc_days: tuple[str, ...]
     acquisition_key: str
+
+
+class SelectionFormatError(ValueError):
+    """Raised when an explicitly structured selection source is malformed."""
+
+
+@dataclass(frozen=True)
+class SelectionSource:
+    """Raw selection evidence paired with its optional compiled plan."""
+
+    raw: str
+    plan: SelectionPlan | None
+
+
+_REQUIRED_CSV_FIELDS = (
+    "selection_id",
+    "icao24",
+    "callsign",
+    "firstseen",
+    "lastseen",
+    "msn",
+    "split",
+    "cohorts",
+    "utc_days",
+)
+
+
+def _selection_csv_row(row: Mapping[str, str | None]) -> dict[str, object]:
+    normalized: dict[str, object] = dict(row)
+    normalized["cohort"] = row["cohorts"] or ""
+    normalized.pop("cohorts", None)
+    raw_days = row["utc_days"] or ""
+    normalized["utc_days"] = (
+        tuple(day for value in raw_days.split("|") if (day := value.strip())) or None
+    )
+    return normalized
+
+
+def compile_selection_csv(raw: str) -> SelectionPlan:
+    """Compile a strict header-based CSV selection without partial rows."""
+    reader = csv.DictReader(StringIO(raw), strict=True)
+    try:
+        fieldnames = reader.fieldnames
+        missing = [
+            field
+            for field in _REQUIRED_CSV_FIELDS
+            if fieldnames is None or field not in fieldnames
+        ]
+        if missing:
+            columns = ", ".join(missing)
+            raise SelectionFormatError(f"missing required CSV columns: {columns}")
+        rows = tuple(_selection_csv_row(row) for row in reader)
+    except csv.Error as exc:
+        line_number = reader.line_num + 1
+        raise SelectionFormatError(f"CSV syntax error on line {line_number}: {exc}") from exc
+    return compile_selection(rows)
+
+
+def _compile_json_selection(raw: str) -> SelectionPlan:
+    try:
+        plan = compile_selection_text(raw)
+    except ValueError as exc:
+        raise SelectionFormatError(f"invalid JSON selection: {exc}") from exc
+    if plan is None:
+        raise SelectionFormatError("invalid JSON selection syntax")
+    return plan
+
+
+def load_selection_file(path: Path) -> SelectionSource:
+    """Load a structured selection by suffix or preserve a legacy opaque source."""
+    raw = path.read_text()
+    plan: SelectionPlan | None
+    match path.suffix.lower():
+        case ".csv":
+            plan = compile_selection_csv(raw)
+        case ".json":
+            plan = _compile_json_selection(raw)
+        case _:
+            plan = compile_selection_text(raw)
+    return SelectionSource(raw=raw, plan=plan)
 
 
 def compile_selection_text(raw: str) -> SelectionPlan | None:
