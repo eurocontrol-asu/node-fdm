@@ -19,11 +19,31 @@ contains `consumers.json`, an atomically published ledger mapping every consumin
 cohort to `"pending"`. The file is flushed, renamed, and its directory synchronized
 before it becomes visible.
 
+## Campaign identification
+
+When an `identify` configuration has the adjacent
+`results/selection_<campaign>.csv` file, the command compiles that selection and passes
+the staged rotations to `match_selections`. Only uniquely admitted rotations are written
+to the identified output; each row receives the selection's `selection_id`, canonical
+`callsign`, interval, `msn`, `split`, `cohorts`, and `utc_days`. Rotations outside
+the selected callsign and time interval are not copied merely because their aircraft was
+staged for the same day.
+
+The command returns the structured `MatchResult` for campaign runs. After the identified
+output has been written successfully, every `absent` rejection is published through
+`publish_absence` for the expected campaign day and the `history` kind. These
+identification receipts record selection IDs (for example `sel-zulu`) as their covered
+identifiers, making the absence replayable without conflating it with an admitted row.
+Standalone identification without an adjacent selection keeps the legacy behavior and
+returns `None`.
+
 ## Contract
 
 `absence_digest(day, kind, icao24s)` computes a SHA-256 digest from the day, acquisition
-kind, and the sorted, deduplicated aircraft set. Input order therefore does not affect
-the digest, while a different covered set produces a different value.
+kind, and the sorted, deduplicated covered identifier set. Acquisition receipts pass
+aircraft identifiers; campaign-identification receipts pass selection IDs. Input order
+therefore does not affect the digest, while a different covered set produces a different
+value.
 
 `publish_absence(root, day, kind, icao24s)` publishes two durable files:
 
@@ -31,9 +51,9 @@ the digest, while a different covered set produces a different value.
 - a JSON receipt under `.absences/<day>.<kind>.json`.
 
 The receipt contains `day`, `kind`, `digest`, `row_count` (always `0`), and the canonical
-`icao24s` tuple. The parquet artefact is written first through the cache’s atomic writer;
-the receipt is exposed last through an atomic rename. A crash cannot make a partial
-receipt visible as valid coverage.
+covered identifiers in the legacy-named `icao24s` tuple. The parquet artefact is written
+first through the cache’s atomic writer; the receipt is exposed last through an atomic
+rename. A crash cannot make a partial receipt visible as valid coverage.
 
 `read_absence_receipt(root, day, kind)` reloads and validates the JSON receipt from disk.
 No process-local state is required. It returns `None` when no receipt has been published.
@@ -41,6 +61,7 @@ No process-local state is required. It returns `None` when no receipt has been p
 ## Cache semantics
 
 `is_cached(cfg, kind, day, icao24)` remains true when the normal parquet partition exists.
-When it does not, the function checks the persisted absence receipt and returns true only
+When it does not, the function checks an acquisition absence receipt and returns true only
 if that aircraft belongs to the receipt’s covered set. `cache_misses` inherits the same
-semantics for a batch.
+semantics for a batch; identification receipts are audit evidence for selection matching,
+not aircraft cache-hit evidence.

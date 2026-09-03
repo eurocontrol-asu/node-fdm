@@ -21,6 +21,8 @@ import structlog
 
 from node_fdm_pipeline.commands import _raw_cache
 from node_fdm_pipeline.commands._fleet_plan import _parse_plan_day
+from node_fdm_pipeline.commands._fleet_selection import SelectionPlan, compile_selection
+from node_fdm_pipeline.commands._selection_match import MatchResult, match_selections
 
 if TYPE_CHECKING:
     import pandas as pd
@@ -821,7 +823,7 @@ def identify(
     config: Path,
     gap_threshold_s: int = 30,
     dry_run: bool = False,
-) -> None:
+) -> MatchResult | None:
     """Identify flights: segment at gaps and assign flight IDs.
 
     Reads the Delta Table produced by ``download`` (which already contains
@@ -836,6 +838,7 @@ def identify(
         gap_threshold_s: Gap threshold in seconds for segment splitting.
         dry_run: Validate config without modifying the Delta Table.
     """
+    import polars as pl
     from node_fdm_data.delta import read_delta_table, write_columns
 
     from node_fdm_pipeline.config import PipelineConfig
@@ -847,9 +850,46 @@ def identify(
 
     if dry_run:
         log.info("identify_dry_run", msg="Config valid, would identify flights")
-        return
+        return None
 
     df = read_delta_table(delta_table)
+    campaign_days: tuple[str, ...] = (
+        tuple(str(day) for day in df["meta_batch_date"].unique().to_list())
+        if "meta_batch_date" in df.columns
+        else ()
+    )
+    selection_plan: SelectionPlan | None = None
+    match_result: MatchResult | None = None
+    config_path = Path(config)
+    variant = config_path.stem.removeprefix("config").lstrip(".")
+    campaign_name = f"{config_path.parent.name}__{variant}" if variant else config_path.parent.name
+    selection_path = config_path.parent / "results" / f"selection_{campaign_name}.csv"
+    if selection_path.exists():
+        selection_plan = compile_selection(pl.read_csv(selection_path).to_dicts())
+        match_result = match_selections(selection_plan, df.to_dicts())
+        if match_result.admitted:
+            accepted = tuple(
+                flight
+                for flight in selection_plan.flights
+                if flight.selection_id not in match_result.rejections
+            )
+            identity = pl.DataFrame(
+                {
+                    "selection_id": [flight.selection_id for flight in accepted],
+                    "callsign": [flight.callsign for flight in accepted],
+                    "firstseen": [flight.firstseen for flight in accepted],
+                    "lastseen": [flight.lastseen for flight in accepted],
+                    "msn": [flight.msn for flight in accepted],
+                    "split": [flight.split for flight in accepted],
+                    "cohorts": [tuple(sorted(flight.cohorts)) for flight in accepted],
+                    "utc_days": [flight.utc_days for flight in accepted],
+                }
+            )
+            admitted = pl.DataFrame(match_result.admitted)
+            superseded = [column for column in identity.columns if column in admitted.columns]
+            df = pl.concat([admitted.drop(superseded), identity], how="horizontal")
+        else:
+            df = df.head(0)
 
     # Drop existing identify columns to allow re-identification
     id_existing = [
@@ -870,6 +910,24 @@ def identify(
         segments=df["meta_flight_id"].n_unique(),
         rows=len(df),
     )
+
+    if selection_plan is not None and match_result is not None:
+        absent_ids = {
+            rejection.selection_id
+            for rejection in match_result.rejections.values()
+            if rejection.kind == "absent"
+        }
+        absence_root = _raw_cache.cache_root(cfg, "history")
+        for day in campaign_days:
+            expected_absences = [
+                flight.selection_id
+                for flight in selection_plan.flights
+                if flight.selection_id in absent_ids and day in flight.utc_days
+            ]
+            if expected_absences:
+                _raw_cache.publish_absence(absence_root, day, "history", expected_absences)
+
+    return match_result
 
 
 # ---------------------------------------------------------------------------
