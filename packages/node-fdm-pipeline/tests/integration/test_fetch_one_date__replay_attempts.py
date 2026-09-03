@@ -72,6 +72,7 @@ def _run_resumed_fetch(
     plan = SimpleNamespace(
         dates={_DATE: aircraft},
         owner={icao24: object() for icao24 in aircraft},
+        resolve=lambda _icao24, _day: None,
     )
     monkeypatch.setattr(fleet_fetch, "_KINDS", ("history",))
     monkeypatch.setattr(fleet_fetch, "_get_opensky", lambda: source)

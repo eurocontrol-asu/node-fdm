@@ -101,6 +101,7 @@ class AttemptRecord(BaseModel):
     outcome: str
     observed_delay_s: float
     branch_name: str
+    acquisition_keys: tuple[str, ...] = ()
 
 
 def replay_attempts(events: list[dict[str, object]]) -> tuple[AttemptRecord, ...]:

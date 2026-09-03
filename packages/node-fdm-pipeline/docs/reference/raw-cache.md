@@ -19,6 +19,31 @@ contains `consumers.json`, an atomically published ledger mapping every consumin
 cohort to `"pending"`. The file is flushed, renamed, and its directory synchronized
 before it becomes visible.
 
+## Trino failures and partial day receipts
+
+`classify_trino_failure(error)` normalizes provider failures into a
+`TrinoFailure(code, kind, raw_message)`. It reads a native Trino
+`error_name` when one is available and otherwise falls back to the exception
+message. The acquisition action is:
+
+- `retry_later` for `QUERY_QUEUE_FULL`;
+- `split` for `EXCEEDED_TIME_LIMIT` and `EXCEEDED_MEMORY_LIMIT`;
+- `terminal` for every other code.
+
+A split is processed from its first child to its second child. If a child hits
+the configured bisection floor and fails again, the other children still finish.
+The resulting `DateOutcome` has `kind="terminal_floor"` and
+`failing_batch` identifies only the indivisible failed child. Its
+`staged_icao24s` contains only payloads that were actually published, and
+`staged_digest` is the SHA-256 digest of those payload bytes concatenated in
+that same order. The `date_finished` manifest event exposes these fields as the
+durable day receipt.
+
+Each `fetch_attempt` journal event also records the `acquisition_keys` of the
+selections served by its batch. `replay_attempts` preserves journal order,
+attempt rank, outcome, observed backoff delay, batch, and selection attribution.
+Legacy events without attribution replay with an empty key tuple.
+
 ## Campaign identification
 
 When an `identify` configuration has the adjacent

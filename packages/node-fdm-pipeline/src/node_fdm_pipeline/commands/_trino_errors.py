@@ -24,14 +24,19 @@ _CODE_PATTERN = re.compile(r"\b[A-Z][A-Z0-9]*(?:_[A-Z0-9]+)+\b")
 
 @dataclass(frozen=True, slots=True)
 class TrinoFailure:
+    """Normalized Trino failure code, acquisition action, and original message."""
+
     code: str
     kind: TrinoFailureKind
     raw_message: str
 
 
 def classify_trino_failure(error: BaseException) -> TrinoFailure:
+    """Map a native Trino error name or message to one acquisition action."""
     raw_message = str(error)
-    normalized_message = raw_message.upper()
+    error_name = getattr(error, "error_name", None)
+    classification_source = error_name if isinstance(error_name, str) else raw_message
+    normalized_message = classification_source.upper()
 
     for code in _SPLIT_CODES:
         if code in normalized_message:

@@ -32,7 +32,7 @@ from dataclasses import dataclass, field
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
-from typing import TYPE_CHECKING, Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 import structlog
 
@@ -215,6 +215,7 @@ def _attempt_event(  # noqa: PLR0913
     attempt: int,
     outcome: str,
     observed_delay_s: float,
+    acquisition_keys: tuple[str, ...] = (),
 ) -> dict[str, object]:
     batch_label = _batch_label(batch)
     return {
@@ -228,6 +229,7 @@ def _attempt_event(  # noqa: PLR0913
         "outcome": outcome,
         "observed_delay_s": observed_delay_s,
         "branch_name": batch_label,
+        "acquisition_keys": acquisition_keys,
     }
 
 
@@ -242,6 +244,7 @@ def _fetch_with_retry(  # noqa: PLR0913
     manifest_path: object | None = None,
     policy: BackoffPolicy | None = None,
     rng: random.Random | None = None,
+    acquisition_keys: tuple[str, ...] = (),
 ) -> Any:
     """Call *fetcher*, waiting out capacity refusals.
 
@@ -287,6 +290,7 @@ def _fetch_with_retry(  # noqa: PLR0913
                     attempt=attempt,
                     outcome=outcome,
                     observed_delay_s=delay,
+                    acquisition_keys=acquisition_keys,
                 ),
             )
             if not decision.allowed or attempt >= decision.max_attempts:
@@ -308,6 +312,7 @@ def _fetch_with_retry(  # noqa: PLR0913
                 attempt=attempt,
                 outcome="success",
                 observed_delay_s=0.0,
+                acquisition_keys=acquisition_keys,
             ),
         )
         return result
@@ -323,6 +328,10 @@ class DateOutcome:
     requests: int
     empty_kinds: tuple[str, ...]
     error: str | None = None
+    kind: str = "success"
+    failing_batch: tuple[str, ...] = ()
+    staged_icao24s: tuple[str, ...] = ()
+    staged_digest: str | None = None
 
 
 def _missing_by_owner(
@@ -443,7 +452,50 @@ def _branch_event(
     }
 
 
+@runtime_checkable
+class _TerminalFloorFailure(Protocol):
+    kind: str
+    batch: tuple[str, ...]
+
+
+@runtime_checkable
+class _TerminalFloorProgress(Protocol):
+    written: int
+    requests: int
+    staged_icao24s: tuple[str, ...]
+    staged_digest: str | None
+
+
+class _TerminalFloorError(RuntimeError):
+    kind = "terminal_floor"
+
+    def __init__(self, batch: list[str], cause: Exception) -> None:
+        super().__init__(str(cause))
+        self.batch = tuple(batch)
+        self.written = 0
+        self.requests = 0
+        self.staged_icao24s: tuple[str, ...] = ()
+        self.staged_digest: str | None = None
+
+
+def _selection_acquisition_keys(
+    plan: FleetPlan,
+    date_str: str,
+    batch: list[str],
+) -> tuple[str, ...]:
+    if getattr(plan, "selection", None) is None:
+        return ()
+
+    keys: list[str] = []
+    for icao24 in batch:
+        selected = plan.resolve(icao24, date_str)
+        if selected is not None:
+            keys.append(selected.acquisition_key)
+    return tuple(keys)
+
+
 def _fetch_or_split(context: _KindFetch, chunk: list[str]) -> _ChunkFetch:
+    acquisition_keys = _selection_acquisition_keys(context.plan, context.date, chunk)
     try:
         result = _fetch_with_retry(
             context.fetcher,
@@ -454,6 +506,7 @@ def _fetch_or_split(context: _KindFetch, chunk: list[str]) -> _ChunkFetch:
             kind=context.kind,
             manifest_path=context.manifest_path,
             policy=context.backoff_policy,
+            acquisition_keys=acquisition_keys,
         )
     except Exception as exc:
         if fetch_action(exc) != "split":
@@ -468,10 +521,11 @@ def _fetch_or_split(context: _KindFetch, chunk: list[str]) -> _ChunkFetch:
                 attempt=1,
                 outcome=plan.kind,
                 observed_delay_s=0.0,
+                acquisition_keys=acquisition_keys,
             ),
         )
         if plan.kind == "terminal_floor":
-            raise
+            raise _TerminalFloorError(chunk, exc) from exc
         for child in plan.children:
             _append_manifest(context.manifest_path, _branch_event(context, chunk, child))
         left, right = plan.children
@@ -516,6 +570,28 @@ def _dispatch_chunk(
     return written
 
 
+def _staged_payload_digest(
+    context: _KindFetch,
+    staged_icao24s: list[str],
+) -> str | None:
+    if not staged_icao24s:
+        return None
+
+    import hashlib
+
+    digest = hashlib.sha256()
+    representative = context.plan.cohorts[0]
+    for icao24 in staged_icao24s:
+        path = _raw_cache.cache_path(
+            representative.cfg,
+            context.kind,
+            context.date,
+            icao24,
+        )
+        digest.update(path.read_bytes())
+    return digest.hexdigest()
+
+
 def _fetch_kind(context: _KindFetch) -> _KindCounters:
     wanted = _missing_by_owner(
         context.plan,
@@ -531,26 +607,42 @@ def _fetch_kind(context: _KindFetch) -> _KindCounters:
     aircraft = sorted(wanted)
     pending = [aircraft[index : index + CHUNK] for index in range(0, len(aircraft), CHUNK)]
     flightlist_rows: dict[str, tuple[Cohort, list[object]]] = {}
+    staged_icao24s: list[str] = []
+    terminal_error: _TerminalFloorError | None = None
     while pending:
         chunk = pending.pop()
-        fetched = _fetch_or_split(context, chunk)
+        try:
+            fetched = _fetch_or_split(context, chunk)
+        except _TerminalFloorError as exc:
+            if terminal_error is None:
+                terminal_error = exc
+            continue
         if fetched.split is not None:
-            pending.extend(fetched.split)
+            pending.extend(reversed(fetched.split))
             continue
         counters.requests += 1
         if fetched.result is None:
             counters.empty.append(context.kind)
             continue
-        counters.written += _dispatch_chunk(
+        written = _dispatch_chunk(
             context,
             chunk,
             wanted,
             fetched.result,
             flightlist_rows,
         )
+        counters.written += written
+        if written:
+            staged_icao24s.extend(chunk)
 
     if flightlist_rows:
         counters.written += _write_flightlist(flightlist_rows, context.date)
+    if terminal_error is not None:
+        terminal_error.written = counters.written
+        terminal_error.requests = counters.requests
+        terminal_error.staged_icao24s = tuple(staged_icao24s)
+        terminal_error.staged_digest = _staged_payload_digest(context, staged_icao24s)
+        raise terminal_error
     return counters
 
 
@@ -565,16 +657,35 @@ class _DateOutcomeInput:
 
 
 def _date_outcome(values: _DateOutcomeInput) -> DateOutcome:
-    detail = (
-        None if values.error is None else f"{type(values.error).__name__}: {values.error}"[:200]
-    )
+    error = values.error
+    detail = None if error is None else f"{type(error).__name__}: {error}"[:200]
+    kind = "success" if error is None else "error"
+    failing_batch: tuple[str, ...] = ()
+    written = values.written
+    requests = values.requests
+    staged_icao24s: tuple[str, ...] = ()
+    staged_digest: str | None = None
+
+    if isinstance(error, _TerminalFloorFailure) and error.kind == "terminal_floor":
+        kind = "terminal_floor"
+        failing_batch = error.batch
+    if isinstance(error, _TerminalFloorProgress):
+        written = error.written
+        requests = error.requests
+        staged_icao24s = error.staged_icao24s
+        staged_digest = error.staged_digest
+
     return DateOutcome(
         date=values.date,
         requested=len(values.aircraft),
-        written=values.written,
-        requests=values.requests,
+        written=written,
+        requests=requests,
         empty_kinds=tuple(values.empty),
         error=detail,
+        kind=kind,
+        failing_batch=failing_batch,
+        staged_icao24s=staged_icao24s,
+        staged_digest=staged_digest,
     )
 
 
@@ -713,6 +824,10 @@ def _date_event(outcome: DateOutcome) -> dict[str, Any]:
         "requests": outcome.requests,
         "empty_kinds": list(outcome.empty_kinds),
         "error": outcome.error,
+        "kind": getattr(outcome, "kind", "success"),
+        "failing_batch": list(getattr(outcome, "failing_batch", ())),
+        "staged_icao24s": list(getattr(outcome, "staged_icao24s", ())),
+        "staged_digest": getattr(outcome, "staged_digest", None),
     }
 
 

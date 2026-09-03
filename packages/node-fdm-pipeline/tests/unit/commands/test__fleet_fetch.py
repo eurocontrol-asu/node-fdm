@@ -42,6 +42,33 @@ def test_fetch_action_returns_classification_kind() -> None:
     ]
 
 
+class _TerminalFloorError(RuntimeError):
+    kind = "terminal_floor"
+
+    def __init__(self, batch: list[str]) -> None:
+        super().__init__("EXCEEDED_TIME_LIMIT: bisection floor reached")
+        self.batch = tuple(batch)
+
+
+def test_date_outcome_exposes_terminal_floor_batch() -> None:
+    """AC1: a floor exhaustion becomes a typed outcome naming only its failed batch."""
+    aircraft = [f"s{index:03d}" for index in range(1, 11)]
+    failed = aircraft[5:]
+    values = _fleet_fetch._DateOutcomeInput(
+        "20240101",
+        aircraft,
+        5,
+        2,
+        [],
+        _TerminalFloorError(failed),
+    )
+
+    outcome = _fleet_fetch._date_outcome(values)
+
+    assert outcome.kind == "terminal_floor"
+    assert outcome.failing_batch == tuple(failed)
+
+
 def _download_kwargs(lease_path: Path, run_dir: Path) -> dict[str, Any]:
     return {
         "fleet_config": FleetRunConfig(
@@ -153,6 +180,10 @@ def test_download_fleet_is_ordered_and_appends_manifest(
             requests=3,
             empty_kinds=(),
             error=None,
+            kind="success",
+            failing_batch=(),
+            staged_icao24s=(),
+            staged_digest=None,
         )
 
     mocker.patch.object(_fleet_fetch, "_get_opensky")
