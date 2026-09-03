@@ -3,7 +3,7 @@ from __future__ import annotations
 import fcntl
 import hashlib
 import json
-from collections.abc import Callable, Collection
+from collections.abc import Collection
 from pathlib import Path
 from typing import Protocol
 
@@ -11,7 +11,7 @@ import polars as pl
 from pydantic import BaseModel, ConfigDict
 
 from node_fdm_pipeline.commands._day_plan import DayPartitionKey, DayPlan
-from node_fdm_pipeline.commands._day_publish import validate_partition
+from node_fdm_pipeline.commands._day_publish import StepHook, validate_partition
 from node_fdm_pipeline.commands._fleet_manifest import (
     ManifestCorruption,
     append_event,
@@ -34,8 +34,6 @@ __all__ = [
     "missing_expected_keys",
     "reconcile_commit",
 ]
-
-type StepHook = Callable[[str], None]
 
 _PARTITION_KEY_PARTS = 2
 
@@ -229,9 +227,9 @@ def commit_day(
             return
 
         _validate_complete_day(plan, published_root, profile)
-        append_event(journal_path, _marker_payload(plan, profile))
         if step_hook is not None:
             step_hook("day_committed")
+        append_event(journal_path, _marker_payload(plan, profile))
 
 
 def _published_key(event: dict[str, object]) -> DayPartitionKey | None:

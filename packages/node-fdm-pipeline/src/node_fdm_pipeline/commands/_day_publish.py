@@ -1,9 +1,10 @@
 from __future__ import annotations
 
 import hashlib
+import inspect
 from collections.abc import Callable, Mapping
 from pathlib import Path
-from typing import Literal
+from typing import Literal, cast
 
 import polars as pl
 from pydantic import BaseModel, ConfigDict
@@ -31,7 +32,11 @@ type PublicationStep = Literal[
     "validate_partition",
     "publish_partition",
 ]
-type StepHook = Callable[[PublicationStep, DayPartitionKey], None]
+type BoundaryStep = Literal["stage", "validate", "publish", "day_committed"]
+type StepHook = Callable[[BoundaryStep], None]
+type LegacyPublicationStep = PublicationStep
+type LegacyStepHook = Callable[[LegacyPublicationStep, DayPartitionKey], None]
+type PublicationHook = StepHook | LegacyStepHook
 
 
 class PartitionValidationError(ValueError):
@@ -234,6 +239,18 @@ def missing_partitions(
     )
 
 
+def _split_step_hook(
+    step_hook: PublicationHook | None,
+) -> tuple[StepHook | None, LegacyStepHook | None]:
+    if step_hook is None:
+        return None, None
+    try:
+        inspect.signature(step_hook).bind("stage")
+    except TypeError:
+        return None, cast("LegacyStepHook", step_hook)
+    return cast("StepHook", step_hook), None
+
+
 def _publish_missing(  # noqa: PLR0913
     *,
     partitions: Mapping[DayPartitionKey, pl.DataFrame],
@@ -241,8 +258,9 @@ def _publish_missing(  # noqa: PLR0913
     staging_root: Path,
     published_root: Path,
     event_log: Path,
-    step_hook: StepHook | None,
+    step_hook: PublicationHook | None,
 ) -> DayPublication:
+    boundary_hook, legacy_hook = _split_step_hook(step_hook)
     published_now: list[DayPartitionKey] = []
     for key in missing_partitions(plan, published_root):
         try:
@@ -252,33 +270,39 @@ def _publish_missing(  # noqa: PLR0913
                 f"no assembled frame supplied for {tuple(key)!r}"
             ) from None
 
+        if boundary_hook is not None:
+            boundary_hook("stage")
         staged = stage_partition(
             frame=frame,
             key=key,
             staging_root=staging_root,
             event_log=event_log,
         )
-        if step_hook is not None:
-            step_hook("stage_partition", key)
+        if legacy_hook is not None:
+            legacy_hook("stage_partition", key)
 
         staged_frame = pl.read_parquet(staged.path)
+        if boundary_hook is not None:
+            boundary_hook("validate")
         validate_partition(
             frame=staged_frame,
             plan=plan,
             key=key,
             event_log=event_log,
         )
-        if step_hook is not None:
-            step_hook("validate_partition", key)
+        if legacy_hook is not None:
+            legacy_hook("validate_partition", key)
 
+        if boundary_hook is not None:
+            boundary_hook("publish")
         publish_partition(
             staged=staged,
             published_root=published_root,
             event_log=event_log,
         )
         published_now.append(key)
-        if step_hook is not None:
-            step_hook("publish_partition", key)
+        if legacy_hook is not None:
+            legacy_hook("publish_partition", key)
 
     return DayPublication(published_now=tuple(published_now))
 
@@ -290,7 +314,7 @@ def publish_day(  # noqa: PLR0913
     staging_root: Path,
     published_root: Path,
     event_log: Path,
-    step_hook: StepHook | None = None,
+    step_hook: PublicationHook | None = None,
 ) -> DayPublication:
     """Publish only absent partitions through the stage, validate, publish sequence."""
     return _publish_missing(

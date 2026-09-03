@@ -25,7 +25,7 @@ from node_fdm_pipeline.commands._day_plan import (
     DayPlan,
     build_day_plan,
 )
-from node_fdm_pipeline.commands._day_publish import publish_day
+from node_fdm_pipeline.commands._day_publish import StepHook, publish_day
 from node_fdm_pipeline.commands._day_weather import DayGridCache
 from node_fdm_pipeline.commands._fleet_manifest import append_event, read_events
 from node_fdm_pipeline.commands._fleet_selection import SelectionPlan
@@ -344,6 +344,7 @@ def run_selection_day(  # noqa: PLR0913
     versions: Mapping[str, str],
     local_workers: int,
     max_resident_gib: float,
+    step_hook: StepHook | None = None,
     cleanup_step_hook: object | None = None,
 ) -> DayRunReport:
     """Run one admitted selection day through assembly, publication, commit, and cleanup."""
@@ -380,8 +381,15 @@ def run_selection_day(  # noqa: PLR0913
         staging_root=staging_root,
         published_root=published_root,
         event_log=journal_path,
+        step_hook=step_hook,
     )
-    commit_day(plan, published_root, journal_path, science_profile)
+    commit_day(
+        plan,
+        published_root,
+        journal_path,
+        science_profile,
+        step_hook=step_hook,
+    )
     cleanup_day(
         _committed_snapshot(plan, science_profile),
         journal_path=journal_path,
