@@ -159,6 +159,16 @@ class _CampaignOptions:
     poll_interval_s: float
 
 
+@dataclass(frozen=True, slots=True)
+class _ConcurrentCampaignResult:
+    first: subprocess.CompletedProcess[str]
+    second: subprocess.CompletedProcess[str]
+    journal_path: Path
+
+
+_CONCURRENT_CAMPAIGN_RUNS = 0
+
+
 def _campaign_command(tmp_path: Path, options: _CampaignOptions) -> list[str]:
     campaign_dir = tmp_path / options.name
     fleet_dir = _single_date_recorded_fleet(campaign_dir)
@@ -236,7 +246,7 @@ def _wait_for_state(journal_path: Path, state: str, *, timeout_s: float = 5.0) -
     raise AssertionError(f"journal never reached {state!r}")
 
 
-def _run_two_campaigns(tmp_path: Path) -> tuple[subprocess.CompletedProcess[str], ...]:
+def _run_two_campaigns(tmp_path: Path) -> _ConcurrentCampaignResult:
     lease_path = tmp_path / "shared" / "download-fleet.lease"
     lease_path.parent.mkdir()
     journal_path = tmp_path / "shared" / "acquisition.jsonl"
@@ -282,41 +292,55 @@ def _run_two_campaigns(tmp_path: Path) -> tuple[subprocess.CompletedProcess[str]
     )
     first_stdout, first_stderr = first.communicate(timeout=10)
     second_stdout, second_stderr = second.communicate(timeout=10)
-    return (
-        subprocess.CompletedProcess(
+    return _ConcurrentCampaignResult(
+        first=subprocess.CompletedProcess(
             first_command,
             first.returncode,
             first_stdout,
             first_stderr,
         ),
-        subprocess.CompletedProcess(
+        second=subprocess.CompletedProcess(
             second_command,
             second.returncode,
             second_stdout,
             second_stderr,
         ),
+        journal_path=journal_path,
     )
 
 
+@pytest.fixture(scope="module")
+def concurrent_campaign(
+    tmp_path_factory: pytest.TempPathFactory,
+) -> _ConcurrentCampaignResult:
+    global _CONCURRENT_CAMPAIGN_RUNS
+    _CONCURRENT_CAMPAIGN_RUNS += 1
+    assert _CONCURRENT_CAMPAIGN_RUNS == 1
+    return _run_two_campaigns(tmp_path_factory.mktemp("concurrent-campaign"))
+
+
 @pytest.mark.e2e
-def test_two_concurrent_campaign_processes_both_complete(tmp_path: Path) -> None:
+def test_two_concurrent_campaign_processes_both_complete(
+    concurrent_campaign: _ConcurrentCampaignResult,
+) -> None:
     """AC1: a live shared lease serialises two campaign CLI processes without rejecting either."""
 
-    first, second = _run_two_campaigns(tmp_path)
+    first, second = concurrent_campaign.first, concurrent_campaign.second
 
     assert first.returncode == 0, first.stderr
     assert second.returncode == 0, second.stderr
 
 
 @pytest.mark.e2e
-def test_concurrent_campaign_boundary_sections_never_overlap(tmp_path: Path) -> None:
+def test_concurrent_campaign_boundary_sections_never_overlap(
+    concurrent_campaign: _ConcurrentCampaignResult,
+) -> None:
     """AC2: the shared journal proves that concurrent CLI boundaries never overlap."""
 
-    first, second = _run_two_campaigns(tmp_path)
+    first, second = concurrent_campaign.first, concurrent_campaign.second
     assert first.returncode == second.returncode == 0
-    journal_path = tmp_path / "shared" / "acquisition.jsonl"
     events = sorted(
-        _journal_events(journal_path),
+        _journal_events(concurrent_campaign.journal_path),
         key=lambda event: str(event["timestamp"]),
     )
     boundary_events = [
