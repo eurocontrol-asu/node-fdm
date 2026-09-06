@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import hashlib
 import inspect
-from collections.abc import Callable, Mapping
+from collections.abc import Callable, Iterable, Mapping
 from pathlib import Path
 from typing import Literal, cast
 
@@ -19,7 +19,9 @@ __all__ = [
     "PartitionValidationError",
     "PublishedPartition",
     "StagedPartition",
+    "load_partition_resume_state",
     "missing_partitions",
+    "partition_resume_state",
     "publish_day",
     "publish_partition",
     "resume_publication",
@@ -227,6 +229,66 @@ def publish_partition(
         row_count=result.row_count,
     )
     return result
+
+
+type _PartitionResumeState = Literal["pending", "staged", "validated", "published"]
+
+_RESUME_STATE_BY_EVENT: dict[str, _PartitionResumeState] = {
+    "stage_partition": "staged",
+    "validate_partition": "validated",
+    "publish_partition": "published",
+}
+_RESUME_STATE_RANK: dict[_PartitionResumeState, int] = {
+    "pending": 0,
+    "staged": 1,
+    "validated": 2,
+    "published": 3,
+}
+
+
+def partition_resume_state(
+    events: Iterable[Mapping[str, object]],
+    plan: DayPlan,
+) -> dict[DayPartitionKey, _PartitionResumeState]:
+    """Fold complete in-scope journal events into durable partition boundaries."""
+    states: dict[DayPartitionKey, _PartitionResumeState] = dict.fromkeys(
+        plan.partition_keys, "pending"
+    )
+    for event in events:
+        event_name = event.get("event")
+        boundary = _RESUME_STATE_BY_EVENT.get(event_name) if isinstance(event_name, str) else None
+        cohort = event.get("cohort")
+        selection_day = event.get("meta_selection_day")
+        digest = event.get("digest")
+        row_count = event.get("row_count")
+        if (
+            boundary is None
+            or not isinstance(cohort, str)
+            or not isinstance(selection_day, str)
+            or not isinstance(digest, str)
+            or not isinstance(row_count, int)
+        ):
+            continue
+
+        key = DayPartitionKey(cohort, selection_day)
+        if key not in states or selection_day != plan.meta_selection_day:
+            continue
+        selection_id = event.get("selection_id")
+        if selection_id is not None and (
+            not isinstance(selection_id, str) or selection_id not in plan.selection_ids_by_key[key]
+        ):
+            continue
+        if _RESUME_STATE_RANK[boundary] > _RESUME_STATE_RANK[states[key]]:
+            states[key] = boundary
+    return states
+
+
+def load_partition_resume_state(
+    journal_path: Path,
+    plan: DayPlan,
+) -> dict[DayPartitionKey, _PartitionResumeState]:
+    """Load a durable journal and return its per-partition resume boundaries."""
+    return partition_resume_state(read_events(journal_path), plan)
 
 
 def missing_partitions(

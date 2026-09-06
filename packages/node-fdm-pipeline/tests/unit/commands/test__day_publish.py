@@ -8,7 +8,7 @@ import polars as pl
 import pytest
 from pytest_mock import MockerFixture
 
-from node_fdm_pipeline.commands._day_plan import build_day_plan
+from node_fdm_pipeline.commands._day_plan import DayPartitionKey, DayPlan, build_day_plan
 from node_fdm_pipeline.commands._fleet_selection import SelectedFlight, SelectionPlan
 
 
@@ -104,3 +104,99 @@ def test_publish_day_reports_stable_boundaries_once_per_partition(
     assert boundaries == ["stage", "validate", "publish"] * 2
     assert validate.call_count == len(keys)
     assert publish.call_count == len(keys)
+
+
+def _resume_plan() -> DayPlan:
+    keys = tuple(
+        DayPartitionKey(cohort, "20200101") for cohort in ("A20N", "B738", "B739", "E190", "E195")
+    )
+    selection_ids_by_key = {key: frozenset({f"sel-{key.cohort.lower()}"}) for key in keys}
+    return DayPlan(
+        meta_selection_day="20200101",
+        partition_keys=keys,
+        selection_ids=frozenset().union(*selection_ids_by_key.values()),
+        selection_ids_by_key=selection_ids_by_key,
+        source_days=("20200101",),
+    )
+
+
+def _resume_event(
+    event: str,
+    key: DayPartitionKey,
+    *,
+    selection_id: str | None = None,
+    digest: str = "digest",
+) -> dict[str, object]:
+    payload: dict[str, object] = {
+        "event": event,
+        "cohort": key.cohort,
+        "meta_selection_day": key.meta_selection_day,
+        "digest": digest,
+        "row_count": 1,
+    }
+    if selection_id is not None:
+        payload["selection_id"] = selection_id
+    return payload
+
+
+def test_partition_resume_state_returns_highest_boundary_by_partition() -> None:
+    """AC1: each planned partition receives its highest durable resume boundary."""
+    day_publish = importlib.import_module("node_fdm_pipeline.commands._day_publish")
+    plan = _resume_plan()
+    staged, validated, published, pending_a, pending_b = plan.partition_keys
+    events = [
+        _resume_event("stage_partition", staged),
+        _resume_event("stage_partition", validated),
+        _resume_event("validate_partition", validated),
+        _resume_event("publish_partition", published),
+        _resume_event("stage_partition", published),
+        _resume_event("validate_partition", published),
+    ]
+
+    result = day_publish.partition_resume_state(events, plan)
+
+    assert result == {
+        staged: "staged",
+        validated: "validated",
+        published: "published",
+        pending_a: "pending",
+        pending_b: "pending",
+    }
+
+
+def test_partition_resume_state_ignores_out_of_scope_events() -> None:
+    """AC2: events from another UTC day or selection stay outside the active plan."""
+    day_publish = importlib.import_module("node_fdm_pipeline.commands._day_publish")
+    plan = _resume_plan()
+    wrong_day_key, wrong_selection_key = plan.partition_keys[:2]
+    wrong_day_event = _resume_event("stage_partition", wrong_day_key)
+    wrong_day_event["meta_selection_day"] = "20200102"
+    wrong_selection_event = _resume_event(
+        "stage_partition",
+        wrong_selection_key,
+        selection_id="sel-outside-plan",
+    )
+
+    result = day_publish.partition_resume_state(
+        [wrong_day_event, wrong_selection_event],
+        plan,
+    )
+
+    assert result[wrong_day_key] == "pending"
+    assert result[wrong_selection_key] == "pending"
+
+
+def test_partition_resume_state_ignores_incomplete_terminal_event() -> None:
+    """AC3: an incomplete tail event cannot advance a complete durable boundary."""
+    day_publish = importlib.import_module("node_fdm_pipeline.commands._day_publish")
+    plan = _resume_plan()
+    key = plan.partition_keys[0]
+    incomplete_validated = _resume_event("validate_partition", key)
+    incomplete_validated.pop("digest")
+
+    result = day_publish.partition_resume_state(
+        [_resume_event("stage_partition", key), incomplete_validated],
+        plan,
+    )
+
+    assert result[key] == "staged"
