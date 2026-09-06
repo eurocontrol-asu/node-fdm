@@ -182,3 +182,62 @@ def test_previous_cleanup_failure_blocks_day_admission() -> None:
         assert len(captured_slices) == 2
         assert all(contains_handle(vars(slice_)) for slice_ in captured_slices)
         assert [source_day for source_day, _field in open_calls] == ["20200101"]
+
+        def test_partitions_to_assemble_keeps_only_pending_in_plan_order() -> None:
+            """AC1: only pending partition keys remain, preserving the plan order."""
+            day_runner = importlib.import_module("node_fdm_pipeline.commands._day_runner")
+            day_plan = importlib.import_module("node_fdm_pipeline.commands._day_plan")
+            keys = tuple(
+                day_plan.DayPartitionKey(cohort, "20200101")
+                for cohort in ("A20N", "B738", "C56X", "E190", "LJ45")
+            )
+            plan = day_plan.DayPlan(
+                meta_selection_day="20200101",
+                partition_keys=keys,
+                selection_ids=frozenset(f"sel-{key.cohort}" for key in keys),
+                selection_ids_by_key={key: frozenset({f"sel-{key.cohort}"}) for key in keys},
+                source_days=("20200101",),
+            )
+            resume_state = {
+                keys[0]: "pending",
+                keys[1]: "staged",
+                keys[2]: "pending",
+                keys[3]: "published",
+                keys[4]: "pending",
+            }
+
+            assert day_runner.partitions_to_assemble(plan, resume_state) == (
+                keys[0],
+                keys[2],
+                keys[4],
+            )
+
+
+def test_partitions_to_assemble_keeps_only_pending_in_plan_order() -> None:
+    """AC1: only pending partition keys remain, preserving the plan order."""
+    day_runner = importlib.import_module("node_fdm_pipeline.commands._day_runner")
+    day_plan = importlib.import_module("node_fdm_pipeline.commands._day_plan")
+    keys = tuple(
+        day_plan.DayPartitionKey(cohort, "20200101")
+        for cohort in ("A20N", "B738", "C56X", "E190", "LJ45")
+    )
+    plan = day_plan.DayPlan(
+        meta_selection_day="20200101",
+        partition_keys=keys,
+        selection_ids=frozenset(f"sel-{key.cohort}" for key in keys),
+        selection_ids_by_key={key: frozenset({f"sel-{key.cohort}"}) for key in keys},
+        source_days=("20200101",),
+    )
+    resume_state = {
+        keys[0]: "pending",
+        keys[1]: "staged",
+        keys[2]: "pending",
+        keys[3]: "published",
+        keys[4]: "pending",
+    }
+
+    assert day_runner.partitions_to_assemble(plan, resume_state) == (
+        keys[0],
+        keys[2],
+        keys[4],
+    )

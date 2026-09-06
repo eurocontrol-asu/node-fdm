@@ -25,7 +25,13 @@ from node_fdm_pipeline.commands._day_plan import (
     DayPlan,
     build_day_plan,
 )
-from node_fdm_pipeline.commands._day_publish import StepHook, publish_day
+from node_fdm_pipeline.commands._day_publish import (
+    StepHook,
+    load_partition_resume_state,
+    partition_resume_state,
+    publish_day,
+    resume_publication,
+)
 from node_fdm_pipeline.commands._day_weather import DayGridCache
 from node_fdm_pipeline.commands._fleet_manifest import append_event, read_events
 from node_fdm_pipeline.commands._fleet_selection import SelectionPlan
@@ -40,6 +46,7 @@ __all__ = [
     "admit_day",
     "assert_day_admissible",
     "load_day_journal_snapshot",
+    "partitions_to_assemble",
     "run_selection_day",
 ]
 
@@ -325,6 +332,30 @@ def _run_parent_acquisition(  # noqa: PLR0913
         _parent_call(external_pids, "trino_lease_release", lease.release)
 
 
+def partitions_to_assemble(
+    plan: DayPlan,
+    resume_state: Mapping[DayPartitionKey, str],
+) -> tuple[DayPartitionKey, ...]:
+    """Return pending partition keys in their canonical plan order."""
+    return tuple(key for key in plan.partition_keys if resume_state[key] == "pending")
+
+
+def _partition_subplan(
+    plan: DayPlan,
+    keys: tuple[DayPartitionKey, ...],
+) -> DayPlan:
+    selection_ids_by_key = {key: plan.selection_ids_by_key[key] for key in keys}
+    return DayPlan(
+        meta_selection_day=plan.meta_selection_day,
+        partition_keys=keys,
+        selection_ids=frozenset(
+            selection_id for key in keys for selection_id in selection_ids_by_key[key]
+        ),
+        selection_ids_by_key=selection_ids_by_key,
+        source_days=plan.source_days,
+    )
+
+
 def run_selection_day(  # noqa: PLR0913
     day: str,
     *,
@@ -352,37 +383,58 @@ def run_selection_day(  # noqa: PLR0913
     register_parent_process()
     append_event(journal_path, {"event": "day_started", "meta_selection_day": day})
     plan = build_day_plan(selection, day)
+    resume_state = (
+        load_partition_resume_state(journal_path, plan)
+        if journal_path.exists()
+        else partition_resume_state((), plan)
+    )
+    pending_keys = partitions_to_assemble(plan, resume_state)
+    pending_plan = _partition_subplan(plan, pending_keys)
     external_pids: set[int] = set()
-    frame, shared_grids = _run_parent_acquisition(
-        lease,
-        plan,
-        opensky_reader,
-        grid_opener,
-        grid_closer,
-        era5_fields,
-        external_pids,
-    )
-    try:
-        partitions, worker_pids = _assemble_partitions(
-            frame,
-            plan,
-            science_profile,
-            versions,
-            local_workers,
-            max_resident_gib,
-            grid_handles=shared_grids.handles,
+    if pending_keys:
+        frame, shared_grids = _run_parent_acquisition(
+            lease,
+            pending_plan,
+            opensky_reader,
+            grid_opener,
+            grid_closer,
+            era5_fields,
+            external_pids,
         )
-    finally:
-        shared_grids.close()
-    grid_opens = shared_grids.opens
-    publish_day(
-        partitions=partitions,
-        plan=plan,
-        staging_root=staging_root,
-        published_root=published_root,
-        event_log=journal_path,
-        step_hook=step_hook,
-    )
+        try:
+            partitions, worker_pids = _assemble_partitions(
+                frame,
+                pending_plan,
+                science_profile,
+                versions,
+                local_workers,
+                max_resident_gib,
+                grid_handles=shared_grids.handles,
+            )
+        finally:
+            shared_grids.close()
+        grid_opens = shared_grids.opens
+    else:
+        partitions = {}
+        worker_pids = ()
+        grid_opens = {}
+    if all(state == "pending" for state in resume_state.values()):
+        publish_day(
+            partitions=partitions,
+            plan=plan,
+            staging_root=staging_root,
+            published_root=published_root,
+            event_log=journal_path,
+            step_hook=step_hook,
+        )
+    else:
+        resume_publication(
+            partitions=partitions,
+            plan=plan,
+            staging_root=staging_root,
+            published_root=published_root,
+            event_log=journal_path,
+        )
     commit_day(
         plan,
         published_root,

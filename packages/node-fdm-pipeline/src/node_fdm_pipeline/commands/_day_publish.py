@@ -313,6 +313,73 @@ def _split_step_hook(
     return cast("StepHook", step_hook), None
 
 
+def _durable_staged_partition(
+    staging_root: Path,
+    key: DayPartitionKey,
+) -> StagedPartition:
+    path = _partition_path(staging_root, key)
+    frame = pl.read_parquet(path)
+    return StagedPartition(
+        key=key,
+        path=path,
+        digest=_file_digest(path),
+        row_count=frame.height,
+    )
+
+
+def _resume_staged_partition(  # noqa: PLR0913
+    *,
+    state: _PartitionResumeState,
+    partitions: Mapping[DayPartitionKey, pl.DataFrame],
+    key: DayPartitionKey,
+    staging_root: Path,
+    event_log: Path,
+    boundary_hook: StepHook | None,
+    legacy_hook: LegacyStepHook | None,
+) -> StagedPartition:
+    if state != "pending":
+        return _durable_staged_partition(staging_root, key)
+    try:
+        frame = partitions[key]
+    except KeyError:
+        raise PartitionValidationError(f"no assembled frame supplied for {tuple(key)!r}") from None
+    if boundary_hook is not None:
+        boundary_hook("stage")
+    staged = stage_partition(
+        frame=frame,
+        key=key,
+        staging_root=staging_root,
+        event_log=event_log,
+    )
+    if legacy_hook is not None:
+        legacy_hook("stage_partition", key)
+    return staged
+
+
+def _resume_validated_partition(  # noqa: PLR0913
+    *,
+    state: _PartitionResumeState,
+    staged: StagedPartition,
+    plan: DayPlan,
+    event_log: Path,
+    boundary_hook: StepHook | None,
+    legacy_hook: LegacyStepHook | None,
+) -> None:
+    if state in {"validated", "published"}:
+        return
+    staged_frame = pl.read_parquet(staged.path)
+    if boundary_hook is not None:
+        boundary_hook("validate")
+    validate_partition(
+        frame=staged_frame,
+        plan=plan,
+        key=staged.key,
+        event_log=event_log,
+    )
+    if legacy_hook is not None:
+        legacy_hook("validate_partition", staged.key)
+
+
 def _publish_missing(  # noqa: PLR0913
     *,
     partitions: Mapping[DayPartitionKey, pl.DataFrame],
@@ -323,38 +390,31 @@ def _publish_missing(  # noqa: PLR0913
     step_hook: PublicationHook | None,
 ) -> DayPublication:
     boundary_hook, legacy_hook = _split_step_hook(step_hook)
+    states = (
+        load_partition_resume_state(event_log, plan)
+        if event_log.exists()
+        else partition_resume_state((), plan)
+    )
     published_now: list[DayPartitionKey] = []
     for key in missing_partitions(plan, published_root):
-        try:
-            frame = partitions[key]
-        except KeyError:
-            raise PartitionValidationError(
-                f"no assembled frame supplied for {tuple(key)!r}"
-            ) from None
-
-        if boundary_hook is not None:
-            boundary_hook("stage")
-        staged = stage_partition(
-            frame=frame,
+        state = states[key]
+        staged = _resume_staged_partition(
+            state=state,
+            partitions=partitions,
             key=key,
             staging_root=staging_root,
             event_log=event_log,
+            boundary_hook=boundary_hook,
+            legacy_hook=legacy_hook,
         )
-        if legacy_hook is not None:
-            legacy_hook("stage_partition", key)
-
-        staged_frame = pl.read_parquet(staged.path)
-        if boundary_hook is not None:
-            boundary_hook("validate")
-        validate_partition(
-            frame=staged_frame,
+        _resume_validated_partition(
+            state=state,
+            staged=staged,
             plan=plan,
-            key=key,
             event_log=event_log,
+            boundary_hook=boundary_hook,
+            legacy_hook=legacy_hook,
         )
-        if legacy_hook is not None:
-            legacy_hook("validate_partition", key)
-
         if boundary_hook is not None:
             boundary_hook("publish")
         publish_partition(
