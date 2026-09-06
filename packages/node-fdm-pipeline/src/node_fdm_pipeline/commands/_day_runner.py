@@ -19,7 +19,7 @@ from node_fdm_pipeline.commands._day_bounds import (
     require_parent_process,
     run_bounded_slices,
 )
-from node_fdm_pipeline.commands._day_cleanup import cleanup_day
+from node_fdm_pipeline.commands._day_cleanup import cleanup_day, resume_cleanup
 from node_fdm_pipeline.commands._day_commit import (
     DayCommit,
     DaySnapshot,
@@ -455,7 +455,15 @@ def run_selection_day(  # noqa: PLR0913
             )
         committed_snapshot = load_day_snapshot(journal_path)
     if committed_snapshot is not None:
-        cleanup_day(
+        cleanup = (
+            resume_cleanup
+            if any(
+                event.get("event") == "cleanup_failed" and event.get("day") == day
+                for event in read_events(journal_path)
+            )
+            else cleanup_day
+        )
+        cleanup(
             committed_snapshot,
             journal_path=journal_path,
             counters_path=counters_path,
