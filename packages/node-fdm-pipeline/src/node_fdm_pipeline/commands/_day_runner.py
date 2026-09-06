@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import fcntl
 import os
 from collections.abc import Callable, Iterable, Mapping
 from dataclasses import dataclass
@@ -19,7 +20,13 @@ from node_fdm_pipeline.commands._day_bounds import (
     run_bounded_slices,
 )
 from node_fdm_pipeline.commands._day_cleanup import cleanup_day
-from node_fdm_pipeline.commands._day_commit import DayCommit, DaySnapshot, commit_day
+from node_fdm_pipeline.commands._day_commit import (
+    DayCommit,
+    DaySnapshot,
+    commit_day,
+    load_day_snapshot,
+    reconcile_commit,
+)
 from node_fdm_pipeline.commands._day_plan import (
     DayPartitionKey,
     DayPlan,
@@ -45,6 +52,7 @@ __all__ = [
     "PreviousDayCleanupFailed",
     "admit_day",
     "assert_day_admissible",
+    "day_commit_pending",
     "load_day_journal_snapshot",
     "partitions_to_assemble",
     "run_selection_day",
@@ -356,6 +364,50 @@ def _partition_subplan(
     )
 
 
+def day_commit_pending(
+    plan: DayPlan,
+    resume_state: Mapping[DayPartitionKey, str],
+) -> bool:
+    """Return whether every planned partition is published and awaits commit."""
+    return bool(plan.partition_keys) and all(
+        resume_state.get(key) == "published" for key in plan.partition_keys
+    )
+
+
+def _discard_torn_terminal_record(journal_path: Path) -> bool:
+    if not journal_path.exists() or journal_path.stat().st_size == 0:
+        return False
+    with journal_path.open("rb+") as handle:
+        fcntl.flock(handle.fileno(), fcntl.LOCK_EX)
+        handle.seek(-1, os.SEEK_END)
+        if handle.read(1) == b"\n":
+            return False
+        handle.seek(0)
+        payload = handle.read()
+        boundary = payload.rfind(b"\n")
+        handle.seek(boundary + 1)
+        handle.truncate()
+        handle.flush()
+        os.fsync(handle.fileno())
+    return True
+
+
+def _completed_day_snapshot(journal_path: Path, day: str) -> DaySnapshot | None:
+    if not journal_path.exists():
+        return None
+    events = read_events(journal_path)
+    has_marker = any(
+        event.get("event") == "day_committed" and event.get("meta_selection_day") == day
+        for event in events
+    )
+    if not has_marker:
+        return None
+    snapshot = load_day_snapshot(journal_path)
+    if snapshot.meta_selection_day != day or snapshot.day_committed is None:
+        return None
+    return snapshot
+
+
 def run_selection_day(  # noqa: PLR0913
     day: str,
     *,
@@ -380,14 +432,43 @@ def run_selection_day(  # noqa: PLR0913
 ) -> DayRunReport:
     """Run one admitted selection day through assembly, publication, commit, and cleanup."""
     admit_day(day, journal_path)
-    register_parent_process()
-    append_event(journal_path, {"event": "day_started", "meta_selection_day": day})
     plan = build_day_plan(selection, day)
+    had_torn_marker = _discard_torn_terminal_record(journal_path)
     resume_state = (
         load_partition_resume_state(journal_path, plan)
         if journal_path.exists()
         else partition_resume_state((), plan)
     )
+    committed_snapshot = _completed_day_snapshot(journal_path, day)
+    register_parent_process()
+    append_event(journal_path, {"event": "day_started", "meta_selection_day": day})
+    if committed_snapshot is None and day_commit_pending(plan, resume_state):
+        if had_torn_marker:
+            reconcile_commit(journal_path, published_root)
+        else:
+            commit_day(
+                plan,
+                published_root,
+                journal_path,
+                science_profile,
+                step_hook=step_hook,
+            )
+        committed_snapshot = load_day_snapshot(journal_path)
+    if committed_snapshot is not None:
+        cleanup_day(
+            committed_snapshot,
+            journal_path=journal_path,
+            counters_path=counters_path,
+            artifacts=cleanup_artifacts,
+            decrements=cleanup_decrements,
+            step_hook=_cleanup_hook(cleanup_step_hook),
+        )
+        return DayRunReport(
+            external_access_pids=frozenset(),
+            worker_pids=(),
+            grid_opens={},
+        )
+
     pending_keys = partitions_to_assemble(plan, resume_state)
     pending_plan = _partition_subplan(plan, pending_keys)
     external_pids: set[int] = set()

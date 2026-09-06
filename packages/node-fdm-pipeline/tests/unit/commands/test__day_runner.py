@@ -10,6 +10,30 @@ import pytest
 from pytest_mock import MockerFixture
 
 
+def test_day_commit_pending_requires_every_partition_published() -> None:
+    """AC1: commit is pending only after every planned partition is published."""
+    day_runner = importlib.import_module("node_fdm_pipeline.commands._day_runner")
+    day_plan = importlib.import_module("node_fdm_pipeline.commands._day_plan")
+    keys = tuple(
+        day_plan.DayPartitionKey(cohort, "20200101")
+        for cohort in ("A319", "A320", "A321", "A332", "A359")
+    )
+    plan = day_plan.DayPlan(
+        meta_selection_day="20200101",
+        partition_keys=keys,
+        selection_ids=frozenset(f"selection-{key.cohort}" for key in keys),
+        selection_ids_by_key={key: frozenset({f"selection-{key.cohort}"}) for key in keys},
+        source_days=("20200101",),
+    )
+    published = dict.fromkeys(keys, "published")
+    staged = {**published, keys[-1]: "staged"}
+    pending = {**published, keys[-1]: "pending"}
+
+    assert day_runner.day_commit_pending(plan, published) is True
+    assert day_runner.day_commit_pending(plan, staged) is False
+    assert day_runner.day_commit_pending(plan, pending) is False
+
+
 class _CapturedSlice:
     key: object
 
