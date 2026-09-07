@@ -20,6 +20,18 @@ that do not opt into waiting.
 The lease heartbeat continues at one third of the TTL. An expired record may still be
 replaced, and a stale owner cannot renew or release its successor's record.
 
+## Campaign preflight
+
+The central campaign preflight accepts exactly `plan`, `run`, `resume`, `status`, and
+`validate`. A live `run` or `resume` requires both a shared `lease_path` and a positive
+`min_free_gib` in `FleetRunConfig`; missing values are rejected before remote I/O. The
+field stays optional on the model because non-live modes do not need the live guard.
+
+A new `run` may start without recorded state, but refuses an existing campaign identity
+when its selection, resolved configuration, or profile digest differs. `resume` instead
+requires that identity and rejects any digest divergence. These checks reuse the durable
+resume digest and shared-lease validation used by fleet acquisition.
+
 ## CLI configuration
 
 A bounded campaign invocation can add these options to the normal six campaign inputs:
