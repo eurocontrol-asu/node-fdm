@@ -12,6 +12,25 @@ import pytest
 
 
 @pytest.mark.e2e
+def test_enrich_fleet_prints_one_deprecation_notice(tmp_path: Path) -> None:
+    """AC2: enrich-fleet emits one notice naming fleet-campaign run."""
+    fleet_dir = tmp_path / "fleet"
+    fleet_dir.mkdir()
+    fdm = Path(sys.executable).with_name("fdm")
+
+    completed = subprocess.run(
+        [str(fdm), "enrich-fleet", "--fleet-dir", str(fleet_dir), "--dry-run"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    stderr = completed.stderr.lower()
+    assert stderr.count("deprecated") == 1
+    assert stderr.count("fdm fleet-campaign run") == 1
+
+
+@pytest.mark.e2e
 def test_enrich_fleet_partial_campaign_options_create_no_lock(tmp_path: Path) -> None:
     """AC2: partial campaign options name every omission before creating any lock."""
     data_dir = tmp_path / "data"

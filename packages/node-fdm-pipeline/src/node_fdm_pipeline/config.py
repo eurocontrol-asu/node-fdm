@@ -386,7 +386,7 @@ class FleetRunConfig(BaseModel, frozen=True):
     lease_wait_budget_s: float = Field(default=0.0, ge=0.0)
     lease_poll_interval_s: float = Field(default=0.1, gt=0.0)
     disk_min_gib: float = Field(gt=0)
-    min_free_gib: float | None = Field(default=None, gt=0)
+    min_free_gib: float | None = Field(default=None, ge=0)
     recorded_source: Path | None = None
     acquisition_journal: Path | None = None
     acquisition_receipt_dir: Path | None = None

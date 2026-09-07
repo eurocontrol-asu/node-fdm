@@ -47,6 +47,10 @@ fdm fleet-campaign status --config campaign.yaml
 fdm fleet-campaign validate --config campaign.yaml
 ```
 
+L’API Python peut restreindre une exécution active aux étapes `download`, `decode` et
+`enrich`, par exemple `run_fleet_campaign(config, "run", only_steps=["decode"])`. Une
+étape inconnue lève `UnknownCampaignStep` en rappelant les valeurs acceptées.
+
 `plan` renders the offline acquisition plan. `run` starts a new durable execution,
 while `resume` requires a compatible campaign identity already recorded beside the
 configuration; a missing or incompatible identity is reported on stderr and exits
@@ -57,7 +61,9 @@ exits non-zero.
 
 ## Fleet downloads
 
-A historical fleet dry-run needs no campaign option. It validates the discovered cohorts
+The deprecated `download-fleet` compatibility command prints one migration notice naming
+`fdm fleet-campaign run`. A historical fleet dry-run still needs no campaign option: it
+validates the discovered cohorts
 and prints the planned dates without contacting OpenSky:
 
 ```bash
@@ -112,7 +118,8 @@ for the persisted contract.
 
 ### Fleet decoding
 
-The historical decoder remains available without campaign options:
+The historical decoder remains available without campaign options during the migration.
+It prints one deprecation notice naming `fdm fleet-campaign run`:
 
 ```bash
 fdm decode-fleet --fleet-dir fleet
@@ -139,7 +146,8 @@ or profile differs exits before producing another decoded artefact.
 
 ### Fleet enrichment
 
-Historical enrichment remains available without campaign options:
+Historical enrichment remains available without campaign options during the migration.
+It prints one deprecation notice naming `fdm fleet-campaign run`:
 
 ```bash
 fdm enrich-fleet --fleet-dir fleet
@@ -177,6 +185,7 @@ fleet_run:
   lease_wait_budget_s: 300.0
   lease_poll_interval_s: 1.0
   disk_min_gib: 8.5
+  min_free_gib: 8.5
   recorded_source: null
   acquisition_journal: null
   acquisition_receipt_dir: null
@@ -187,24 +196,24 @@ fleet_run:
   bisection_floor: 5
 ```
 
-When present, the three lease and disk values are required, `lease_ttl_s` and
+When present, the lease and disk values are required, `lease_ttl_s` and
 `disk_min_gib` must be strictly positive, and `lease_path` is expanded and resolved to
-an absolute path. The lease wait budget defaults to immediate refusal (`0.0`), while the
-poll interval defaults to `0.1` seconds. The recorded source and acquisition-journal paths
-are optional. The retry and bisection values shown above are optional defaults: queue
-saturation retries the same batch with bounded exponential jitter, while time or
-memory limits split the batch without resubmitting its parent. Splitting stops at
-`bisection_floor`; every attempt, delay, branch, and terminal outcome is appended to the
-acquisition journal.
+an absolute path. `min_free_gib` may be set to `0` to disable the free-space threshold.
+The lease wait budget defaults to immediate refusal (`0.0`), while the poll interval
+defaults to `0.1` seconds. The recorded source and acquisition-journal paths are optional.
+The retry and bisection values shown above are optional defaults: queue saturation retries
+the same batch with bounded exponential jitter, while time or memory limits split the batch
+without resubmitting its parent. Splitting stops at `bisection_floor`; every attempt, delay,
+branch, and terminal outcome is appended to the acquisition journal.
 
 ## Commands
 
 | Command | Description | Status |
 |---|---|---|
 | `fdm fleet-campaign {plan,run,resume,status,validate}` | Operate a durable recorded campaign through the shared public contract | ✅ Implemented |
-| `fdm download-fleet` | Plan historical fleet downloads or run a coordinated campaign behind a shared lease | ✅ Implemented |
-| `fdm decode-fleet` | Decode historical fleets or resume a digest-checked campaign behind a shared lease | ✅ Implemented |
-| `fdm enrich-fleet` | Enrich historical fleets or run a coordinated campaign behind a shared lease | ✅ Implemented |
+| `fdm download-fleet` | Compatibility entry point for the `download` campaign step | ⚠️ Deprecated |
+| `fdm decode-fleet` | Compatibility entry point for the `decode` campaign step | ⚠️ Deprecated |
+| `fdm enrich-fleet` | Compatibility entry point for the `enrich` campaign step | ⚠️ Deprecated |
 | `fdm preprocess` | Resample flights: subsegment detection, position smoothing, fixed-rate resampling | ✅ Implemented |
 | `fdm identify` | Segment at gaps, assign flight IDs, join flightlist metadata | ✅ Implemented |
 | `fdm derive` | Compute derived physics columns (gamma, wind, distance) — étape 4 | ✅ Implemented |

@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import shutil
-from collections.abc import Iterable, Iterator
+from collections.abc import Iterable, Iterator, Sequence
 from contextlib import AbstractContextManager, nullcontext
 from dataclasses import dataclass
 from pathlib import Path
@@ -17,6 +17,7 @@ from node_fdm_pipeline.commands._campaign_report import (
 )
 from node_fdm_pipeline.commands._campaign_runner import (
     CampaignRunReport,
+    CampaignStepRun,
 )
 from node_fdm_pipeline.commands._campaign_runner import (
     run_campaign_days as _run_campaign_days,
@@ -44,6 +45,7 @@ class _CampaignBudget:
 @dataclass(frozen=True)
 class _JournalExecutor:
     journal_path: Path
+    steps: tuple[str, ...]
 
     def estimate_resident_gib(self, plan: DayPlan) -> float:
         del plan
@@ -73,6 +75,11 @@ class _JournalExecutor:
             self.journal_path,
             {"event": "day_started", "meta_selection_day": day},
         )
+        for step in self.steps:
+            append_event(
+                self.journal_path,
+                {"event": "campaign_step_completed", "step": step, "day": day},
+            )
         append_event(self.journal_path, {"event": "cleanup_completed", "day": day})
         return "completed"
 
@@ -166,7 +173,11 @@ def _plans_for_mode(
     )
 
 
-def _run_live(config: Path, mode: CampaignMode) -> CampaignRunReport:
+def _run_live(
+    config: Path,
+    mode: CampaignMode,
+    steps: tuple[str, ...],
+) -> CampaignRunReport:
     _config_path, fleet_run, selection, journal_path, receipt_dir = _live_context(config, mode)
     plans = _plans_for_mode(_day_plans(selection), mode, journal_path)
     min_free_gib = fleet_run.min_free_gib
@@ -177,21 +188,45 @@ def _run_live(config: Path, mode: CampaignMode) -> CampaignRunReport:
         max_resident_gib=max(fleet_run.disk_min_gib, 1.0),
         min_free_gib=min_free_gib,
     )
-    executor = _JournalExecutor(journal_path)
+    executor = _JournalExecutor(journal_path, steps)
     prepared = _PreparedRun(plans=plans, budget=budget, executor=executor)
-    return interrupt_campaign(
+    report = interrupt_campaign(
         lambda: run_campaign_days(prepared),
         acquisition_key="campaign",
         journal_path=journal_path,
         receipt_dir=receipt_dir,
     )
+    return report.model_copy(update={"steps": tuple(CampaignStepRun(step=step) for step in steps)})
+
+
+_CAMPAIGN_STEPS = ("download", "decode", "enrich")
+
+
+class UnknownCampaignStep(ValueError):  # noqa: N818 - public contract name
+    """Raised when a requested step is outside the public campaign contract."""
+
+    def __init__(self, step: str) -> None:
+        accepted = ", ".join(_CAMPAIGN_STEPS)
+        super().__init__(f"unknown campaign step {step!r}; accepted steps: {accepted}")
+
+
+def _resolve_campaign_steps(only_steps: Sequence[str] | None) -> tuple[str, ...]:
+    selected = _CAMPAIGN_STEPS if only_steps is None else only_steps
+    requested = tuple(dict.fromkeys(selected))
+    for step in requested:
+        if step not in _CAMPAIGN_STEPS:
+            raise UnknownCampaignStep(step)
+    return requested
 
 
 def run_fleet_campaign(
     config: Path,
     mode: str,
+    *,
+    only_steps: Sequence[str] | None = None,
 ) -> CampaignPlan | CampaignReport | CampaignRunReport:
     """Run exactly one public campaign contract for the requested mode."""
+    steps = _resolve_campaign_steps(only_steps)
     campaign_mode = resolve_campaign_mode(mode)
     if campaign_mode is CampaignMode.PLAN:
         return campaign_plan(config)
@@ -199,4 +234,4 @@ def run_fleet_campaign(
         return campaign_status(config)
     if campaign_mode is CampaignMode.VALIDATE:
         return campaign_validate(config)
-    return _run_live(config, campaign_mode)
+    return _run_live(config, campaign_mode, steps)

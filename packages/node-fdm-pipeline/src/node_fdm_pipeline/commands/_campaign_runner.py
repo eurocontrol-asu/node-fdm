@@ -17,6 +17,7 @@ __all__ = [
     "CampaignBudget",
     "CampaignExecutor",
     "CampaignRunReport",
+    "CampaignStepRun",
     "run_campaign_days",
 ]
 
@@ -61,6 +62,12 @@ class CampaignExecutor(Protocol):
         ...
 
 
+class CampaignStepRun(BaseModel, frozen=True):
+    """One named campaign step selected for this invocation."""
+
+    step: str
+
+
 class CampaignRunReport(BaseModel, frozen=True):
     """Durable scheduling observations for one campaign invocation."""
 
@@ -69,6 +76,7 @@ class CampaignRunReport(BaseModel, frozen=True):
     blocked_reasons: tuple[str, ...]
     blocking_day: str | None
     max_observed_concurrency: int
+    steps: tuple[CampaignStepRun, ...] = ()
 
 
 @dataclass(frozen=True)

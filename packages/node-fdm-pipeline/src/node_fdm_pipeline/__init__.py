@@ -2,9 +2,13 @@
 
 from __future__ import annotations
 
-from node_fdm_pipeline.commands.fleet_campaign import run_fleet_campaign
+from node_fdm_pipeline.commands.fleet_campaign import (
+    UnknownCampaignStep,
+    run_fleet_campaign,
+)
 
 __all__ = [
+    "UnknownCampaignStep",
     "cli",
     "commands",
     "config",

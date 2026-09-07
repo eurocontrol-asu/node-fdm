@@ -511,7 +511,7 @@ def download(
 
 
 @app.command(name="download-fleet")
-def download_fleet(  # noqa: PLR0915
+def download_fleet(  # noqa: PLR0912, PLR0915
     *,
     fleet_dir: Annotated[
         Path,
@@ -602,6 +602,8 @@ def download_fleet(  # noqa: PLR0915
     """
     if workers != 1:
         raise SystemExit("--workers must be 1; concurrent Trino queries time out")
+    if _run_legacy_fleet_campaign(fleet_dir, "download"):
+        return
 
     import sys
 
@@ -837,6 +839,9 @@ def decode_fleet(
     largest is 1.68x that, so ``--workers`` is a RAM budget — it defaults to 1 and
     the command warns when the estimate exceeds what is free.
     """
+    if _run_legacy_fleet_campaign(fleet_dir, "decode"):
+        return
+
     import sys
 
     from node_fdm_pipeline.commands._fleet_boundary import (
@@ -1071,6 +1076,9 @@ def enrich_fleet(
     A failed day retains its cache and stops the campaign before the next date;
     rerunning skips cohorts whose durable output is already complete.
     """
+    if _run_legacy_fleet_campaign(fleet_dir, "enrich"):
+        return
+
     import sys
 
     from node_fdm_pipeline.commands._fleet_boundary import (
@@ -1483,6 +1491,35 @@ def plot_example(
 
 type CampaignCommand = Literal["plan", "run", "resume", "status", "validate"]
 type CampaignResult = CampaignPlan | CampaignReport | CampaignRunReport
+
+
+def _legacy_campaign_config(fleet_dir: Path) -> Path | None:
+    configs = sorted(fleet_dir.glob("types/*/config*.yaml"))
+    return configs[0] if len(configs) == 1 else None
+
+
+def _run_legacy_fleet_campaign(fleet_dir: Path, step: str) -> bool:
+    sys.stderr.write("DEPRECATED: use 'fdm fleet-campaign run'\n")
+    config = _legacy_campaign_config(fleet_dir)
+    if config is None:
+        return False
+    try:
+        result = run_fleet_campaign(config, "run", only_steps=[step])
+    except ValueError as exc:
+        if str(exc) == "campaign execution requires fleet_run configuration":
+            return False
+        sys.stderr.write(f"{exc}\n")
+        raise SystemExit(1) from exc
+    except (
+        CampaignGuardIncomplete,
+        CampaignStateIncompatible,
+        CampaignStateMissing,
+        LeaseConfigError,
+    ) as exc:
+        sys.stderr.write(f"{exc}\n")
+        raise SystemExit(1) from exc
+    sys.stdout.write(f"{_render_campaign_result(result)}\n")
+    return True
 
 
 def _render_campaign_result(result: CampaignResult) -> str:

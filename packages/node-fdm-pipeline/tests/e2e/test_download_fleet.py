@@ -31,6 +31,24 @@ def _recorded_fleet(tmp_path: Path) -> Path:
 
 
 @pytest.mark.e2e
+def test_download_fleet_prints_one_deprecation_notice(tmp_path: Path) -> None:
+    """AC2: download-fleet emits one notice naming fleet-campaign run."""
+    fleet_dir = tmp_path / "fleet"
+    fleet_dir.mkdir()
+
+    completed = subprocess.run(
+        ["fdm", "download-fleet", "--fleet-dir", str(fleet_dir), "--dry-run"],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    stderr = completed.stderr.lower()
+    assert stderr.count("deprecated") == 1
+    assert stderr.count("fdm fleet-campaign run") == 1
+
+
+@pytest.mark.e2e
 def test_download_fleet_historical_dry_run_lists_recorded_dates(tmp_path: Path) -> None:
     """AC1: a historical dry-run exits zero and prints every recorded planned date."""
     fleet_dir = _recorded_fleet(tmp_path)
