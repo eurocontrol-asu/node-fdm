@@ -18,6 +18,7 @@ class GridCacheStats(BaseModel):
 
     opens: dict[GridKey, int]
     total_opens: int
+    resident_entries: int = 0
 
 
 class GridStillReferenced(RuntimeError):  # noqa: N818 - domain exception name
@@ -93,8 +94,21 @@ class DayGridCache[HandleT]:
                 evicted.append(key[1])
             return tuple(evicted)
 
+    def close(self) -> None:
+        """Close and remove every resident grid, including referenced entries."""
+        with self._lock:
+            entries = tuple(self._entries.values())
+            self._entries.clear()
+        for entry in entries:
+            self._closer(entry.handle)
+
     def stats(self) -> GridCacheStats:
         """Return a stable snapshot of cumulative grid-open counts."""
         with self._lock:
             opens = dict(self._opens)
-        return GridCacheStats(opens=opens, total_opens=sum(opens.values()))
+            resident_entries = len(self._entries)
+        return GridCacheStats(
+            opens=opens,
+            total_opens=sum(opens.values()),
+            resident_entries=resident_entries,
+        )
