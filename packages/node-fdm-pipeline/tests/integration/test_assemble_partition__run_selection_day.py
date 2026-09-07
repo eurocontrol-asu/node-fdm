@@ -30,6 +30,7 @@ ERA5_SENTINELS = {
 }
 PROFILE_ID = "opensky26-exp03-v1"
 VERSIONS = {"node-fdm-pipeline": "test-code-v1"}
+_CAMPAIGN_RUNS = 0
 
 
 @dataclass(frozen=True)
@@ -69,6 +70,12 @@ class _Scenario:
     root: Path
     selection: SelectionPlan
     stores: dict[str, Path]
+
+
+@dataclass(frozen=True)
+class _CampaignResult:
+    expected_midnight_rows: pl.DataFrame
+    partitions: dict[tuple[str, str], pl.DataFrame]
 
 
 def _flight(  # noqa: PLR0913
@@ -142,12 +149,16 @@ def _run_day(root: Path, selection: SelectionPlan, day: str, stores: dict[str, P
 
 
 def _run_campaign(scenario: _Scenario) -> None:
+    global _CAMPAIGN_RUNS
+    _CAMPAIGN_RUNS += 1
+    assert _CAMPAIGN_RUNS == 1
     for day in DAYS:
         _run_day(scenario.root, scenario.selection, day, scenario.stores)
 
 
-@pytest.fixture
-def scenario(tmp_path: Path) -> _Scenario:
+@pytest.fixture(scope="module")
+def scenario(tmp_path_factory: pytest.TempPathFactory) -> _Scenario:
+    tmp_path = tmp_path_factory.mktemp("selection-day-campaign")
     raw_root = tmp_path / "raw"
     raw_root.mkdir()
     for day in DAYS:
@@ -205,6 +216,16 @@ def _expected_midnight_rows(scenario: _Scenario) -> pl.DataFrame:
             handle.close()
 
 
+@pytest.fixture(scope="module")
+def campaign(scenario: _Scenario) -> _CampaignResult:
+    expected_midnight_rows = _expected_midnight_rows(scenario)
+    _run_campaign(scenario)
+    return _CampaignResult(
+        expected_midnight_rows=expected_midnight_rows,
+        partitions=_published_partitions(scenario.root / "published"),
+    )
+
+
 def _all_midnight_rows(partitions: dict[tuple[str, str], pl.DataFrame]) -> pl.DataFrame:
     return pl.concat(
         frame.filter(pl.col("selection_id") == "sel-a20n-midnight")
@@ -213,12 +234,11 @@ def _all_midnight_rows(partitions: dict[tuple[str, str], pl.DataFrame]) -> pl.Da
 
 
 def test_published_midnight_selection_is_one_ordered_source_day_union(
-    scenario: _Scenario,
+    campaign: _CampaignResult,
 ) -> None:
     """AC1: the 20200101 A20N partition holds one ordered, duplicate-free day union."""
-    expected = _expected_midnight_rows(scenario)
-    _run_campaign(scenario)
-    partitions = _published_partitions(scenario.root / "published")
+    expected = campaign.expected_midnight_rows
+    partitions = campaign.partitions
     midnight = partitions[("A20N", "20200101")].filter(
         pl.col("selection_id") == "sel-a20n-midnight"
     )
@@ -233,12 +253,11 @@ def test_published_midnight_selection_is_one_ordered_source_day_union(
 
 
 def test_midnight_rows_use_their_own_source_day_era5_values(
-    scenario: _Scenario,
+    campaign: _CampaignResult,
 ) -> None:
     """AC2: each midnight row carries the ERA5 sentinels of its own source day."""
-    expected = _expected_midnight_rows(scenario)
-    _run_campaign(scenario)
-    partitions = _published_partitions(scenario.root / "published")
+    expected = campaign.expected_midnight_rows
+    partitions = campaign.partitions
     midnight = _all_midnight_rows(partitions)
 
     assert midnight.height == expected.height
@@ -255,11 +274,10 @@ def test_midnight_rows_use_their_own_source_day_era5_values(
 
 
 def test_two_daily_calls_publish_only_selection_day_anchored_partitions(
-    scenario: _Scenario,
+    campaign: _CampaignResult,
 ) -> None:
     """AC3: independent daily calls emit exactly the durable campaign identities."""
-    _run_campaign(scenario)
-    partitions = _published_partitions(scenario.root / "published")
+    partitions = campaign.partitions
     selection_ids = {
         str(selection_id)
         for frame in partitions.values()
