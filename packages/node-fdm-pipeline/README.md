@@ -33,6 +33,28 @@ fdm predict --arch opensky --config config.yaml --device cuda:0
 fdm evaluate --arch opensky --config config.yaml
 ```
 
+## Fleet campaign lifecycle
+
+The `fleet-campaign` group is the operator entry point for a recorded campaign. Every
+subcommand consumes the same pipeline configuration and delegates to the public
+`run_fleet_campaign` contract:
+
+```bash
+fdm fleet-campaign plan --config campaign.yaml
+fdm fleet-campaign run --config campaign.yaml
+fdm fleet-campaign resume --config campaign.yaml
+fdm fleet-campaign status --config campaign.yaml
+fdm fleet-campaign validate --config campaign.yaml
+```
+
+`plan` renders the offline acquisition plan. `run` starts a new durable execution,
+while `resume` requires a compatible campaign identity already recorded beside the
+configuration; a missing or incompatible identity is reported on stderr and exits
+non-zero without changing the journal. `status` reconstructs one operator row per
+journalled step, and `validate` checks those publications against local state. A SIGINT
+during `run` is also journalled as an `interrupted` terminal event before the command
+exits non-zero.
+
 ## Fleet downloads
 
 A historical fleet dry-run needs no campaign option. It validates the discovered cohorts
@@ -179,6 +201,7 @@ acquisition journal.
 
 | Command | Description | Status |
 |---|---|---|
+| `fdm fleet-campaign {plan,run,resume,status,validate}` | Operate a durable recorded campaign through the shared public contract | ✅ Implemented |
 | `fdm download-fleet` | Plan historical fleet downloads or run a coordinated campaign behind a shared lease | ✅ Implemented |
 | `fdm decode-fleet` | Decode historical fleets or resume a digest-checked campaign behind a shared lease | ✅ Implemented |
 | `fdm enrich-fleet` | Enrich historical fleets or run a coordinated campaign behind a shared lease | ✅ Implemented |

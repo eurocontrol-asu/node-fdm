@@ -102,6 +102,19 @@ class TestCLI:
 
         assert callable(main)
 
+    @pytest.mark.e2e
+    def test_cli_help_advertises_fleet_campaign(self) -> None:
+        """AC1: top-level fdm help advertises the fleet-campaign operator group."""
+        result = subprocess.run(
+            [sys.executable, "-m", "node_fdm_pipeline", "--help"],
+            capture_output=True,
+            text=True,
+            timeout=30,
+        )
+        output = result.stdout + result.stderr
+        assert result.returncode == 0
+        assert "fleet-campaign" in output
+
 
 class TestCLIDataCommands:
     """CLI --help smoke tests for data pipeline commands."""

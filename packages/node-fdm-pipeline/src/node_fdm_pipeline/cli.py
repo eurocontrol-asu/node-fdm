@@ -2,12 +2,24 @@
 
 from __future__ import annotations
 
+import sys
 from importlib.metadata import PackageNotFoundError, version
 from pathlib import Path
-from typing import Annotated
+from typing import Annotated, Literal
 
 import cyclopts
 import structlog
+
+from node_fdm_pipeline.commands._campaign_guard import (
+    CampaignStateIncompatible,
+    CampaignStateMissing,
+)
+from node_fdm_pipeline.commands._campaign_plan import CampaignPlan
+from node_fdm_pipeline.commands._campaign_report import CampaignReport
+from node_fdm_pipeline.commands._campaign_runner import CampaignRunReport
+from node_fdm_pipeline.commands._fleet_boundary import CampaignGuardIncomplete
+from node_fdm_pipeline.commands._trino_lease import LeaseConfigError
+from node_fdm_pipeline.commands.fleet_campaign import run_fleet_campaign
 
 __all__ = [
     "app",
@@ -1467,6 +1479,104 @@ def plot_example(
     from node_fdm_pipeline.commands.visualize import run_plot_example
 
     run_plot_example(config=config)
+
+
+type CampaignCommand = Literal["plan", "run", "resume", "status", "validate"]
+type CampaignResult = CampaignPlan | CampaignReport | CampaignRunReport
+
+
+def _render_campaign_result(result: CampaignResult) -> str:
+    """Render one stable operator representation for every campaign result."""
+    if not isinstance(result, CampaignReport):
+        return str(result)
+
+    step_rows = [str(step) for step in result.steps]
+    summary = f"verdict={result.verdict} next_actions={result.next_actions} errors={result.errors}"
+    return "\n".join((*step_rows, summary))
+
+
+def _execute_fleet_campaign(config: Path, mode: CampaignCommand) -> None:
+    """Execute exactly one campaign contract and render its result."""
+    try:
+        result = run_fleet_campaign(config, mode)
+    except (
+        CampaignGuardIncomplete,
+        CampaignStateIncompatible,
+        CampaignStateMissing,
+        LeaseConfigError,
+    ) as exc:
+        sys.stderr.write(f"{exc}\n")
+        raise SystemExit(1) from exc
+    sys.stdout.write(f"{_render_campaign_result(result)}\n")
+
+
+_fleet_campaign_app = cyclopts.App(
+    name="fleet-campaign",
+    help="Plan, run, resume, inspect, or validate a recorded fleet campaign.",
+)
+
+
+@_fleet_campaign_app.command(name="plan")
+def _fleet_campaign_plan(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to the recorded campaign YAML configuration"),
+    ],
+) -> None:
+    """Render the complete offline campaign plan."""
+    _execute_fleet_campaign(config, "plan")
+
+
+@_fleet_campaign_app.command(name="run")
+def _fleet_campaign_run(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to the recorded campaign YAML configuration"),
+    ],
+) -> None:
+    """Start a new durable fleet campaign."""
+    _execute_fleet_campaign(config, "run")
+
+
+@_fleet_campaign_app.command(name="resume")
+def _fleet_campaign_resume(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to the recorded campaign YAML configuration"),
+    ],
+) -> None:
+    """Resume a compatible durable fleet campaign."""
+    _execute_fleet_campaign(config, "resume")
+
+
+@_fleet_campaign_app.command(name="status")
+def _fleet_campaign_status(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to the recorded campaign YAML configuration"),
+    ],
+) -> None:
+    """Render the journalled campaign status."""
+    _execute_fleet_campaign(config, "status")
+
+
+@_fleet_campaign_app.command(name="validate")
+def _fleet_campaign_validate(
+    *,
+    config: Annotated[
+        Path,
+        cyclopts.Parameter(help="Path to the recorded campaign YAML configuration"),
+    ],
+) -> None:
+    """Validate journalled publications against local state."""
+    _execute_fleet_campaign(config, "validate")
+
+
+app.command(_fleet_campaign_app, name="fleet-campaign")
 
 
 def main() -> None:
