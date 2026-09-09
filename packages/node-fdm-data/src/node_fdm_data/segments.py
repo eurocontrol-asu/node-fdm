@@ -614,6 +614,33 @@ def _resolve_col(df: pl.DataFrame, primary: str, fallback: str) -> str:
     return primary if primary in df.columns else fallback
 
 
+_FROZEN_ENDPOINT_COLUMN_ALIASES = {
+    "altitude": "raw_alt_ft",
+    "ground_speed": "raw_gs_kt",
+    "track": "raw_track_deg",
+    "latitude": "raw_lat_deg",
+    "longitude": "raw_lon_deg",
+}
+
+
+def _resolve_frozen_endpoint_columns(
+    df: pl.DataFrame,
+    columns: Sequence[str],
+) -> tuple[str, ...]:
+    """Resolve experiment column names against the canonical pipeline schema."""
+    resolved: list[str] = []
+    for column in columns:
+        if column in df.columns:
+            resolved.append(column)
+            continue
+        alias = _FROZEN_ENDPOINT_COLUMN_ALIASES.get(column)
+        if alias is None or alias not in df.columns:
+            accepted = (column, alias) if alias is not None else (column,)
+            raise ValueError(f"Missing frozen-endpoint input column; expected one of {accepted!r}")
+        resolved.append(alias)
+    return tuple(resolved)
+
+
 _CFG_ALIASES = {"min_length": "min_len", "tolerance": "tol"}
 
 
@@ -667,6 +694,16 @@ def legacy_selected_params_cfg[T: Mapping[str, object]](cfg: T) -> T:
 def _channel_cfg(config: Mapping[str, object], channel: str) -> dict[str, object]:
     value = config.get(channel)
     return dict(value) if isinstance(value, Mapping) else {}
+
+
+def _minimum_mach_value(
+    config: Mapping[str, object],
+    profile: SegmentProfile | None,
+) -> float:
+    if profile is not None:
+        return profile.mach_floor if profile.mach_floor is not None else float("-inf")
+    value = config.get("mach_min_value", 0.5)
+    return float(value) if isinstance(value, (int, float)) else 0.5
 
 
 def _detect_mach_bilateral(
@@ -1076,6 +1113,7 @@ def _detect_alt_sel(
     alt_col: str,
     alt_arr: np.ndarray,
     vz_col: str | None = None,
+    signal_scale: float = 1.0,
 ) -> tuple[pl.DataFrame, list[dict[str, Any]]]:
     """Detect altitude-hold segments, dispatching on ``alt_cfg['mode']``.
 
@@ -1090,11 +1128,9 @@ def _detect_alt_sel(
     **The first two are different algorithms, not two tunings of one.** One
     asks whether the altitude is flat; the other asks whether the vertical
     speed is near zero. ``bilateral_alt`` exists because it is what
-    paper_opensky26 calibrated: its Pareto sweep ran the vz detector over the
-    altitude channel and retained sigma_r = 20, slope-tol = 6, scoring 60.1%
-    coverage at 99.9% reconstruction fidelity — its strongest channel. That
-    tuning has no meaning under ``bilateral_vz``, which takes ``tol_ftmin``
-    rather than a slope tolerance and was never swept.
+    paper_opensky26 calibrated. ``signal_scale`` converts the canonical feet
+    input to the calibration unit (metres for the frozen profile), while the
+    selected value written by this function remains in canonical feet.
     """
     if alt_cfg is None or alt_col not in df.columns:
         return df, []
@@ -1102,7 +1138,12 @@ def _detect_alt_sel(
     mode = cfg.pop("mode", "savgol_alt")
     if mode == "bilateral_alt":
         kwargs = {k: cfg[k] for k in _VZ_BILATERAL_KEYS if k in cfg}
-        segs = detect_vz_plateaus_from_bilat(alt_arr, np.zeros(len(alt_arr), dtype=bool), **kwargs)
+        segs = detect_vz_plateaus_from_bilat(
+            alt_arr * signal_scale,
+            np.zeros(len(alt_arr), dtype=bool),
+            **kwargs,
+        )
+        segs = _segments_in_output_unit(segs, signal_scale)
         return add_segment_column(df, segs, "fdm_alt_sel_ft"), segs
     if mode == "bilateral_vz":
         if vz_col is None or vz_col not in df.columns:
@@ -1116,6 +1157,15 @@ def _detect_alt_sel(
     legacy_cfg.setdefault("use_alt", False)
     segs = detect_constant_segments(alt_arr, **legacy_cfg)
     return add_segment_column(df, segs, "fdm_alt_sel_ft"), segs
+
+
+def _segments_in_output_unit(
+    segments: list[dict[str, Any]],
+    signal_scale: float,
+) -> list[dict[str, Any]]:
+    if signal_scale == 1.0:
+        return segments
+    return [dict(segment, var_mean=segment["var_mean"] / signal_scale) for segment in segments]
 
 
 def _load_speed_column(df: pl.DataFrame, col: str, n: int) -> np.ndarray:
@@ -1199,6 +1249,22 @@ def _propagate_speed_plateaus(
     return df.with_columns(*columns)
 
 
+def _with_speed_segment_source(
+    df: pl.DataFrame,
+    mach_segments: list[dict[str, Any]],
+    cas_segments: list[dict[str, Any]],
+) -> pl.DataFrame:
+    source: list[str | None] = [None] * len(df)
+    for label, segments in (("mach", mach_segments), ("cas", cas_segments)):
+        for segment in segments:
+            start = segment["start_idx"]
+            end = segment["end_idx"] + 1
+            if any(value is not None for value in source[start:end]):
+                raise ValueError("Mach/CAS cascade produced overlapping native segments")
+            source[start:end] = [label] * (end - start)
+    return df.with_columns(pl.Series("fdm_speed_segment_source", source, dtype=pl.String))
+
+
 def _collect_propagated_columns(
     df: pl.DataFrame,
     mach_sel: np.ndarray,
@@ -1225,6 +1291,7 @@ _PROFILE_SEGMENT_COLUMNS = (
     "fdm_vz_sel_ftmin",
     "fdm_mach_sel",
     "fdm_cas_sel_kt",
+    "fdm_speed_segment_source",
 )
 
 
@@ -1347,14 +1414,15 @@ def build_selected_params(
     else:
         active_profile = load_profile(profile) if isinstance(profile, str) else profile
         frozen_rule = active_profile.frozen_endpoint
+        frozen_columns = _resolve_frozen_endpoint_columns(df, frozen_rule.columns)
         frozen_endpoint_mask = _frozen_endpoint_mask(
             df,
-            frozen_rule.columns,
+            frozen_columns,
             frozen_rule.min_samples,
         )
         df = blank_frozen_endpoints(
             df,
-            frozen_rule.columns,
+            frozen_columns,
             frozen_rule.min_samples,
         )
         effective_config = selected_params_cfg_from_profile(active_profile)
@@ -1367,8 +1435,16 @@ def build_selected_params(
     # 1. Altitude plateaus FIRST — Mach detection is restricted to these rows.
     alt_cfg = _channel_cfg(effective_config, "alt") if "alt" in effective_config else None
     vz_col = _resolve_col(df, "raw_vz_ftmin", "vertical_rate")
-    df, alt_segs = _detect_alt_sel(df, alt_cfg, alt_col, alt_arr, vz_col=vz_col)
-    if alt_cfg is None:
+    altitude_signal_scale = _FT_TO_M if profile is not None else 1.0
+    df, alt_segs = _detect_alt_sel(
+        df,
+        alt_cfg,
+        alt_col,
+        alt_arr,
+        vz_col=vz_col,
+        signal_scale=altitude_signal_scale,
+    )
+    if alt_cfg is None or (profile is not None and not active_profile.alt_gate):
         # Backwards compatible: without an alt config we cannot derive the
         # plateau mask, so Mach detection falls back to its altitude-gated
         # behaviour without plateau restriction.
@@ -1378,8 +1454,10 @@ def build_selected_params(
         for seg in alt_segs:
             plateau_mask[seg["start_idx"] : seg["end_idx"] + 1] = True
 
-    mach_min_value = effective_config.get("mach_min_value", 0.5)
-    min_mach_value = float(mach_min_value) if isinstance(mach_min_value, (int, float)) else 0.5
+    min_mach_value = _minimum_mach_value(
+        effective_config,
+        active_profile if profile is not None else None,
+    )
     df, mach_segs = _detect_mach_in_plateau(
         df,
         "bds_mach_clean",
@@ -1396,6 +1474,7 @@ def build_selected_params(
         _channel_cfg(effective_config, "cas"),
         mach_segs,
     )
+    df = _with_speed_segment_source(df, mach_segs, cas_segs)
     df = _propagate_speed_plateaus(df, mach_segs, cas_segs, alt_arr)
     tas_cfg = _channel_cfg(effective_config, "tas") if "tas" in effective_config else None
     # The legacy ``_detect_masked`` path overwrites ``fdm_tas_sel_kt`` with the

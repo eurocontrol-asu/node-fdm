@@ -2858,6 +2858,26 @@ def test_build_selected_params_profile_produces_five_segment_columns() -> None:
         assert np.isfinite(result[column].to_numpy()).any(), f"{column} has no detected segment"
 
 
+def test_build_selected_params_profile_accepts_canonical_pipeline_columns() -> None:
+    """The frozen-endpoint rule resolves experiment names to pipeline columns."""
+    frame = (
+        _profile_selected_params_frame()
+        .drop("altitude", "ground_speed")
+        .rename(
+            {
+                "track": "raw_track_deg",
+                "latitude": "raw_lat_deg",
+                "longitude": "raw_lon_deg",
+            }
+        )
+    )
+
+    result = build_selected_params(frame, profile=_PROFILE_NAME)
+
+    for column in _PROFILE_SEGMENT_COLUMNS:
+        assert column in result.columns
+
+
 def test_build_selected_params_profile_overrides_divergent_legacy_cfg() -> None:
     """AC2: an explicit profile wholly overrides divergent legacy channel settings."""
     divergent = _profile_selected_params_cfg()
@@ -3024,3 +3044,53 @@ def test_profile_blanks_all_segment_ids_on_frozen_head() -> None:
     for column in _PROFILE_SEGMENT_COLUMNS:
         head = result[column][:20]
         assert (head.is_null() | head.is_nan()).all()
+
+
+def test_profile_altitude_detection_uses_calibrated_metres(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The frozen profile detects altitude in metres but publishes feet."""
+    frame = _profile_selected_params_frame()
+    original = segments_module.detect_vz_plateaus_from_bilat
+    captured: list[np.ndarray] = []
+
+    def capture(
+        values: np.ndarray,
+        exclusion_mask: np.ndarray,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        captured.append(np.asarray(values).copy())
+        return original(values, exclusion_mask, **kwargs)
+
+    monkeypatch.setattr(segments_module, "detect_vz_plateaus_from_bilat", capture)
+
+    result = build_selected_params(frame, profile=_PROFILE_NAME)
+
+    np.testing.assert_allclose(captured[0], frame["raw_alt_ft"].to_numpy() * 0.3048)
+    plateau = result["fdm_alt_sel_ft"].drop_nans()
+    assert plateau.len() > 0
+    assert np.nanmedian(plateau.to_numpy()) > 10_000.0
+
+
+def test_profile_disables_altitude_gate_and_mach_floor(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The profile's explicit no-gate/no-floor contract reaches Mach detection."""
+    frame = _profile_selected_params_frame()
+    captured_masks: list[np.ndarray] = []
+
+    def capture(
+        mach_raw: np.ndarray,
+        alt_plateau_mask: np.ndarray,
+        **kwargs: Any,
+    ) -> list[dict[str, Any]]:
+        captured_masks.append(np.asarray(alt_plateau_mask).copy())
+        return [{"start_idx": 0, "end_idx": len(mach_raw) - 1, "var_mean": 0.1}]
+
+    monkeypatch.setattr(segments_module, "detect_mach_plateaus_bilat", capture)
+
+    result = build_selected_params(frame, profile=_PROFILE_NAME)
+
+    assert captured_masks[0].all()
+    assert np.isfinite(result["fdm_mach_sel"].to_numpy()).all()
+    assert result["fdm_speed_segment_source"].unique().to_list() == ["mach"]
