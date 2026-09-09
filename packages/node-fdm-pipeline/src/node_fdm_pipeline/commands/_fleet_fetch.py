@@ -27,6 +27,7 @@ import json
 import random
 import threading
 import time
+import weakref
 from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
@@ -34,7 +35,6 @@ from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
-from weakref import WeakKeyDictionary
 
 import structlog
 from pydantic import BaseModel, Field, JsonValue
@@ -1145,14 +1145,26 @@ def _run_started_event(plan: FleetPlan, run_key: str, force: bool) -> dict[str, 
     }
 
 
-#: One ``(icao24, utc_day) -> selection_id`` index per selection plan.
+#: One ``(icao24, utc_day) -> selection_id`` index per selection plan, keyed by
+#: ``id()`` and cleared by a finalizer when the plan dies.
 #:
-#: Weak-keyed on purpose. ``functools.cache`` would hold every plan alive for the
-#: process lifetime and — worse — key on identity across a whole test session,
-#: where a freed plan's address can be reused by the next one and hand it a
-#: stranger's index. A ``WeakKeyDictionary`` ties the index to the plan's own
-#: lifetime, so it cannot outlive what it describes.
-_RECEIPT_INDEX: WeakKeyDictionary[Any, Mapping[tuple[str, str], str]] = WeakKeyDictionary()
+#: Keyed on identity, never on the plan itself, because ``SelectionPlan`` is a
+#: frozen pydantic model: its generated ``__hash__`` hashes the field tuple, and
+#: ``flights`` is a tuple of 509,032 sub-models that get hashed recursively. A
+#: single ``WeakKeyDictionary.get`` therefore costs a full traversal of the
+#: campaign — turning each lookup into the very scan the index exists to remove.
+#: Measured by ``faulthandler`` on the stalled campaign: 100% CPU, zero syscalls,
+#: stack pinned in ``pydantic hash_func`` under ``weakref.get``, not one date
+#: completed. ``id()`` is O(1) and never touches the model.
+#:
+#: ``finalize`` keeps the lifetime guarantee that motivated the weak keying:
+#: ``functools.cache`` would pin every plan for the process lifetime and — worse —
+#: a freed plan's address can be reused by the next one, handing it a stranger's
+#: index (this broke
+#: ``test_staged_payload_without_receipt_is_reacquired_and_republished`` in full
+#: suite runs while it passed in isolation). Dropping the entry when the plan is
+#: collected makes address reuse harmless.
+_RECEIPT_INDEX: dict[int, Mapping[tuple[str, str], str]] = {}
 
 
 def _receipt_index(selection_plan: Any) -> Mapping[tuple[str, str], str]:
@@ -1169,14 +1181,16 @@ def _receipt_index(selection_plan: Any) -> Mapping[tuple[str, str], str]:
     returned the *first* flight matching a pair, and several flights can share
     one when an aircraft flies twice in a day.
     """
-    cached = _RECEIPT_INDEX.get(selection_plan)
+    key = id(selection_plan)
+    cached = _RECEIPT_INDEX.get(key)
     if cached is not None:
         return cached
     index: dict[tuple[str, str], str] = {}
     for flight in selection_plan.flights:
         for day in flight.utc_days:
             index.setdefault((flight.icao24, day), flight.selection_id)
-    _RECEIPT_INDEX[selection_plan] = index
+    _RECEIPT_INDEX[key] = index
+    weakref.finalize(selection_plan, _RECEIPT_INDEX.pop, key, None)
     return index
 
 
