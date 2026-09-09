@@ -7,13 +7,13 @@ from typing import Literal
 
 from pydantic import BaseModel, ConfigDict
 
-from node_fdm_pipeline.commands._day_plan import build_day_plan
 from node_fdm_pipeline.commands._fleet_journal import (
     RunSnapshot,
     next_incomplete_step,
     replay_journal,
 )
 from node_fdm_pipeline.commands._fleet_plan import (
+    TRINO_BATCH_SIZE,
     FleetPlan,
     build_fleet_plan,
     discover_cohorts,
@@ -46,6 +46,7 @@ class PlannedTrinoBatch(BaseModel):
 
     utc_day: str
     kind: Literal["history", "extended", "flightlist"]
+    batch_index: int
     aircraft: frozenset[str]
 
 
@@ -99,15 +100,21 @@ def estimate_disk_footprint(
     """Estimate disk bytes from every planned cohort/day partition."""
     if plan.selection is None:
         return 0
-    selection_days = sorted(
-        {
-            utc_days_for_interval(flight.firstseen, flight.lastseen)[0]
-            for flight in plan.selection.flights
-        }
+    flight_days = tuple(
+        (flight, utc_days_for_interval(flight.firstseen, flight.lastseen))
+        for flight in plan.selection.flights
     )
-    partition_count = sum(
-        len(build_day_plan(plan.selection, day).partition_keys) for day in selection_days
-    )
+    single_day_starts = tuple(days[0] for _flight, days in flight_days if len(days) == 1)
+    campaign_start = min(single_day_starts) if single_day_starts else None
+    partitions = {
+        (
+            cohort,
+            days[0] if campaign_start is None else max(days[0], campaign_start),
+        )
+        for flight, days in flight_days
+        for cohort in flight.cohorts
+    }
+    partition_count = len(partitions)
     return partition_count * per_partition_bytes
 
 
@@ -164,14 +171,22 @@ def _build_campaign_fleet_plan(
 def _planned_trino_batches(plan: FleetPlan) -> list[PlannedTrinoBatch]:
     if plan.selection is None:
         return []
-    return [
-        PlannedTrinoBatch(
-            utc_day=acquisition.utc_day,
-            kind=acquisition.kind,
-            aircraft=frozenset(plan.dates.get(acquisition.utc_day, ())),
-        )
-        for acquisition in plan_shared_acquisitions(plan.selection)
-    ]
+    batches: list[PlannedTrinoBatch] = []
+    for acquisition in plan_shared_acquisitions(plan.selection):
+        aircraft = sorted(plan.dates.get(acquisition.utc_day, ()))
+        for batch_index, offset in enumerate(
+            range(0, len(aircraft), TRINO_BATCH_SIZE),
+            start=1,
+        ):
+            batches.append(
+                PlannedTrinoBatch(
+                    utc_day=acquisition.utc_day,
+                    kind=acquisition.kind,
+                    batch_index=batch_index,
+                    aircraft=frozenset(aircraft[offset : offset + TRINO_BATCH_SIZE]),
+                )
+            )
+    return batches
 
 
 def campaign_plan(config: Path) -> CampaignPlan:

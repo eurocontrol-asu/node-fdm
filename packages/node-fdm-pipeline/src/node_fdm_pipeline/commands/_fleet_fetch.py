@@ -23,6 +23,7 @@ killed run costs only the dates it had in flight.
 
 from __future__ import annotations
 
+import json
 import random
 import threading
 import time
@@ -48,6 +49,7 @@ from node_fdm_pipeline.commands._fleet_boundary import (
 from node_fdm_pipeline.commands._fleet_digest import DigestInput, ResumeDigest
 from node_fdm_pipeline.commands._fleet_journal import AttemptRecord, replay_attempts
 from node_fdm_pipeline.commands._fleet_manifest import read_events
+from node_fdm_pipeline.commands._fleet_plan import TRINO_BATCH_SIZE
 from node_fdm_pipeline.commands._selection_match import MatchRejection
 from node_fdm_pipeline.commands._trino_errors import classify_trino_failure
 from node_fdm_pipeline.config import FleetRunConfig
@@ -98,7 +100,7 @@ DEFAULT_WORKERS = 1
 #: 100 takes most of that gain while keeping a query near 4.5 min against Trino's
 #: 30 min ceiling. 200 would buy a further 4% and put the densest day (642
 #: aircraft, ~27 min in one chunk) right against the wall that cost a night's run.
-CHUNK = 100
+CHUNK = TRINO_BATCH_SIZE
 
 #: Smallest chunk :func:`_fetch_chunked` will split down to. Below this, a failure
 #: is the query's own problem rather than its size, and halving further would turn
@@ -254,6 +256,29 @@ class _RecordedOpenSky:
         cached: bool,
     ) -> object | None:
         return self._fetch("flightlist", start, end, icao24=icao24, cached=cached)
+
+
+def _recorded_opensky_source(fleet_config: FleetRunConfig | None) -> Path | None:
+    """Return the explicit offline OpenSky fixture, preserving JSON compatibility.
+
+    ``recorded_source`` is the durable campaign selection in the public campaign
+    contract.  Older acquisition tests used that field for an OpenSky response
+    fixture, so JSON values remain accepted while new configurations use the
+    unambiguous ``recorded_opensky_source`` field.
+    """
+    if fleet_config is None:
+        return None
+    if fleet_config.recorded_opensky_source is not None:
+        return fleet_config.recorded_opensky_source
+    source = fleet_config.recorded_source
+    if source is not None and source.suffix.lower() == ".json":
+        try:
+            payload = json.loads(source.read_text(encoding="utf-8"))
+        except (OSError, ValueError):
+            return None
+        if isinstance(payload, dict) and "responses" in payload:
+            return source
+    return None
 
 
 def _get_opensky() -> _OpenSkyProvider:
@@ -899,11 +924,13 @@ def fetch_one_date(
 ) -> DateOutcome:
     """Fetch every kind for one date and stage the mutualised payloads."""
     aircraft = plan.dates[date_str]
-    start = datetime.strptime(date_str, "%Y%m%d")
+    date_format = "%Y-%m-%d" if "-" in date_str else "%Y%m%d"
+    start = datetime.strptime(date_str, date_format)
     end = start + timedelta(hours=24)
     api: _OpenSkyProvider
-    if fleet_config is not None and fleet_config.recorded_source is not None:
-        api = _RecordedOpenSky(fleet_config.recorded_source)
+    recorded_source = _recorded_opensky_source(fleet_config)
+    if recorded_source is not None:
+        api = _RecordedOpenSky(recorded_source)
     else:
         api = _get_opensky()
     written = requests = 0
@@ -1237,11 +1264,9 @@ def _run_dates(context: _DownloadContext, run_key: str) -> list[DateOutcome]:
     )
     with acquisition:
         if pending_dates:
-            if (
-                context.fleet_config is not None
-                and context.fleet_config.recorded_source is not None
-            ):
-                _RecordedOpenSky(context.fleet_config.recorded_source)
+            recorded_source = _recorded_opensky_source(context.fleet_config)
+            if recorded_source is not None:
+                _RecordedOpenSky(recorded_source)
             else:
                 _get_opensky()
         for done, date_str in enumerate(context.plan.dates, start=1):

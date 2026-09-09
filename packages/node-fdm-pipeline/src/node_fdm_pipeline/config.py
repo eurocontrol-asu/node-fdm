@@ -388,6 +388,7 @@ class FleetRunConfig(BaseModel, frozen=True):
     disk_min_gib: float = Field(gt=0)
     min_free_gib: float | None = Field(default=None, ge=0)
     recorded_source: Path | None = None
+    recorded_opensky_source: Path | None = None
     acquisition_journal: Path | None = None
     acquisition_receipt_dir: Path | None = None
     retry_min_delay_s: float = Field(default=10.0, ge=0.0)
@@ -424,6 +425,7 @@ class PipelineConfig(BaseModel, frozen=True):
     era5_null_threshold: float = 0.05
     computing: ComputingConfig = ComputingConfig()
     fleet_run: FleetRunConfig | None = None
+    science_profile: str | None = None
     bada: BadaConfig = BadaConfig()
     preprocess: PreprocessConfig = PreprocessConfig()
     flag: FlagConfig = FlagConfig()

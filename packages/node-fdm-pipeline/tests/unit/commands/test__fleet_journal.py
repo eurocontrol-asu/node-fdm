@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import importlib
+import json
+from pathlib import Path
 from typing import Any
 
 
@@ -96,3 +98,31 @@ def test_replay_attempts_preserves_recording_order_and_metadata() -> None:
         ("a051-a100", 0.0, "root.right"),
         ("a001-a050", 2.5, "root.left"),
     ]
+
+
+def test_replay_journal_ignores_fetch_manifest_events(tmp_path: Path) -> None:
+    """A shared append-only journal may contain state and fetch events."""
+    journal = _journal()
+    path = tmp_path / "campaign.jsonl"
+    events = [
+        {"event": "run_started", "plan_sha256": "abc"},
+        {
+            "acquisition_key": "campaign:abc",
+            "state": "acquiring",
+            "timestamp": "2026-09-07T12:00:00+00:00",
+            "receipt": "/tmp/receipt.json",
+        },
+        {
+            "acquisition_key": "campaign:abc",
+            "state": "boundary_entered",
+            "timestamp": "2026-09-07T12:00:01+00:00",
+            "receipt": "/tmp/boundary.json",
+        },
+        {"event": "fetch_attempt", "attempt_id": "history:a001:1"},
+    ]
+    path.write_text("".join(json.dumps(event) + "\n" for event in events), encoding="utf-8")
+
+    snapshot = journal.replay_journal(path)
+
+    assert snapshot.states == {"campaign:abc": journal.RunState.ACQUIRING}
+    assert snapshot.artifacts == {"campaign:abc": (Path("/tmp/receipt.json"),)}

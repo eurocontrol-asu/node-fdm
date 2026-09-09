@@ -11,10 +11,9 @@ import xarray as xr
 from node_fdm_data.meteo import enrich_era5
 from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
 from node_fdm_data.preprocessing.derive import derive_columns
-from node_fdm_data.segments import build_selected_params
 from polars.testing import assert_frame_equal
 
-from _config_fixtures import selected_param_config, write_config
+from _config_fixtures import write_config
 from _daily_corpus import build_raw_opensky_day
 from _local_era5_grid import write_local_era5_grid
 from node_fdm_pipeline.commands import data
@@ -153,7 +152,11 @@ computing:
     oracle = enrich_era5(oracle, _LocalGrid(store))
     oracle = clean_bds_speeds(oracle, **config.clean_speeds.model_dump())
     oracle = derive_columns(oracle, lateral_cfg=config.lateral_detection.to_params())
-    oracle = build_selected_params(oracle, selected_param_config().model_dump())
+    oracle = data._build_selected_params_with_valid_filter(
+        oracle,
+        None,
+        profile=PROFILE_ID,
+    )
     return oracle.sort("raw_timestamp")
 
 

@@ -55,16 +55,29 @@ def _named_steps(value: object) -> set[str]:
 
 def test_only_steps_restricts_run_to_named_steps(
     campaign_config: tuple[Path, Path],
+    mocker: MockerFixture,
 ) -> None:
-    """AC1: only_steps runs decode rows and records no download journal step."""
-    config_path, journal_path = campaign_config
+    """AC1: download-only reaches the real acquisition boundary exactly once."""
+    config_path, _journal_path = campaign_config
+    downloader = mocker.patch.object(fleet_campaign, "download_fleet", return_value=[])
 
-    report = run_fleet_campaign(config_path, "run", only_steps=["decode"])
+    report = run_fleet_campaign(config_path, "run", only_steps=["download"])
 
     report_steps = _named_steps(report.model_dump(mode="json"))
-    events = [json.loads(line) for line in journal_path.read_text(encoding="utf-8").splitlines()]
-    assert report_steps == {"decode"}
-    assert _named_steps(events) == {"decode"}
+    assert report_steps == {"download"}
+    downloader.assert_called_once()
+
+
+def test_unwired_live_stages_refuse_instead_of_reporting_success(
+    campaign_config: tuple[Path, Path],
+) -> None:
+    """A missing operational adapter must never produce completion receipts."""
+    config_path, journal_path = campaign_config
+
+    with pytest.raises(fleet_campaign.CampaignExecutionNotReadyError):
+        run_fleet_campaign(config_path, "run", only_steps=["decode"])
+
+    assert not journal_path.exists()
 
 
 def test_unknown_step_name_is_refused(

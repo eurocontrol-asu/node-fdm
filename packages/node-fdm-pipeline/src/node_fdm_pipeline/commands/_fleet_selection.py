@@ -173,17 +173,29 @@ _RICH_HISTORICAL_CSV_FIELDS = (
 
 def _read_selection_csv(
     raw: str,
-) -> tuple[tuple[str, ...], tuple[dict[str, str | None], ...]]:
+) -> tuple[tuple[str, ...], Iterable[dict[str, str | None]]]:
     reader = csv.DictReader(StringIO(raw), strict=True)
+    fieldnames = reader.fieldnames
+    if fieldnames is None:
+        raise SelectionFormatError("missing CSV header")
     try:
-        fieldnames = reader.fieldnames
-        if fieldnames is None:
-            raise SelectionFormatError("missing CSV header")
-        rows = tuple(dict(row) for row in reader)
+        for _row in reader:
+            pass
     except csv.Error as exc:
         line_number = reader.line_num + 1
         raise SelectionFormatError(f"CSV syntax error on line {line_number}: {exc}") from exc
-    return tuple(fieldnames), rows
+
+    stream_reader = csv.DictReader(StringIO(raw), strict=True)
+
+    def rows() -> Iterable[dict[str, str | None]]:
+        try:
+            for row in stream_reader:
+                yield dict(row)
+        except csv.Error as exc:
+            line_number = stream_reader.line_num + 1
+            raise SelectionFormatError(f"CSV syntax error on line {line_number}: {exc}") from exc
+
+    return tuple(fieldnames), rows()
 
 
 def _require_csv_columns(fieldnames: tuple[str, ...], required: tuple[str, ...]) -> None:
@@ -320,17 +332,6 @@ def _acquisition_key(identity: FlightIdentity) -> str:
     return hashlib.sha256(canonical_identity.encode()).hexdigest()
 
 
-def _cohorts_by_identity(
-    rows: Iterable[Mapping[str, object] | _SelectionRow],
-) -> dict[FlightIdentity, set[str]]:
-    cohorts_by_identity: dict[FlightIdentity, set[str]] = {}
-    for raw_row in rows:
-        row = _SelectionRow.model_validate(raw_row)
-        identity = _identity(row)
-        cohorts_by_identity.setdefault(identity, set()).add(row.cohort)
-    return cohorts_by_identity
-
-
 def _selection_flights(
     cohorts_by_identity: dict[FlightIdentity, set[str]],
 ) -> tuple[SelectedFlight, ...]:
@@ -374,18 +375,20 @@ def _digest_payload(flights: tuple[SelectedFlight, ...]) -> list[dict[str, objec
 
 def compile_selection(rows: Iterable[Mapping[str, object]]) -> SelectionPlan:
     """Mutualise identical flights while preserving every cohort assignment."""
-    validated_rows = tuple(_SelectionRow.model_validate(row) for row in rows)
     explicit_days: dict[FlightIdentity, tuple[str, ...]] = {}
-    for row in validated_rows:
+    cohorts_by_identity: dict[FlightIdentity, set[str]] = {}
+    for raw_row in rows:
+        row = _SelectionRow.model_validate(raw_row)
+        identity = _identity(row)
+        cohorts_by_identity.setdefault(identity, set()).add(row.cohort)
         if row.utc_days is None:
             continue
-        identity = _identity(row)
         previous = explicit_days.setdefault(identity, row.utc_days)
         if previous != row.utc_days:
             msg = f"conflicting utc_days for selection {row.selection_id!r}"
             raise ValueError(msg)
 
-    compiled = _selection_flights(_cohorts_by_identity(validated_rows))
+    compiled = _selection_flights(cohorts_by_identity)
     flights = tuple(
         flight.model_copy(
             update={"utc_days": explicit_days.get(_identity(flight), flight.utc_days)}

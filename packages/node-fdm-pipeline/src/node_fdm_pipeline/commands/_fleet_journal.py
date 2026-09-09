@@ -126,6 +126,10 @@ def replay_journal(path: Path) -> RunSnapshot:
     states: dict[str, RunState] = {}
     artifacts: dict[str, list[Path]] = {}
     for raw_event in read_events(path):
+        if not {"acquisition_key", "state", "receipt"}.issubset(raw_event):
+            continue
+        if raw_event.get("state") in {state.value for state in AcquisitionState}:
+            continue
         event = _PersistedEvent.model_validate(raw_event)
         states[event.acquisition_key] = event.state
         artifacts.setdefault(event.acquisition_key, []).append(event.receipt)

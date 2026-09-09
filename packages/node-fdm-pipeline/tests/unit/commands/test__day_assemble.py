@@ -143,6 +143,24 @@ def test_every_published_row_carries_full_durable_identity(
     assert sum(null_counts.row(0)) == 0
 
 
+def test_scientific_numeric_boundary_casts_nullable_decoder_strings() -> None:
+    """Decoder placeholder strings cannot reach scientific arithmetic."""
+    module = _day_assemble_module()
+    frame = pl.DataFrame(
+        {
+            "raw_alt_ft": ["12000.0", None],
+            "bds_mcp_alt_sel_ft": [None, None],
+            "selection_id": ["sel-a", "sel-a"],
+        }
+    )
+
+    result = module._coerce_scientific_numeric_columns(frame)
+
+    assert result.schema["raw_alt_ft"] == pl.Float64
+    assert result.schema["bds_mcp_alt_sel_ft"] == pl.Float64
+    assert result["selection_id"].to_list() == ["sel-a", "sel-a"]
+
+
 def test_midnight_trajectory_is_ordered_union_of_source_days(
     recorded_frame: pl.DataFrame,
     selection_plan: SelectionPlan,

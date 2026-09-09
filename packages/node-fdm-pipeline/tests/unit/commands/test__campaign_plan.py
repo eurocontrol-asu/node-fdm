@@ -35,6 +35,36 @@ def _fleet_plan(selection: SelectionPlan) -> FleetPlan:
     return FleetPlan(dates=dates, owner={}, cohorts=(), selection=selection)
 
 
+def test_planned_trino_batches_use_the_executor_chunk_size() -> None:
+    """The offline count expands every product into the actual 100-aircraft requests."""
+    from node_fdm_pipeline.commands import _campaign_plan
+
+    selection = SelectionPlan(
+        flights=tuple(
+            _flight(
+                selection_id=f"flight-{index:03d}",
+                acquisition_key=f"key-{index:03d}",
+                timestamps=(1_704_067_200, 1_704_067_800),
+                cohorts=frozenset({"alpha"}),
+                utc_days=("2024-01-01",),
+            )
+            for index in range(205)
+        ),
+        digest="chunk-fixture",
+    )
+
+    batches = _campaign_plan._planned_trino_batches(_fleet_plan(selection))
+
+    assert len(batches) == 9
+    for kind in ("history", "extended", "flightlist"):
+        product_batches = [batch for batch in batches if batch.kind == kind]
+        assert [batch.batch_index for batch in product_batches] == [1, 2, 3]
+        assert [len(batch.aircraft) for batch in product_batches] == [100, 100, 5]
+        assert set().union(*(batch.aircraft for batch in product_batches)) == {
+            flight.icao24 for flight in selection.flights
+        }
+
+
 def test_campaign_identities_deduplicate_overall_and_per_cohort() -> None:
     """AC1: identities are unique globally and within every owning cohort."""
     from node_fdm_pipeline.commands import _campaign_plan
@@ -143,6 +173,39 @@ def test_estimate_disk_footprint_multiplies_planned_partitions() -> None:
             per_partition_bytes=1_024,
         )
         == 4_096
+    )
+
+
+def test_estimate_disk_footprint_keeps_crossmidnight_campaign_start_semantics() -> None:
+    """The linear index is identical when an early cross-midnight flight is shifted."""
+    from node_fdm_pipeline.commands import _campaign_plan
+
+    selection = SelectionPlan(
+        flights=(
+            _flight(
+                selection_id="cross-midnight",
+                acquisition_key="cross-midnight-key",
+                timestamps=(1_704_066_600, 1_704_067_800),
+                cohorts=frozenset({"alpha", "beta"}),
+                utc_days=("2023-12-31", "2024-01-01"),
+            ),
+            _flight(
+                selection_id="campaign-start",
+                acquisition_key="campaign-start-key",
+                timestamps=(1_704_110_400, 1_704_111_000),
+                cohorts=frozenset({"alpha"}),
+                utc_days=("2024-01-01",),
+            ),
+        ),
+        digest="cross-midnight-partition-fixture",
+    )
+
+    assert (
+        _campaign_plan.estimate_disk_footprint(
+            _fleet_plan(selection),
+            per_partition_bytes=1_024,
+        )
+        == 2_048
     )
 
 

@@ -1,15 +1,15 @@
 from __future__ import annotations
 
-import shutil
-from collections.abc import Iterable, Iterator, Sequence
-from contextlib import AbstractContextManager, nullcontext
-from dataclasses import dataclass
+from collections.abc import Sequence
 from pathlib import Path
 
 from node_fdm_pipeline.commands._campaign_guard import CampaignMode, resolve_campaign_mode
 from node_fdm_pipeline.commands._campaign_guard import preflight_campaign as _preflight_campaign
-from node_fdm_pipeline.commands._campaign_interrupt import interrupt_campaign
-from node_fdm_pipeline.commands._campaign_plan import CampaignPlan, campaign_plan
+from node_fdm_pipeline.commands._campaign_plan import (
+    CampaignPlan,
+    _build_campaign_fleet_plan,
+    campaign_plan,
+)
 from node_fdm_pipeline.commands._campaign_report import (
     CampaignReport,
     campaign_status,
@@ -19,84 +19,28 @@ from node_fdm_pipeline.commands._campaign_runner import (
     CampaignRunReport,
     CampaignStepRun,
 )
-from node_fdm_pipeline.commands._campaign_runner import (
-    run_campaign_days as _run_campaign_days,
-)
 from node_fdm_pipeline.commands._day_plan import DayPlan, build_day_plan
-from node_fdm_pipeline.commands._fleet_digest import record_campaign_identity
-from node_fdm_pipeline.commands._fleet_journal import RunSnapshot, RunState, next_incomplete_step
-from node_fdm_pipeline.commands._fleet_manifest import append_event, read_events
+from node_fdm_pipeline.commands._fleet_boundary import preflight_acquisition
+from node_fdm_pipeline.commands._fleet_digest import (
+    load_campaign_identity,
+    record_campaign_identity,
+)
+from node_fdm_pipeline.commands._fleet_fetch import download_fleet
 from node_fdm_pipeline.commands._fleet_selection import SelectionPlan, load_selection_file
+from node_fdm_pipeline.commands._science_profile import profile_manifest, resolve_science_profile
 from node_fdm_pipeline.config import FleetRunConfig, PipelineConfig
 
 __all__ = ["run_fleet_campaign"]
 
-_GIB_BYTES = 1024**3
-_LOCAL_PROFILE = {"worker": "local"}
+_SCIENCE_PROFILE = profile_manifest(resolve_science_profile("opensky26-exp03-v1"))
 
 
-@dataclass
-class _CampaignBudget:
-    local_workers: int
-    max_resident_gib: float
-    min_free_gib: float
+class CampaignExecutionNotReadyError(RuntimeError):
+    """Raised instead of reporting success for an unwired live campaign stage."""
 
 
-@dataclass(frozen=True)
-class _JournalExecutor:
-    journal_path: Path
-    steps: tuple[str, ...]
-
-    def estimate_resident_gib(self, plan: DayPlan) -> float:
-        del plan
-        return 0.0
-
-    def free_disk_gib(self) -> float:
-        return shutil.disk_usage(self.journal_path.parent).free / _GIB_BYTES
-
-    def planned_acquisition_batches(self, plan: DayPlan) -> tuple[str, ...]:
-        del plan
-        return ()
-
-    def acquisition_section(
-        self,
-        plan: DayPlan,
-        batch: str,
-    ) -> AbstractContextManager[None]:
-        del plan, batch
-        return nullcontext()
-
-    def acquire(self, plan: DayPlan, batch: str) -> None:
-        del plan, batch
-
-    def run_day(self, plan: DayPlan) -> str:
-        day = plan.meta_selection_day
-        append_event(
-            self.journal_path,
-            {"event": "day_started", "meta_selection_day": day},
-        )
-        for step in self.steps:
-            append_event(
-                self.journal_path,
-                {"event": "campaign_step_completed", "step": step, "day": day},
-            )
-        append_event(self.journal_path, {"event": "cleanup_completed", "day": day})
-        return "completed"
-
-
-@dataclass(frozen=True)
-class _PreparedRun:
-    plans: tuple[DayPlan, ...]
-    budget: _CampaignBudget
-    executor: _JournalExecutor
-
-    def __iter__(self) -> Iterator[DayPlan]:
-        return iter(self.plans)
-
-
-def run_campaign_days(run: _PreparedRun) -> CampaignRunReport:
-    """Delegate one fully prepared invocation to the campaign scheduler."""
-    return _run_campaign_days(run.plans, run.budget, run.executor)
+class CampaignDownloadFailedError(RuntimeError):
+    """Raised when at least one source day fails during acquisition."""
 
 
 def _resolve_path(config_path: Path, value: Path) -> Path:
@@ -131,7 +75,7 @@ def _live_context(
         state_dir=config_path.parent,
         selection_digest=source.plan.digest,
         resolved_config=fleet_run,
-        profile=_LOCAL_PROFILE,
+        profile=_SCIENCE_PROFILE,
     )
     if mode is CampaignMode.RUN:
         record_campaign_identity(config_path.parent, digest)
@@ -143,60 +87,86 @@ def _day_plans(selection: SelectionPlan) -> tuple[DayPlan, ...]:
     return tuple(build_day_plan(selection, day) for day in days)
 
 
-def _resume_snapshot(journal_path: Path) -> RunSnapshot:
-    states: dict[str, RunState] = {}
-    if journal_path.exists():
-        for event in read_events(journal_path):
-            day = event.get("day")
-            if event.get("event") == "cleanup_completed" and isinstance(day, str):
-                states[day] = RunState.CLEANED
-                continue
-            started_day = event.get("meta_selection_day")
-            if event.get("event") == "day_started" and isinstance(started_day, str):
-                states.setdefault(started_day, RunState.ACQUIRING)
-    return RunSnapshot(states=states, artifacts={})
-
-
-def _plans_for_mode(
-    plans: Iterable[DayPlan],
-    mode: CampaignMode,
-    journal_path: Path,
-) -> tuple[DayPlan, ...]:
-    materialized = tuple(plans)
-    if mode is not CampaignMode.RESUME:
-        return materialized
-    snapshot = _resume_snapshot(journal_path)
-    return tuple(
-        plan
-        for plan in materialized
-        if next_incomplete_step(snapshot, plan.meta_selection_day) is not None
-    )
-
-
 def _run_live(
     config: Path,
     mode: CampaignMode,
     steps: tuple[str, ...],
 ) -> CampaignRunReport:
     _config_path, fleet_run, selection, journal_path, receipt_dir = _live_context(config, mode)
-    plans = _plans_for_mode(_day_plans(selection), mode, journal_path)
-    min_free_gib = fleet_run.min_free_gib
-    if min_free_gib is None:
-        raise ValueError("campaign execution requires fleet_run.min_free_gib")
-    budget = _CampaignBudget(
-        local_workers=1,
-        max_resident_gib=max(fleet_run.disk_min_gib, 1.0),
-        min_free_gib=min_free_gib,
+    if steps == ("download",):
+        return _run_download_only(
+            _config_path,
+            fleet_run,
+            selection,
+            journal_path,
+            receipt_dir,
+        )
+    raise CampaignExecutionNotReadyError(
+        "live decode/enrich orchestration is not wired yet; "
+        "use --only-step download for the acquisition-only campaign"
     )
-    executor = _JournalExecutor(journal_path, steps)
-    prepared = _PreparedRun(plans=plans, budget=budget, executor=executor)
-    report = interrupt_campaign(
-        lambda: run_campaign_days(prepared),
-        acquisition_key="campaign",
+
+
+def _run_download_only(
+    config_path: Path,
+    fleet_run: FleetRunConfig,
+    selection: SelectionPlan,
+    journal_path: Path,
+    receipt_dir: Path,
+) -> CampaignRunReport:
+    """Run the real, strictly sequential acquisition engine for one campaign."""
+    resolved = PipelineConfig.from_yaml(config_path)
+    runtime_fleet_run = fleet_run
+    if fleet_run.recorded_opensky_source is not None:
+        runtime_fleet_run = fleet_run.model_copy(
+            update={
+                "recorded_opensky_source": _resolve_path(
+                    config_path,
+                    fleet_run.recorded_opensky_source,
+                )
+            }
+        )
+    assert fleet_run.recorded_source is not None
+    selection_path = _resolve_path(config_path, fleet_run.recorded_source)
+    fleet_plan = _build_campaign_fleet_plan(
+        config_path,
+        resolved,
+        selection,
+        selection_path,
+    )
+    acquisition_preflight = preflight_acquisition(
+        recorded_digest=load_campaign_identity(config_path.parent),
+        selection_digest=selection.digest,
+        resolved_config=fleet_run,
+        profile=_SCIENCE_PROFILE,
+        fleet_config=runtime_fleet_run,
+        campaign_root=config_path.parent,
+    )
+    outcomes = download_fleet(
+        fleet_plan,
+        workers=1,
+        force=False,
+        dry_run=False,
+        manifest_path=journal_path,
+        fleet_config=runtime_fleet_run,
         journal_path=journal_path,
         receipt_dir=receipt_dir,
+        acquisition_preflight=acquisition_preflight,
     )
-    return report.model_copy(update={"steps": tuple(CampaignStepRun(step=step) for step in steps)})
+    failures = tuple(outcome for outcome in outcomes if outcome.error is not None)
+    if failures:
+        failed_days = ", ".join(outcome.date for outcome in failures)
+        raise CampaignDownloadFailedError(f"OpenSky acquisition failed for: {failed_days}")
+
+    days = tuple(plan.meta_selection_day for plan in _day_plans(selection))
+    return CampaignRunReport(
+        started_days=days,
+        completed_days=days,
+        blocked_reasons=(),
+        blocking_day=None,
+        max_observed_concurrency=1,
+        steps=(CampaignStepRun(step="download"),),
+    )
 
 
 _CAMPAIGN_STEPS = ("download", "decode", "enrich")

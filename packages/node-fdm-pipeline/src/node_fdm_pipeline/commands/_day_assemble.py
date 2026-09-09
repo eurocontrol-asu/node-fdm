@@ -13,7 +13,6 @@ from node_fdm_data.preprocessing.clean_speeds import clean_bds_speeds
 from node_fdm_data.preprocessing.derive import derive_columns
 from node_fdm_data.preprocessing.flags import compute_flags
 from node_fdm_data.preprocessing.resample import preprocess_flights
-from node_fdm_data.segments import build_selected_params
 
 from node_fdm_pipeline.commands._day_plan import (
     DayPartitionKey,
@@ -22,10 +21,10 @@ from node_fdm_pipeline.commands._day_plan import (
     require_selection_in_scope,
 )
 from node_fdm_pipeline.commands._science_profile import ScienceProfile, profile_manifest
+from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
 from node_fdm_pipeline.config import (
     CleanSpeedsConfig,
     LateralDetectionConfig,
-    SelectedParamConfig,
 )
 
 __all__ = ["PARTITION_IDENTITY_COLUMNS", "assemble_partition"]
@@ -114,53 +113,23 @@ def _require_candidate_scope(frame: pl.DataFrame, plan: DayPlan) -> None:
 _MIN_FLAG_POINTS = 40
 _MIN_SCIENCE_DURATION_S = 240
 _MIN_VALID_ROWS_FOR_SELECTION = 32
+_SCIENTIFIC_NUMERIC_COLUMNS = (
+    "raw_alt_ft",
+    "raw_gs_kt",
+    "raw_lat_deg",
+    "raw_lon_deg",
+    "raw_track_deg",
+    "raw_vz_ftmin",
+    "bds_mcp_alt_sel_ft",
+    "bds_fms_alt_sel_ft",
+    "bds_ias_kt",
+    "bds_tas_kt",
+    "bds_mach",
+)
 _PROFILE_WEATHER: dict[str, dict[str, tuple[float, float, float]]] = {
     "opensky26-exp03-v1": {
         "20200101": (273.15, 5.0, -2.0),
         "20200102": (283.15, 15.0, 3.0),
-    }
-}
-_PROFILE_SELECTED_PARAMS: dict[str, dict[str, dict[str, float | int]]] = {
-    "opensky26-exp03-v1": {
-        "mach": {
-            "sigma_s": 8.0,
-            "sigma_r": 0.01,
-            "n_passes": 2,
-            "slope_tol": 3.0e-4,
-            "flat_tol": 5.0e-2,
-            "min_len": 15,
-        },
-        "cas": {
-            "cutoff_s": 180.0,
-            "sigma_s": 8.0,
-            "sigma_r": 3.0,
-            "n_passes": 2,
-            "slope_tol": 0.09,
-            "flat_tol": 20.0,
-            "min_len": 5,
-        },
-        "vz": {
-            "sigma_s": 6.0,
-            "sigma_r": 100.0,
-            "slope_tol": 50.0,
-            "flat_tol": 100.0,
-            "min_len": 10,
-        },
-        "alt": {
-            "sigma_s": 6.0,
-            "sigma_r": 20.0,
-            "n_passes": 2,
-            "tol_ftmin": 150.0,
-            "min_len": 6,
-        },
-        "gamma": {
-            "sigma_s": 6.0,
-            "sigma_r": 0.002,
-            "slope_tol": 1.2e-3,
-            "flat_tol": 2.0e-3,
-            "abs_min": 5.0e-3,
-            "min_len": 10,
-        },
     }
 }
 
@@ -199,11 +168,6 @@ def _identified_rows(frame: pl.DataFrame) -> pl.DataFrame:
     ).drop("_callsign")
 
 
-def _selected_params(profile_id: str) -> dict[str, object]:
-    configured = SelectedParamConfig.model_validate(_PROFILE_SELECTED_PARAMS[profile_id])
-    return cast("dict[str, object]", configured.model_dump())
-
-
 def _with_supplemental_columns(frame: pl.DataFrame) -> pl.DataFrame:
     supplemental: list[pl.Expr] = []
     if "raw_vz_ftmin" not in frame.columns:
@@ -211,6 +175,16 @@ def _with_supplemental_columns(frame: pl.DataFrame) -> pl.DataFrame:
     if "bds_mcp_alt_sel_ft" not in frame.columns:
         supplemental.append(pl.col("raw_alt_ft").alias("bds_mcp_alt_sel_ft"))
     return frame.with_columns(supplemental) if supplemental else frame
+
+
+def _coerce_scientific_numeric_columns(frame: pl.DataFrame) -> pl.DataFrame:
+    """Normalise nullable decoder columns before scientific arithmetic."""
+    expressions = [
+        pl.col(column).cast(pl.Float64, strict=False)
+        for column in _SCIENTIFIC_NUMERIC_COLUMNS
+        if column in frame.columns
+    ]
+    return frame.with_columns(expressions) if expressions else frame
 
 
 def _with_required_outputs(frame: pl.DataFrame) -> pl.DataFrame:
@@ -359,6 +333,7 @@ def _scientific_chain(
         )
         scientific = scientific.join(identity, on="meta_flight_id", how="left")
     scientific = _with_supplemental_columns(scientific)
+    scientific = _coerce_scientific_numeric_columns(scientific)
     scientific = compute_flags(
         scientific,
         min_points=_MIN_FLAG_POINTS,
@@ -394,9 +369,10 @@ def _scientific_chain(
     )
     scientific = _with_required_outputs(scientific)
     if scientific["fdm_flag_valid"].sum() >= _MIN_VALID_ROWS_FOR_SELECTION:
-        scientific = build_selected_params(
+        scientific = _build_selected_params_with_valid_filter(
             scientific,
-            _selected_params(profile.profile_id),
+            None,
+            profile=profile.profile_id,
         )
     original_order = [column for column in frame.columns if column in scientific.columns]
     produced = [column for column in scientific.columns if column not in frame.columns]

@@ -39,6 +39,7 @@ if TYPE_CHECKING:
     from node_fdm_pipeline.config import PipelineConfig
 
 __all__ = [
+    "TRINO_BATCH_SIZE",
     "Cohort",
     "FleetPlan",
     "SharedAcquisition",
@@ -46,6 +47,8 @@ __all__ = [
     "discover_cohorts",
     "plan_shared_acquisitions",
 ]
+
+TRINO_BATCH_SIZE = 100
 
 
 @dataclass(frozen=True)
@@ -207,6 +210,34 @@ def plan_shared_acquisitions(selection: SelectionPlan) -> tuple[SharedAcquisitio
     )
 
 
+def _resolve_active_selection(
+    triples: list[tuple[str, Path, Path]],
+    selection: SelectionPlan | None,
+) -> SelectionPlan | None:
+    if selection is not None:
+        return selection
+    selection_paths = {selection_path for _, _, selection_path in triples}
+    historical_layout = all(
+        selection_path == config_path.parent / "results" / f"selection_{name}.csv"
+        for name, config_path, selection_path in triples
+    )
+    if len(selection_paths) == 1 and not historical_layout:
+        return _read_selection_days(next(iter(selection_paths)))
+    return None
+
+
+def _index_flights_by_cohort(
+    selection: SelectionPlan | None,
+) -> dict[str, list[SelectedFlight]]:
+    flights_by_cohort: dict[str, list[SelectedFlight]] = defaultdict(list)
+    if selection is None:
+        return flights_by_cohort
+    for flight in selection.flights:
+        for cohort_name in flight.cohorts:
+            flights_by_cohort[cohort_name].append(flight)
+    return flights_by_cohort
+
+
 def build_fleet_plan(
     triples: list[tuple[str, Path, Path]],
     *,
@@ -223,14 +254,8 @@ def build_fleet_plan(
     cohorts: list[Cohort] = []
     owner: dict[str, list[Cohort]] = {}
     dates: dict[str, set[str]] = defaultdict(set)
-    active_selection = selection
-    selection_paths = {selection_path for _, _, selection_path in triples}
-    historical_layout = all(
-        selection_path == config_path.parent / "results" / f"selection_{name}.csv"
-        for name, config_path, selection_path in triples
-    )
-    if active_selection is None and len(selection_paths) == 1 and not historical_layout:
-        active_selection = _read_selection_days(next(iter(selection_paths)))
+    active_selection = _resolve_active_selection(triples, selection)
+    flights_by_cohort = _index_flights_by_cohort(active_selection)
 
     for name, config_path, selection_path in triples:
         selected_flights: tuple[SelectedFlight, ...] = ()
@@ -240,9 +265,7 @@ def build_fleet_plan(
             utc_days = frozenset(per_day)
         else:
             per_day = {}
-            selected_flights = tuple(
-                flight for flight in active_selection.flights if name in flight.cohorts
-            )
+            selected_flights = tuple(flights_by_cohort.get(name, ()))
             icao = {flight.icao24 for flight in selected_flights}
             utc_days = frozenset(day for flight in selected_flights for day in flight.utc_days)
         cohort = Cohort(

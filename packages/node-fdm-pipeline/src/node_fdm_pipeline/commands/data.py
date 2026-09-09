@@ -1642,9 +1642,32 @@ def clean_speeds(
     )
 
 
+_SELECTED_PARAM_OUTPUT_COLUMNS = frozenset(
+    {
+        "fdm_alt_sel_ft",
+        "fdm_mach_sel",
+        "fdm_cas_sel_kt",
+        "fdm_tas_sel_kt",
+        "fdm_gamma_sel_rad",
+        "fdm_vz_sel_ftmin",
+        "fdm_gamma_from_alt_rad",
+        "fdm_mcp_alt_sel_ft",
+        "fdm_fms_alt_sel_ft",
+        "fdm_alt_target_ft",
+        "fdm_cas_target_kt",
+        "fdm_tas_target_kt",
+        "fdm_tas_target_known",
+        "fdm_gamma_target_rad",
+        "fdm_gamma_target_known",
+    }
+)
+
+
 def _build_selected_params_with_valid_filter(
     flight_df: pl.DataFrame,
-    sel_config: dict[str, Any],
+    sel_config: dict[str, Any] | None,
+    *,
+    profile: str | None = None,
 ) -> pl.DataFrame:
     """Run :func:`build_selected_params` on rows where ``fdm_flag_valid`` is true.
 
@@ -1683,7 +1706,7 @@ def _build_selected_params_with_valid_filter(
 
     # Backward-compatible path: no flag column -> behave as before.
     if "fdm_flag_valid" not in flight_df.columns:
-        return build_selected_params(flight_df, sel_config)
+        return build_selected_params(flight_df, sel_config, profile=profile)
 
     n_full = len(flight_df)
     valid_mask = flight_df["fdm_flag_valid"].to_numpy()
@@ -1699,7 +1722,7 @@ def _build_selected_params_with_valid_filter(
 
     filtered = flight_df.filter(pl.col("fdm_flag_valid"))
     filtered_input_cols = set(filtered.columns)
-    produced = build_selected_params(filtered, sel_config)
+    produced = build_selected_params(filtered, sel_config, profile=profile)
 
     # Columns the detector added (set difference) plus any pre-existing
     # ``fdm_*_sel*`` / ``fdm_*_target*`` columns that the detector rewrites
@@ -1707,16 +1730,7 @@ def _build_selected_params_with_valid_filter(
     # detector). Treating the latter as "produced" ensures stale values from
     # a prior segments run are overwritten on the full-length frame, not
     # left in place by the merge-back step.
-    detector_overwritten = {
-        c
-        for c in produced.columns
-        if c.startswith("fdm_") and ("_sel" in c or "_target" in c) and not c.endswith("_known")
-    }
-    # Also include the boolean "_known" companion produced by the detector
-    # (e.g. ``fdm_tas_target_known``).
-    detector_overwritten |= {
-        c for c in produced.columns if c.startswith("fdm_") and c.endswith("_target_known")
-    }
+    detector_overwritten = set(produced.columns) & _SELECTED_PARAM_OUTPUT_COLUMNS
     new_cols = [
         c for c in produced.columns if c not in filtered_input_cols or c in detector_overwritten
     ]
@@ -1769,7 +1783,7 @@ def segments(
 
     cfg = PipelineConfig.from_yaml(config)
     delta_table = cfg.paths.resolve("delta_table")
-    sel_config = cfg.selected_params.model_dump()
+    sel_config = cfg.selected_params.model_dump() if cfg.science_profile is None else None
 
     log.info("segments_start", table=str(delta_table))
 
@@ -1800,7 +1814,11 @@ def segments(
     processed: list[pl.DataFrame] = []
     for flight_df in flights:
         flight_df = flight_df.sort("raw_timestamp")
-        flight_df = _build_selected_params_with_valid_filter(flight_df, sel_config)
+        flight_df = _build_selected_params_with_valid_filter(
+            flight_df,
+            sel_config,
+            profile=cfg.science_profile,
+        )
         processed.append(flight_df)
 
     df = pl.concat(processed, how="diagonal_relaxed")

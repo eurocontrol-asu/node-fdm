@@ -312,3 +312,31 @@ def test_build_selected_params_with_valid_filter_no_flag_column_passthrough() ->
     # Detector must have produced at least one new fdm_*_sel* column.
     new_cols = [c for c in out.columns if c.startswith("fdm_") and "_sel" in c]
     assert new_cols, "no fdm_*_sel* columns produced"
+
+
+def test_build_selected_params_with_valid_filter_forwards_science_profile(
+    mocker: MockerFixture,
+) -> None:
+    """A pinned profile replaces the legacy channel dictionary atomically."""
+    import polars as pl
+
+    from node_fdm_pipeline.commands.data import _build_selected_params_with_valid_filter
+
+    flight_df = pl.DataFrame({"raw_timestamp": [0, 4]})
+    detector = mocker.patch(
+        "node_fdm_data.segments.build_selected_params",
+        return_value=flight_df,
+    )
+
+    result = _build_selected_params_with_valid_filter(
+        flight_df,
+        None,
+        profile="opensky26-exp03-v1",
+    )
+
+    assert result.equals(flight_df)
+    detector.assert_called_once_with(
+        flight_df,
+        None,
+        profile="opensky26-exp03-v1",
+    )

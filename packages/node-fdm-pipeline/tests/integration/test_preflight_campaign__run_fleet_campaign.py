@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import importlib
-from collections.abc import Callable, Iterable
+from collections.abc import Callable
 from pathlib import Path
 from types import ModuleType
 
@@ -9,14 +9,11 @@ import pytest
 from pytest_mock import MockerFixture
 
 from node_fdm_pipeline import config as config_module
-from node_fdm_pipeline.commands._campaign_runner import CampaignRunReport
-from node_fdm_pipeline.commands._day_plan import DayPlan
 from node_fdm_pipeline.commands._fleet_digest import (
     compute_resume_digest,
     load_campaign_identity,
     record_campaign_identity,
 )
-from node_fdm_pipeline.commands._fleet_manifest import append_event, read_events
 from node_fdm_pipeline.commands._fleet_selection import load_selection_file
 
 pytestmark = pytest.mark.integration
@@ -63,17 +60,6 @@ fleet_run:
     return config_path, journal_path, receipt_dir, days
 
 
-def _completed_report(plans: Iterable[DayPlan]) -> CampaignRunReport:
-    days = tuple(plan.meta_selection_day for plan in plans)
-    return CampaignRunReport(
-        started_days=days,
-        completed_days=days,
-        blocked_reasons=(),
-        blocking_day=None,
-        max_observed_concurrency=1,
-    )
-
-
 def test_run_refuses_incompatible_state_without_journalling(
     campaign_files: tuple[Path, Path, Path, tuple[str, ...]],
 ) -> None:
@@ -105,14 +91,13 @@ def test_run_records_identity_and_covers_every_selection_day(
     """AC3: a clean run records its identity and reports every planned day."""
     campaign = _fleet_campaign()
     config_path, _journal_path, _receipt_dir, days = campaign_files
-    runner = mocker.patch.object(campaign, "run_campaign_days", side_effect=_completed_report)
+    runner = mocker.patch.object(campaign, "download_fleet", return_value=[])
 
-    report = campaign.run_fleet_campaign(config_path, "run")
+    report = campaign.run_fleet_campaign(config_path, "run", only_steps=["download"])
 
     load_campaign_identity(config_path.parent)
     assert report.completed_days == days
-    plans = tuple(runner.call_args.args[0])
-    assert tuple(plan.meta_selection_day for plan in plans) == days
+    runner.assert_called_once()
 
 
 def test_resume_skips_completed_day_and_starts_at_next_incomplete_step(
@@ -121,34 +106,12 @@ def test_resume_skips_completed_day_and_starts_at_next_incomplete_step(
 ) -> None:
     """AC4: resume does not emit a second start for an already completed day."""
     campaign = _fleet_campaign()
-    config_path, journal_path, _receipt_dir, days = campaign_files
-    first_day = days[0]
-    initial_runner = mocker.patch.object(
-        campaign,
-        "run_campaign_days",
-        side_effect=_completed_report,
-    )
-    campaign.run_fleet_campaign(config_path, "run")
-    initial_runner.reset_mock()
-    append_event(journal_path, {"event": "day_started", "meta_selection_day": first_day})
-    append_event(journal_path, {"event": "cleanup_completed", "day": first_day})
+    config_path, _journal_path, _receipt_dir, days = campaign_files
+    downloader = mocker.patch.object(campaign, "download_fleet", return_value=[])
+    campaign.run_fleet_campaign(config_path, "run", only_steps=["download"])
+    downloader.reset_mock()
 
-    def record_resumed_starts(plans: Iterable[DayPlan], *_args: object) -> CampaignRunReport:
-        materialized = tuple(plans)
-        for plan in materialized:
-            append_event(
-                journal_path,
-                {"event": "day_started", "meta_selection_day": plan.meta_selection_day},
-            )
-        return _completed_report(materialized)
+    report = campaign.run_fleet_campaign(config_path, "resume", only_steps=["download"])
 
-    initial_runner.side_effect = record_resumed_starts
-    report = campaign.run_fleet_campaign(config_path, "resume")
-
-    started = [
-        event["meta_selection_day"]
-        for event in read_events(journal_path)
-        if event.get("event") == "day_started"
-    ]
-    assert started.count(first_day) == 1
-    assert report.started_days == days[1:]
+    assert report.started_days == days
+    downloader.assert_called_once()

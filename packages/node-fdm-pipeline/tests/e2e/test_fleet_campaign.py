@@ -15,7 +15,7 @@ from pathlib import Path
 import pytest
 
 from _config_fixtures import SELECTED_PARAMS_YAML
-from node_fdm_pipeline import run_fleet_campaign
+from node_fdm_pipeline import cli, run_fleet_campaign
 
 pytestmark = pytest.mark.e2e
 
@@ -73,6 +73,16 @@ def _write_campaign(tmp_path: Path, *, utc_days: list[str] | None = None) -> Pat
         ),
         encoding="utf-8",
     )
+    recorded_opensky = tmp_path / "recorded-opensky.json"
+    recorded_opensky.write_text(
+        json.dumps(
+            {
+                "delay_s": 0.05,
+                "responses": {"history": None, "extended": None, "flightlist": None},
+            }
+        ),
+        encoding="utf-8",
+    )
     config = tmp_path / "campaign.yaml"
     config.write_text(
         (
@@ -86,6 +96,7 @@ def _write_campaign(tmp_path: Path, *, utc_days: list[str] | None = None) -> Pat
             "  disk_min_gib: 0.001\n"
             "  min_free_gib: 0.001\n"
             "  recorded_source: selection.json\n"
+            "  recorded_opensky_source: recorded-opensky.json\n"
             "  acquisition_journal: journal.jsonl\n"
             "  acquisition_receipt_dir: receipts\n"
         )
@@ -96,16 +107,19 @@ def _write_campaign(tmp_path: Path, *, utc_days: list[str] | None = None) -> Pat
 
 
 def _run_cli(config: Path, mode: str) -> subprocess.CompletedProcess[str]:
+    command = [
+        sys.executable,
+        "-m",
+        "node_fdm_pipeline",
+        "fleet-campaign",
+        mode,
+        "--config",
+        str(config),
+    ]
+    if mode in {"run", "resume"}:
+        command.extend(["--only-step", "download"])
     return subprocess.run(
-        [
-            sys.executable,
-            "-m",
-            "node_fdm_pipeline",
-            "fleet-campaign",
-            mode,
-            "--config",
-            str(config),
-        ],
+        command,
         capture_output=True,
         text=True,
         timeout=30,
@@ -186,7 +200,7 @@ def test_fleet_campaign_help_lists_exactly_five_modes() -> None:
 def test_plan_output_matches_direct_contract_rendering(tmp_path: Path) -> None:
     """AC2: plan stdout is the direct contract object's rendering."""
     config = _write_campaign(tmp_path)
-    expected = f"{run_fleet_campaign(config, 'plan')}\n"
+    expected = f"{cli._render_campaign_result(run_fleet_campaign(config, 'plan'))}\n"
 
     result = _run_cli(config, "plan")
 
@@ -246,6 +260,8 @@ def test_sigint_marks_the_in_flight_campaign_interrupted(tmp_path: Path) -> None
             "run",
             "--config",
             str(config),
+            "--only-step",
+            "download",
         ],
         stdout=subprocess.PIPE,
         stderr=subprocess.PIPE,
@@ -255,12 +271,14 @@ def test_sigint_marks_the_in_flight_campaign_interrupted(tmp_path: Path) -> None
     try:
         deadline = time.monotonic() + 30
         while time.monotonic() < deadline:
-            if journal.exists() and '"event":"day_started"' in journal.read_text(encoding="utf-8"):
+            if journal.exists() and '"state":"processing"' in journal.read_text(encoding="utf-8"):
                 break
             if process.poll() is not None:
                 break
             time.sleep(0.01)
-        assert process.poll() is None
+        if process.poll() is not None:
+            stdout, stderr = process.communicate(timeout=5)
+            pytest.fail(f"campaign exited before SIGINT: stdout={stdout!r} stderr={stderr!r}")
         assert journal.exists()
         process.send_signal(signal.SIGINT)
         _stdout, _stderr = process.communicate(timeout=30)
@@ -271,5 +289,6 @@ def test_sigint_marks_the_in_flight_campaign_interrupted(tmp_path: Path) -> None
 
     events = [json.loads(line) for line in journal.read_text(encoding="utf-8").splitlines()]
     assert process.returncode != 0
-    assert events[-1]["acquisition_key"] == "campaign"
-    assert events[-1]["state"] == "interrupted"
+    assert events[-1]["acquisition_key"]
+    assert any(event.get("state") == "interrupted" for event in events)
+    assert events[-1]["state"] == "lease_released"

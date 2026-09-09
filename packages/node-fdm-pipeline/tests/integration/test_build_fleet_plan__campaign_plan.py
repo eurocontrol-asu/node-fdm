@@ -70,7 +70,7 @@ def test_campaign_plan_reports_recorded_identities(
 def test_campaign_plan_reports_one_batch_per_shared_acquisition(
     campaign_fixture: tuple[Path, SelectionPlan, Path, Path],
 ) -> None:
-    """AC2: every shared acquisition becomes one dated batch with aircraft membership."""
+    """AC2: a small shared acquisition becomes one indexed dated batch."""
     from node_fdm_pipeline.commands import _campaign_plan
 
     config_path, selection, _journal_path, _receipt_dir = campaign_fixture
@@ -87,6 +87,7 @@ def test_campaign_plan_reports_one_batch_per_shared_acquisition(
 
     assert batches == expected
     assert len(report.trino_batches) == len(expected_acquisitions)
+    assert {batch.batch_index for batch in report.trino_batches} == {1}
 
 
 def test_campaign_plan_resumes_at_next_incomplete_journal_step(

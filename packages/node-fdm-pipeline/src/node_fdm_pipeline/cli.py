@@ -19,7 +19,12 @@ from node_fdm_pipeline.commands._campaign_report import CampaignReport
 from node_fdm_pipeline.commands._campaign_runner import CampaignRunReport
 from node_fdm_pipeline.commands._fleet_boundary import CampaignGuardIncomplete
 from node_fdm_pipeline.commands._trino_lease import LeaseConfigError
-from node_fdm_pipeline.commands.fleet_campaign import run_fleet_campaign
+from node_fdm_pipeline.commands.fleet_campaign import (
+    CampaignDownloadFailedError,
+    CampaignExecutionNotReadyError,
+    UnknownCampaignStep,
+    run_fleet_campaign,
+)
 
 __all__ = [
     "app",
@@ -1524,23 +1529,50 @@ def _run_legacy_fleet_campaign(fleet_dir: Path, step: str) -> bool:
 
 def _render_campaign_result(result: CampaignResult) -> str:
     """Render one stable operator representation for every campaign result."""
-    if not isinstance(result, CampaignReport):
+    if not isinstance(result, CampaignPlan | CampaignRunReport | CampaignReport):
         return str(result)
+    if isinstance(result, CampaignPlan):
+        return (
+            f"identified_flights={len(result.identified_flights)} "
+            f"cohorts={len(result.identified_by_cohort)} "
+            f"trino_batches={len(result.trino_batches)} "
+            f"crossmidnight_dependencies={len(result.crossmidnight_dependencies)} "
+            f"estimated_disk_bytes={result.estimated_disk_bytes} "
+            f"steps_to_resume={len(result.steps_to_resume)}"
+        )
+    if isinstance(result, CampaignRunReport):
+        return (
+            f"started_days={len(result.started_days)} "
+            f"completed_days={len(result.completed_days)} "
+            f"blocked_reasons={result.blocked_reasons} "
+            f"blocking_day={result.blocking_day} "
+            f"max_observed_concurrency={result.max_observed_concurrency} "
+            f"steps={[step.step for step in result.steps]}"
+        )
 
     step_rows = [str(step) for step in result.steps]
     summary = f"verdict={result.verdict} next_actions={result.next_actions} errors={result.errors}"
     return "\n".join((*step_rows, summary))
 
 
-def _execute_fleet_campaign(config: Path, mode: CampaignCommand) -> None:
+def _execute_fleet_campaign(
+    config: Path,
+    mode: CampaignCommand,
+    *,
+    only_steps: list[str] | None = None,
+) -> None:
     """Execute exactly one campaign contract and render its result."""
     try:
-        result = run_fleet_campaign(config, mode)
+        result = run_fleet_campaign(config, mode, only_steps=only_steps)
     except (
         CampaignGuardIncomplete,
         CampaignStateIncompatible,
         CampaignStateMissing,
+        CampaignDownloadFailedError,
+        CampaignExecutionNotReadyError,
         LeaseConfigError,
+        UnknownCampaignStep,
+        ValueError,
     ) as exc:
         sys.stderr.write(f"{exc}\n")
         raise SystemExit(1) from exc
@@ -1572,9 +1604,16 @@ def _fleet_campaign_run(
         Path,
         cyclopts.Parameter(help="Path to the recorded campaign YAML configuration"),
     ],
+    only_step: Annotated[
+        list[str] | None,
+        cyclopts.Parameter(
+            name="--only-step",
+            help="Run only one or more named stages (download, decode, enrich)",
+        ),
+    ] = None,
 ) -> None:
     """Start a new durable fleet campaign."""
-    _execute_fleet_campaign(config, "run")
+    _execute_fleet_campaign(config, "run", only_steps=only_step)
 
 
 @_fleet_campaign_app.command(name="resume")
@@ -1584,9 +1623,16 @@ def _fleet_campaign_resume(
         Path,
         cyclopts.Parameter(help="Path to the recorded campaign YAML configuration"),
     ],
+    only_step: Annotated[
+        list[str] | None,
+        cyclopts.Parameter(
+            name="--only-step",
+            help="Resume only one or more named stages (download, decode, enrich)",
+        ),
+    ] = None,
 ) -> None:
     """Resume a compatible durable fleet campaign."""
-    _execute_fleet_campaign(config, "resume")
+    _execute_fleet_campaign(config, "resume", only_steps=only_step)
 
 
 @_fleet_campaign_app.command(name="status")
