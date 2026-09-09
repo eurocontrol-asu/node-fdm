@@ -27,13 +27,14 @@ import json
 import random
 import threading
 import time
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 from contextlib import nullcontext
 from dataclasses import dataclass, field, replace
 from datetime import datetime, timedelta
 from functools import partial
 from pathlib import Path
 from typing import TYPE_CHECKING, Any, Literal, Protocol, cast, runtime_checkable
+from weakref import WeakKeyDictionary
 
 import structlog
 from pydantic import BaseModel, Field, JsonValue
@@ -1144,19 +1145,46 @@ def _run_started_event(plan: FleetPlan, run_key: str, force: bool) -> dict[str, 
     }
 
 
+#: One ``(icao24, utc_day) -> selection_id`` index per selection plan.
+#:
+#: Weak-keyed on purpose. ``functools.cache`` would hold every plan alive for the
+#: process lifetime and — worse — key on identity across a whole test session,
+#: where a freed plan's address can be reused by the next one and hand it a
+#: stranger's index. A ``WeakKeyDictionary`` ties the index to the plan's own
+#: lifetime, so it cannot outlive what it describes.
+_RECEIPT_INDEX: WeakKeyDictionary[Any, Mapping[tuple[str, str], str]] = WeakKeyDictionary()
+
+
+def _receipt_index(selection_plan: Any) -> Mapping[tuple[str, str], str]:
+    """Map ``(icao24, utc_day)`` to the first matching ``selection_id``.
+
+    Built once per plan, because the scan it replaces is quadratic:
+    :func:`_campaign_receipts` asks for one id per aircraft-day, and the linear
+    search walked the whole flight list each time. On the 95-cohort campaign that
+    is 506,932 lookups over 509,032 flights — about 1.3e11 comparisons, measured
+    at **34 minutes of pure CPU without a single syscall** and still climbing,
+    all of it before the first Trino query. The index costs one pass.
+
+    ``setdefault`` preserves the previous semantics exactly: the old ``next()``
+    returned the *first* flight matching a pair, and several flights can share
+    one when an aircraft flies twice in a day.
+    """
+    cached = _RECEIPT_INDEX.get(selection_plan)
+    if cached is not None:
+        return cached
+    index: dict[tuple[str, str], str] = {}
+    for flight in selection_plan.flights:
+        for day in flight.utc_days:
+            index.setdefault((flight.icao24, day), flight.selection_id)
+    _RECEIPT_INDEX[selection_plan] = index
+    return index
+
+
 def _receipt_id(plan: FleetPlan, icao24: str, day: str) -> str:
     selection_plan = getattr(plan, "selection", None)
     if selection_plan is None:
         return icao24
-    selection = next(
-        (
-            flight
-            for flight in selection_plan.flights
-            if flight.icao24 == icao24 and day in flight.utc_days
-        ),
-        None,
-    )
-    return selection.selection_id if selection is not None else icao24
+    return _receipt_index(selection_plan).get((icao24, day), icao24)
 
 
 def _campaign_receipts(
