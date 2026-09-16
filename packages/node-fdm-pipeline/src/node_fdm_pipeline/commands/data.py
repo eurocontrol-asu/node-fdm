@@ -2090,6 +2090,22 @@ class _RawEHSDecoder:
         import pandas as pd
         from traffic.core import Flight as _Flight
 
+        # No Comm-B to decode: return the null-filled schema without asking.
+        #
+        # `Flight.query_ehs(None)` falls back to querying OpenSky over the
+        # network for the raw messages. That is the right default when a caller
+        # has no cache, and wrong here: this decoder runs behind a raw cache
+        # that was already fetched, so a missing `extended` partition means the
+        # messages do not exist for this aircraft-day, not that they should be
+        # fetched again. Measured on a 656-day cohort whose `extended` cache came
+        # back empty everywhere: one network round-trip per flight, 19529 of
+        # them, sockets left in CLOSE-WAIT, and not a single decoded row to show
+        # for it — the step advertises "no network" and silently spent hours on
+        # it. The guard costs one comparison and preserves the schema contract
+        # `normalize_schema` relies on.
+        if self.rawdata is None:
+            return _flight_with_empty_bds_keys(flight)
+
         try:
             decoded = flight.query_ehs(self.rawdata)
         except Exception as exc:  # noqa: BLE001
